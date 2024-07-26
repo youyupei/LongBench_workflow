@@ -1,0 +1,39 @@
+reference:
+  # have to exist
+  genome: "/home/users/allstaff/you.yu/project/ref_files/GRCh38.primary_assembly.genome.fa"
+  gtf: "/home/users/allstaff/you.yu/project/ref_files/gencode.v44.primary_assembly.basic.annotation.gtf"
+
+# This is current not used in the pipeline, as the data has been basecalled
+samples_raw_dir: 
+  ont_sn: "/stornext/Projects/promethion/promethion_access/lab_ritchie/20240523_WEHI_RITCHIE_LongBenchSN_full/long_term/"
+  ont_sc: "/stornext/Projects/promethion/promethion_access/lab_ritchie/20240529_WEHI_RITCHIE_LongBenchSC/long_term/"
+  
+
+samples_fastq_dir:
+  ont_sn: "/home/users/allstaff/you.yu/LongBench/sequencing_data/ONT_sn/sn_ONT.fastq"
+  ont_sc: "/home/users/allstaff/you.yu/LongBench/sequencing_data/ONT_sc/ont_sc.fastq"
+
+output_path: 
+  "/vast/projects/LongBench/analysis/lr_sc_sn/result"
+
+sample_id:
+  - 'ont_sn'
+  - 'ont_sc'
+
+# Config for FLAMES/BLAZE
+expected_cells:
+  ont_sn: 5000
+  ont_sc: 5000
+
+count_thres: # Count threshold will override expected_cells
+  ont_sn: 500
+  ont_sc: 
+
+whitelist_10x:
+  ont_sn: 
+  ont_sc: 
+flames_env_path: "/stornext/Home/data/allstaff/y/you.yu/.cache/R/basilisk/1.14.0/FLAMES/1.9.0/flames_env"
+
+software:
+  sqanti3_dir: "/home/users/allstaff/you.yu/LongBench/software/SQANTI3/"
+  sqanti3_env: "SQANTI3"
