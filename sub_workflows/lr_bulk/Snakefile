@@ -1,0 +1,24 @@
+configfile: "config/config.yaml"
+include: "rules/minimap2.smk"
+include: "rules/internal_priming.smk"
+include: "rules/qc.smk"
+include: "rules/quantification.smk"
+include: config['main_workflow_dir'] + "/rules/utilities.smk"
+
+results_dir = config["output_path"]
+# make sure the results_dir exists
+shell("mkdir -p {results_dir}")
+
+# Email the workflow status
+EMAIL = "you.yu@wehi.edu.au"
+onsuccess:
+   shell("mail -s 'DONE: lr_bulk Snakemake run' {EMAIL} < {log}")
+onerror:
+   shell("mail -s 'ERROR: lr_bulk Snakemake run' {EMAIL} < {log}")
+
+
+# Main rule
+rule all:
+   input:
+      results_dir + "/.flag/run_all_mapping.done",
+      results_dir + "/.flag/run_salmon.done"

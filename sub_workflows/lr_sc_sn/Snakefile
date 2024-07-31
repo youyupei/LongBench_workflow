@@ -1,0 +1,77 @@
+from snakemake.utils import min_version, _load_configfile
+envvars:
+    "GITHUB_TOKEN"
+
+EMAIL = "you.yu@wehi.edu.au"
+
+configfile: "config/config.yaml"
+include: "rules/internal_priming.smk"
+include: "rules/flames.smk"
+include: "rules/qc.smk"
+include: "rules/mutation.smk"
+include: "rules/demuxlet.smk"
+include: "rules/emptydrop_gene_quant.smk"
+#include: "rules/salmon.smk"
+include: config['main_workflow_dir'] + "/rules/utilities.smk"
+
+# rule all:
+#     input
+onsuccess:
+   shell("mail -s 'DONE: lr_sc_sn Snakemake run' {EMAIL} < {log}")
+onerror:
+   shell("mail -s 'ERROR: lr_sc_sn Snakemake run' {EMAIL} < {log}")
+
+rule all: 
+    input:
+        # all qc
+        os.path.join(results_dir, "qc/.flag/all_qc.done"),
+        os.path.join(results_dir, ".flag/demuxlet.done")
+
+        # internal priming analysis
+        # expand(".flag/{sample}_internal_priming.done", sample=config["sample_id"])
+
+
+# rule internal_priming_analysis:
+#     input:
+#         expand(".flag/{sample}_internal_priming.done",
+#         sample=config["sample_id"])
+    
+# rule run_all_qc:
+#     input:
+
+#         os.path.join(results_dir, "qc/.flag/all_qc.done")
+
+# rule run_flames_quant_only_no_identification_tmp:
+#     input:
+#          expand(".flag/flames_{sample}_tmp.done", sample=config["sample_id"])
+
+# rule run_flames:
+#     input:
+#          expand(".flag/flames_{sample}.done", sample=config["sample_id"])
+
+# rule get_read_length:
+#     input:
+#         expand(config['output_path'] + "/read_length_analysis/{x}.read_length.txt",
+#                 x = config['sample_id'])
+
+# rule run_empty_drop_read_assignment:
+#     input:
+#         expand(config['output_path'] + '/emptydrop/{sample}_flames/emptydrop_gene_quantification.done',
+#                 sample = config['sample_id'])
+
+# rule run_demuxlet:
+#     input:
+#         expand(config['output_path'] + '/demuxlet/{sample}.demuxlet.best',
+#                 sample = config['sample_id'])
+
+# rule run_demuxlet_cluster:
+#     input:
+#         expand(config['output_path'] + '/demuxlet/{sample}.res{res}.cluster.demuxlet.best',
+#                 sample = 'ont_sn', res = ['0.5', '5', '40'])
+
+# rule run_demuxlet_cluster_filter_deconX_contaminantions:
+#     input:
+#         expand(config['output_path'] + '/demuxlet/{sample}.cluster_v2.demuxlet.best',
+#                 sample = 'ont_sn')
+
+        

@@ -1,0 +1,13 @@
+configfile: "config/input_config.yaml"
+include: "rules/cellranger.smk"
+
+EMAIL='you.yu@wehi.edu.au'
+
+onsuccess:
+   shell("mail -s 'DONE: ill_sc_sn Snakemake run' {EMAIL} < {log}")
+onerror:
+   shell("mail -s 'ERROR: ill_sc_sn Snakemake run' {EMAIL} < {log}")
+
+rule all:
+    input:
+       ".flag/cellranger.done"

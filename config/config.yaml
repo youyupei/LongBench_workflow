@@ -1,0 +1,13 @@
+global_config_path: "/vast/projects/LongBench/analysis/workflow/config/config.yaml"
+main_wf_dir: "/vast/projects/LongBench/analysis/workflow"
+git_script_dir: "script/git_repo"
+
+
+sub_wf_config:
+  - lr_sc_sn: config_lr_sc_sn.yaml
+  - lr_bulk: config_lr_bulk.yaml
+  - sr_sc_sn: config_sr_sc_sn.yaml
+
+
+# for all random process
+random_seed: 2024

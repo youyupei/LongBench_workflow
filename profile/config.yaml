@@ -1,0 +1,8 @@
+executor: "slurm"
+jobs: 50
+use-conda: true
+rerun-incomplete: true
+default-resources:
+    mem_mb: 5000
+conda-prefix: "/vast/projects/LongBench/analysis/workflow/conda/envs"
+keep-going: true

@@ -1,0 +1,4 @@
+conda/envs
+**/.snakemake/**
+**/.flag/**
+**/__pycache__/**

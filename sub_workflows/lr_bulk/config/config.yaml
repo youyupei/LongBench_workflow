@@ -1,0 +1,52 @@
+# must have this to access rules outside the subworkflow
+main_workflow_dir: "/vast/projects/LongBench/analysis/workflow"
+global_config_path: "/vast/projects/LongBench/analysis/workflow/config/config.yaml"
+conda_config_path: "/vast/projects/LongBench/analysis/workflow/conda/config"
+
+reference:
+  # have to exist
+  genome: "/home/users/allstaff/you.yu/LongBench/reference_files/GRCh38/GRCh38.primary_assembly.genome.fa"
+  gtf: "/home/users/allstaff/you.yu/LongBench/reference_files/GRCh38/gencode.v44.primary_assembly.basic.annotation.gtf"
+  transcript: "/home/users/allstaff/you.yu/LongBench/reference_files/gencode.v44.primary_assembly.basic.annotation.gtf"
+
+  genome_with_sequin: "/home/users/allstaff/you.yu/LongBench/reference_files/GRCh38.add.Sequin/GRCh38.primary_assembly.genome.add.Sequin2.4.fa"
+  transcript_with_sequin: "/home/users/allstaff/you.yu/LongBench/reference_files/GRCh38.add.Sequin/gencode.v44.primary_assembly.basic.annotation.add.Sequin2.4.fa"
+
+
+# This is current not used in the pipeline, as the data has been basecalled
+samples_raw_dir: 
+  ont_bulk: "/stornext/Projects/promethion/promethion_access/lab_ritchie/20240620_WEHI_RITCHIE_LongBench_Bulk/long_term/"
+
+
+samples_raw_bam_dir:
+  ont_bulk: "/home/users/allstaff/you.yu/LongBench/sequencing_data/ONT_bulk/"
+
+barcode_list:
+  - 1: H146
+  - 2: H69
+  - 3: H526
+  - 4: H211
+  - 5: SHP77
+  - 6: H1975
+  - 7: H2228
+  - 8: HCC827
+
+cell_line_list:
+  - H146
+  - H69
+  - H526
+  - H211
+  - SHP77
+  - H1975
+  - H2228
+  - HCC827
+
+output_path: 
+  "/vast/projects/LongBench/analysis/lr_bulk/result"
+
+run_id:
+  - 'ont_bulk'
+
+software:
+  sqanti3_dir: "/home/users/allstaff/you.yu/LongBench/software/SQANTI3/"
+  sqanti3_env: "SQANTI3"

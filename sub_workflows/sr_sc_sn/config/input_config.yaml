@@ -1,0 +1,20 @@
+reference:
+  # have to exist
+  genome: "/home/users/allstaff/you.yu/project/ref_files/GRCh38.primary_assembly.genome.fa"
+  gtf: "/home/users/allstaff/you.yu/project/ref_files/gencode.v44.primary_assembly.basic.annotation.gtf"
+
+# This is current not used in the pipeline, as the data has been basecalled
+samples_fastq_dir:
+  ill_sc: "/home/users/allstaff/you.yu/LongBench/sequencing_data/illumina_sc"
+  ill_sn: "/home/users/allstaff/you.yu/LongBench/sequencing_data/illumina_sn"
+
+output_path: 
+  "/vast/projects/LongBench/analysis/illumina_sc_sn/result"
+
+sample_id:
+  ill_sc: "M000495_batch1_2_GEX"
+  ill_sn: "M000495_batch1_1_GEX"
+
+sample_name:
+  - 'ill_sc'
+  - 'ill_sn'
