@@ -1,22 +1,21 @@
 import textwrap, os
-configfile: "config/config.yaml"
 results_dir = config["output_path"]
 
 rule run_internal_priming_analysis:
     input:
-        ".flag/{x}_run_primspotter.done"
+        results_dir + "/.flag/{x}_run_primspotter.done"
     output:
-        touch(".flag/{x}_internal_priming.done")
+        touch(results_dir + "/.flag/{x}_internal_priming.done")
 
 rule _internal_priming_identifier:
     input: 
         bam = os.path.join(results_dir, "flames_out/{x}/align2genome.bam"),
         bai = os.path.join(results_dir, "flames_out/{x}/align2genome.bam.bai"),
-        github = ".flag/gitrepo_youyupei_PrimeSpotter.commit",
+        github = results_dir + "/.flag/gitrepo_youyupei_PrimeSpotter.commit",
         gtf = config['reference']['gtf'],
         genome = config['reference']['genome']
     output:
-        flag=touch(".flag/{x}_run_primspotter.done"),
+        flag=touch(results_dir + "/.flag/{x}_run_primspotter.done"),
         summary=os.path.join(results_dir, "int_prim_analysis/{x}_summary.txt"),
         bam = os.path.join(results_dir, "int_prim_analysis/{x}_IP_tag_added.bam"),
         bai = os.path.join(results_dir, "int_prim_analysis/{x}_IP_tag_added.bam.bai")

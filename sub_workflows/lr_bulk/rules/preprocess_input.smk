@@ -1,4 +1,3 @@
-configfile: "config/config.yaml"
 results_dir = config["output_path"]
 
 rule split_pooled_bam:

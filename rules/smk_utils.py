@@ -1,9 +1,8 @@
 from snakemake.utils import min_version, _load_configfile
 
 
-
 def load_configfile(configfile):
-    """Load a config file and return it as dictionary."""
+    """Load a config file."""
     config = _load_configfile(configfile)
     return config
 

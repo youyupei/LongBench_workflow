@@ -1,16 +1,27 @@
 configfile: "config/config.yaml"
+envvars:
+    "GITHUB_TOKEN"
+
+sys.path.insert(0, config['main_wf_dir'] + "/rules/")
+import smk_utils
+
+# Load the configuration
+config = smk_utils.load_configfile(config['global_config_path'])
+sub_wf_config = smk_utils.load_configfile(config['sub_wf_config']['lr_bulk'])
+config = smk_utils.update_config(config, sub_wf_config)
+
 include: "rules/minimap2.smk"
 include: "rules/internal_priming.smk"
 include: "rules/qc.smk"
 include: "rules/quantification.smk"
-include: config['main_workflow_dir'] + "/rules/utilities.smk"
+include: config['main_wf_dir'] + "/rules/utilities.smk"
 
 results_dir = config["output_path"]
 # make sure the results_dir exists
 shell("mkdir -p {results_dir}")
 
 # Email the workflow status
-EMAIL = "you.yu@wehi.edu.au"
+EMAIL = config["email"]
 onsuccess:
    shell("mail -s 'DONE: lr_bulk Snakemake run' {EMAIL} < {log}")
 onerror:

@@ -1,4 +1,3 @@
-configfile: "config/config.yaml"
 results_dir = config["output_path"]
 
 # Main work flow
@@ -6,7 +5,7 @@ rule blaze:
     input:
         fastq = lambda wildcards: config["samples_fastq_dir"][wildcards.sample]
     output:
-        flag = ".flag/blaze_{sample}.done",
+        flag = results_dir + "/.flag/blaze_{sample}.done",
         out_fastq = config["output_path"] + "/flames_out/{sample}/matched_reads.fastq"
     params:
         blaze_path = "/stornext/Home/data/allstaff/y/you.yu/.cache/R/basilisk/1.14.0/FLAMES/1.9.1/flames_env/bin",
@@ -55,11 +54,13 @@ rule blaze:
 
 rule flame_run_no_identification:
     input:
-        flag = ".flag/blaze_{sample}.done",
-        config_file = 'config/flames.json',
-        fastq = config["output_path"] + "/flames_out/{sample}/matched_reads.fastq"
+        flag = results_dir + "/.flag/blaze_{sample}.done",
+        config_file = config['flames_config'],
+        fastq = config["output_path"] + "/flames_out/{sample}/matched_reads.fastq",
+        gtf = config['reference']['gtf'],
+        genome = config['reference']['genome']
     output:
-        flag = ".flag/flames_{sample}.done",
+        flag = results_dir + "/.flag/flames_{sample}.done",
         output_list = [
             os.path.join(results_dir,"flames_out/{sample}/align2genome.bam"),
             os.path.join(results_dir,"flames_out/{sample}/realign2transcript.bam")
@@ -68,6 +69,7 @@ rule flame_run_no_identification:
         cpus_per_task=32,
         mem_mb=500000,
         slurm_extra="--mail-type=END,FAIL --mail-user=you.yu@wehi.edu.au"
+
     shell:
         """
         module load minimap2
@@ -82,51 +84,8 @@ rule flame_run_no_identification:
             config_file <- '{input.config_file}'
             fastq_flames= '$out_dir/matched_reads.fastq'
             outdir = '$out_dir'
-            GTF = '{config[reference][gtf]}'
-            genome = '{config[reference][genome]}'
-
-            sce <- sc_long_pipeline(fastq=fastq_flames, 
-                                    outdir=outdir, 
-                                    annot=GTF, 
-                                    genome_fa=genome, 
-                                    config_file=config_file,
-                                    barcodes_file='not used')
-            "
-
-        touch {output.flag}
-        """
-
-
-rule flame_run_no_identification_tmp:
-    """
-    This is a tmp rule for regenerating the flames output with no identification (assuming 
-    previous run has generated the gene quantification and deduplicated fastq)
-    """
-    input:
-        config_file = 'config/flames_trans_quant_only.json',
-        fastq = config["output_path"] + "/flames_out/{sample}/matched_reads_dedup.fastq"
-    output:
-        flag = ".flag/flames_{sample}_tmp.done"
-    resources:
-        cpus_per_task=32,
-        mem_mb=500000,
-        slurm_extra="--mail-type=END,FAIL --mail-user=you.yu@wehi.edu.au"
-    shell:
-        """
-        module load minimap2
-        module load samtools
-
-        out_dir=$(dirname {input.fastq})
-        mkdir -p $out_dir
-        mkdir -p $(dirname {output.flag})
-
-        Rscript -e "
-            library(FLAMES)
-            config_file <- '{input.config_file}'
-            fastq_flames= '$out_dir/matched_reads.fastq'
-            outdir = '$out_dir'
-            GTF = '{config[reference][gtf]}'
-            genome = '{config[reference][genome]}'
+            GTF = '{input.gtf}'
+            genome = '{input.genome}'
 
             sce <- sc_long_pipeline(fastq=fastq_flames, 
                                     outdir=outdir, 

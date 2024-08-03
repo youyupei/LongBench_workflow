@@ -1,7 +1,11 @@
-name: main
+name: main_env
 channels:
   - bioconda
   - conda-forge
   - defaults
 dependencies:
+  - python=3.10
   - salmon=1.10.2
+  - pip:
+    - blaze2==2.2.1
+    - fast-edit-distance==1.2.1

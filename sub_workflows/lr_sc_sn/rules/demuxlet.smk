@@ -1,4 +1,3 @@
-results_dir = config['output_path']
 rule run_demuxlet:
     """
     Run demuxlet on the single cell nuclei data.

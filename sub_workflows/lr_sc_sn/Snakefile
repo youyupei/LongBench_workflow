@@ -1,10 +1,16 @@
-from snakemake.utils import min_version, _load_configfile
+configfile: "config/config.yaml"
 envvars:
     "GITHUB_TOKEN"
 
-EMAIL = "you.yu@wehi.edu.au"
+sys.path.insert(0, config['main_wf_dir'] + "/rules/")
+import smk_utils
 
-configfile: "config/config.yaml"
+# Load the configuration
+config = smk_utils.load_configfile(config['global_config_path'])
+sub_wf_config = smk_utils.load_configfile(config['sub_wf_config']['lr_sc_sn'])
+config = smk_utils.update_config(config, sub_wf_config)
+
+
 include: "rules/internal_priming.smk"
 include: "rules/flames.smk"
 include: "rules/qc.smk"
@@ -12,10 +18,10 @@ include: "rules/mutation.smk"
 include: "rules/demuxlet.smk"
 include: "rules/emptydrop_gene_quant.smk"
 #include: "rules/salmon.smk"
-include: config['main_workflow_dir'] + "/rules/utilities.smk"
+include: config['main_wf_dir'] + "/rules/utilities.smk"
 
-# rule all:
-#     input
+
+EMAIL = config["email"]
 onsuccess:
    shell("mail -s 'DONE: lr_sc_sn Snakemake run' {EMAIL} < {log}")
 onerror:
@@ -27,8 +33,6 @@ rule all:
         os.path.join(results_dir, "qc/.flag/all_qc.done"),
         os.path.join(results_dir, ".flag/demuxlet.done")
 
-        # internal priming analysis
-        # expand(".flag/{sample}_internal_priming.done", sample=config["sample_id"])
 
 
 # rule internal_priming_analysis:

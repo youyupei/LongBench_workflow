@@ -1,4 +1,3 @@
-configfile: "config/config.yaml"
 results_dir = config["output_path"]
 barcode_list = config['barcode_list']
 cell_line_to_barcode = {cl: bc for d in barcode_list for bc, cl in d.items()}

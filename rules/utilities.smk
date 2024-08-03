@@ -1,23 +1,9 @@
-from snakemake.utils import min_version, _load_configfile
-from smk_utils import *
-
-# Set up config
-global_config_path = _load_configfile("config/config.yaml")['global_config_path']
-global_config = _load_configfile(global_config_path)
-if config:  
-    # the subworkflow config exisit and will overwrite the global config if conflicts
-    config = update_config(global_config, config)
-else:   
-    config = global_config
-
-    
-
 # BAM SAM and fastq
 rule sort_and_index_bam:
     input:
-        "{x}.bam"
+        os.path.join(config['output_path'],"{x}.bam")
     output:
-        "{x}.bam.bai"
+        os.path.join(config['output_path'],"{x}.bam.bai")
     resources:
         cpus_per_task=8,
         mem_mb=64000
@@ -31,23 +17,23 @@ rule sort_and_index_bam:
         rm {input}.tmp.bam
         """
 
-# rule sam_to_bam:
-#     input:
-#         "{x}.sam"
-#     output:
-#         "{x}.bam"
-#     priority: -100  # Lowest priority, only run if no other rules can generate the output
-#     shell:
-#         """
-#         module load samtools && samtools view -bS {input} > {output}
-#         """
+rule sam_to_bam:
+    input:
+        os.path.join(config['output_path'],"{x}.sam")
+    output:
+        os.path.join(config['output_path'],"{x}.bam")
+    priority: -100  # Lowest priority, only run if no other rules can generate the output
+    shell:
+        """
+        module load samtools && samtools view -bS {input} > {output}
+        """
 
 
 rule subsample_bam:
     input:
-        "{x}.bam"
+        os.path.join(config['output_path'],"{x}.bam")
     output:
-        "{x}.subsampled_{rate}.bam"
+        os.path.join(config['output_path'],"{x}.subsampled_{rate}.bam")
     resources:
         cpus_per_task=1,
         mem_mb=32000
@@ -57,9 +43,9 @@ rule subsample_bam:
 
 rule bam_to_fastq:
     input:
-        "{x}.bam"
+        os.path.join(config['output_path'],"{x}.bam")
     output:
-        "{x}.fastq"
+        os.path.join(config['output_path'],"{x}.fastq")
     resources:
         cpus_per_task=1,
         mem_mb=32000
@@ -72,9 +58,9 @@ rule bam_to_fastq:
 # GTF and BED
 rule gtf_to_bed:
     input:
-        "{x}.gtf"
+        os.path.join(config['output_path'],"{x}.gtf")
     output:
-        "{x}.gtf.bed"
+        os.path.join(config['output_path'],"{x}.gtf.bed")
     resources:
         cpus_per_task=1,
         mem_mb=32000
@@ -89,9 +75,9 @@ rule git_check_commit:
     usage: ask for .flag/gitrepo_{git_repo}.commit where git_repo takes the form of "user_repo"
     """
     input:
-        ".flag/gitrepo_{git_repo}.exist"
+        os.path.join(config['output_path'],".flag/gitrepo_{git_repo}.exist")
     output:
-        touch(".flag/gitrepo_{git_repo}.commit")
+        touch(os.path.join(config['output_path'],".flag/gitrepo_{git_repo}.commit"))
     params:
         local_dir = config['git_script_dir'],
         git_repo = lambda w: w.git_repo.replace("_", '/')
@@ -119,7 +105,7 @@ rule git_check_commit:
 
 rule _git_clone:
     output:
-        touch(".flag/gitrepo_{git_repo}.exist")
+        touch(os.path.join(config['output_path'],".flag/gitrepo_{git_repo}.exist"))
     params:
         local_dir = config['git_script_dir'],
         git_repo = lambda w: w.git_repo.replace("_", '/')

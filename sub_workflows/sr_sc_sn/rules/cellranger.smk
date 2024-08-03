@@ -1,4 +1,3 @@
-configfile: "config/input_config.yaml"
 results_dir = config["output_path"]
 
 rule run_cellranger:

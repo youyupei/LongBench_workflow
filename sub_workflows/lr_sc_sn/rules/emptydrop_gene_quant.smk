@@ -109,7 +109,7 @@ rule empty_drop_run_flames:
         config_file = 'config/flames_gene_quant_only.json',
         fastq = config['output_path'] + '/emptydrop/{sample}.empty_drops.fastq'
     output:
-        flag = config['output_path'] + '/emptydrop/{sample}_flames/emptydrop_gene_quantification.done'
+        flag = config['output_path'] + '/.flag/{sample}_flames/emptydrop_gene_quantification.done'
     resources:
         cpus_per_task=32,
         mem_mb=500000,

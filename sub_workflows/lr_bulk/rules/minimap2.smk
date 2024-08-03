@@ -1,5 +1,3 @@
-configfile: "config/config.yaml"
-
 results_dir = config["output_path"]
 barcode_list = config['barcode_list']
 cell_line_to_barcode = {cl: bc for d in barcode_list for bc, cl in d.items()}
@@ -19,7 +17,7 @@ rule ont_bulk_minimap2_transcript:
     input:
         in_bam = lambda w: os.path.join(config['samples_raw_bam_dir']['ont_bulk'],
                             f"bulk_{w.pool}_SQK-PCB114-24_barcode0{cell_line_to_barcode[w.cell_line]}.bam"),
-        ref = config['reference']['transcript_with_sequin']
+        ref = config['reference']['transcript']
     output:
         bam = results_dir + "/Alignment/ont_bulk_{pool}_{cell_line}.bam"
     resources:

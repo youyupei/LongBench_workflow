@@ -1,4 +1,3 @@
-configfile: "config/config.yaml"
 results_dir = config["output_path"]
 
 ###################### Run QC pipelines ###############################
@@ -11,7 +10,7 @@ rule all_qc:
                 os.path.join(results_dir, "qc/{sample}_QualityScoreDistribution_picard.pdf"),
                 os.path.join(results_dir, "qc/{sample}_align2genome.bam.picard_AlignmentSummaryMetrics.txt"),
                 os.path.join(results_dir, "qc/{sample}_flame_coverage_plot.{flames_cov_plot_suffix}"),
-                ".flag/{sample}_sqanti3.done"
+                os.path.join(results_dir, ".flag/{sample}_sqanti3.done")
             ],
             sample=config["sample_id"],
             read_length_source=["raw", "blaze_demux"],
@@ -110,9 +109,9 @@ rule picard_QualityScoreDistribution:
 rule picard_coverage_data:
     input:
         bam = os.path.join(results_dir,"flames_out/{sample}/align2genome.bam"),
-        refFlat = '/home/users/allstaff/you.yu/LongBench/reference_files/GRCh38/refFlat.txt',
+        refFlat = config['reference']['picard_reference'],
         picard_dir = "/home/users/allstaff/you.yu/project/software/picard.jar",
-        flag = ".flag/flames_{sample}.done"
+        flag = os.path.join(results_dir, ".flag/flames_{sample}.done")
     output:
         os.path.join(results_dir, "qc/{sample}_coverage_picard.RNA_Metrics")
     resources:
@@ -170,7 +169,6 @@ rule flame_coverage_plot:
 
 
 ## SQANTI3
-
 rule sqanti3:
     input:
         reads=os.path.join(results_dir, "flames_out/{sample}/matched_reads_subsampled.fastq"),
@@ -178,7 +176,7 @@ rule sqanti3:
         genome=config['reference']['genome'],
     
     output:
-        touch(".flag/{sample}_sqanti3.done")
+        touch(results_dir + "/.flag/{sample}_sqanti3.done")
     conda: 
         config['software']['sqanti3_env']
     resources:
@@ -191,10 +189,12 @@ rule sqanti3:
         additional_arg = "--skipORF"
     shell:
         """
-        {params.sqanti3_qc_script} {input.reads} {input.gtf} {input.genome} {params.additional_arg} --fasta  --cpus {resources.cpus_per_task} --force_id_ignore -d {params.outidr} --report pdf
+        {params.sqanti3_qc_script} {input.reads} {input.gtf} {input.genome} {params.additional_arg} --fasta  --cpus {resources.cpus_per_task} --force_id_ignore -d {params.outidr} --report html
         """
     
-rule _subsample_reads_for_sqanti3:
+rule _subsample_1M_reads_for_sqanti3:
+    """
+    """
     input:
         os.path.join(results_dir, "flames_out/{sample}/matched_reads.fastq")
     output:
@@ -206,9 +206,8 @@ rule _subsample_reads_for_sqanti3:
         n_reads = 200
     shell:
         """
-        seqtk sample -s100 {input} {params.n_reads} > {output}
+        seqtk sample -s1000000 {input} {params.n_reads} > {output}
         """
-
 
 # rule get_intronic_pct:
 #     input:

@@ -1,0 +1,61 @@
+# result
+output_path: "/vast/projects/LongBench/analysis/lr_sc_sn/result"
+
+# reference file
+reference:
+  genome: "/home/users/allstaff/you.yu/project/ref_files/GRCh38.primary_assembly.genome.fa"
+  gtf: "/home/users/allstaff/you.yu/LongBench/reference_files/GRCh38/gencode.v44.annotation.gtf"
+  cellline_mutations: '/home/users/allstaff/you.yu/LongBench/reference_files/celllines_mutation/mutations_subsetted_NAsdropped.csv'
+  picard_reference: '/home/users/allstaff/you.yu/LongBench/reference_files/GRCh38/refFlat.txt'
+
+# # This is current not used in the pipeline, as the data has been basecalled
+# samples_raw_dir: 
+#   ont_sn: "/stornext/Projects/promethion/promethion_access/lab_ritchie/20240523_WEHI_RITCHIE_LongBenchSN_full/long_term/"
+#   ont_sc: "/stornext/Projects/promethion/promethion_access/lab_ritchie/20240529_WEHI_RITCHIE_LongBenchSC/long_term/"
+  
+samples_fastq_dir:
+  ont_sn: "/home/users/allstaff/you.yu/LongBench/sequencing_data/ONT_sn/sn_ONT.fastq"
+  ont_sc: "/home/users/allstaff/you.yu/LongBench/sequencing_data/ONT_sc/ont_sc.fastq"
+  ont_sn_clean: "/home/users/allstaff/you.yu/LongBench/sequencing_data/ONT_sn/ont_sn_clean.fastq"
+  ont_sc_clean: "/home/users/allstaff/you.yu/LongBench/sequencing_data/ONT_sc/ont_sc_clean.fastq"
+
+
+flames_config: /home/users/allstaff/you.yu/LongBench/analysis/workflow/sub_workflows/lr_sc_sn/config/flames.json
+
+sample_id:
+  - 'ont_sn'
+  - 'ont_sc'
+  - 'ont_sn_clean'
+  - 'ont_sc_clean'
+
+# Config for FLAMES/BLAZE
+expected_cells:
+  ont_sn: 5000
+  ont_sc: 5000
+  ont_sn_clean: 5000
+  ont_sc_clean: 5000
+
+count_thres: # Count threshold will override expected_cells
+  ont_sn: 500
+  ont_sc: 
+  ont_sn_clean: 
+  ont_sc_clean:
+ 
+force_cells: # Count threshold will override expected_cells
+  ont_sn: 
+  ont_sc: 
+  ont_sn_clean: 10000
+  ont_sc_clean:
+
+whitelist_10x:
+  ont_sn: 
+  ont_sc: 
+  ont_sn_clean: 
+  ont_sc_clean:
+
+flames_env_path: "/stornext/Home/data/allstaff/y/you.yu/.cache/R/basilisk/1.14.0/FLAMES/1.9.1/flames_env"
+
+software:
+  sqanti3_dir: "/home/users/allstaff/you.yu/LongBench/software/SQANTI3/"
+  sqanti3_env: "SQANTI3"
+  demuxlet: "/home/users/allstaff/you.yu/LongBench/software/demuxlet/demuxlet/bin/demuxlet"

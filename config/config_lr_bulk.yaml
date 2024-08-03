@@ -1,0 +1,44 @@
+reference:
+  # have to exist
+  genome: "/home/users/allstaff/you.yu/LongBench/reference_files/GRCh38.add.spikein/GRCh38.primary_assembly.genome.add.spikein.fa"
+  gtf: "/home/users/allstaff/you.yu/LongBench/reference_files/GRCh38.add.spikein/gencode.v44.transcripts.add.spikein.gtf"
+  transcript: "/home/users/allstaff/you.yu/LongBench/reference_files/GRCh38.add.spikein/GRCh38.primary_assembly.genome.add.spikein.fa"
+  picard_reference: '/home/users/allstaff/you.yu/LongBench/reference_files/GRCh38/refFlat.txt'
+
+
+# This is current not used in the pipeline, as the data has been basecalled
+samples_raw_dir: 
+  ont_bulk: "/stornext/Projects/promethion/promethion_access/lab_ritchie/20240620_WEHI_RITCHIE_LongBench_Bulk/long_term/"
+
+samples_raw_bam_dir:
+  ont_bulk: "/home/users/allstaff/you.yu/LongBench/sequencing_data/ONT_bulk/"
+
+barcode_list:
+  - 1: H146
+  - 2: H69
+  - 3: H526
+  - 4: H211
+  - 5: SHP77
+  - 6: H1975
+  - 7: H2228
+  - 8: HCC827
+
+cell_line_list:
+  - H146
+  - H69
+  - H526
+  - H211
+  - SHP77
+  - H1975
+  - H2228
+  - HCC827
+
+output_path: 
+  "/vast/projects/LongBench/analysis/lr_bulk/result"
+
+run_id:
+  - 'ont_bulk'
+
+software:
+  sqanti3_dir: "/home/users/allstaff/you.yu/LongBench/software/SQANTI3/"
+  sqanti3_env: "SQANTI3"

@@ -1,8 +1,18 @@
-configfile: "config/input_config.yaml"
+configfile: "config/config.yaml"
+envvars:
+    "GITHUB_TOKEN"
+
+sys.path.insert(0, config['main_wf_dir'] + "/rules/")
+import smk_utils
+
+# Load the configuration
+config = smk_utils.load_configfile(config['global_config_path'])
+sub_wf_config = smk_utils.load_configfile(config['sub_wf_config']['sr_sc_sn'])
+config = smk_utils.update_config(config, sub_wf_config)
+
 include: "rules/cellranger.smk"
 
-EMAIL='you.yu@wehi.edu.au'
-
+EMAIL = config["email"]
 onsuccess:
    shell("mail -s 'DONE: ill_sc_sn Snakemake run' {EMAIL} < {log}")
 onerror:

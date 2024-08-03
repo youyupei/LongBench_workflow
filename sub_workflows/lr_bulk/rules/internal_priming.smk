@@ -1,5 +1,4 @@
 import textwrap, os
-configfile: "config/config.yaml"
 results_dir = config["output_path"]
 
 rule run_internal_priming_analysis:

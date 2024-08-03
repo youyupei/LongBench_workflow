@@ -1,4 +1,3 @@
-configfile: "config/config.yaml"
 results_dir = config["output_path"]
 main_conda_env = config['conda_config_path'] + "/main.yaml"
 
@@ -15,7 +14,7 @@ rule run_salmon:
 rule salmon:
     input:
         bam = results_dir + "/Alignment/ont_bulk_{cell_line}.bam",
-        ref = config["reference"]["transcript_with_sequin"]
+        ref = config["reference"]["transcript"]
     output:
         out_dir = directory(os.path.join(results_dir,"salmon_output/{run_id}_{cell_line}")),
         out_flag = touch(results_dir + "/.flag/{run_id}_{cell_line}.salmon.done")
