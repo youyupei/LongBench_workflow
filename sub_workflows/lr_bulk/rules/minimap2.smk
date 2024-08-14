@@ -5,9 +5,7 @@ cell_line_to_barcode = {cl: bc for d in barcode_list for bc, cl in d.items()}
 
 rule run_all_mapping:
     input:
-        expand(results_dir + "/.flag/ont_bulk_{cell_line}_AlignmentDone.flag", cell_line = cell_line_to_barcode.keys())
-        #expand(results_dir + "/Alignment/ont_bulk_{cell_line}.bam", cell_line = cell_line_to_barcode.keys())
-        
+        expand(results_dir + "/.flag/ont_bulk_{cell_line}_AlignmentDone.flag", cell_line = cell_line_to_barcode.keys()) 
     output:
         touch(results_dir + "/.flag/run_all_mapping.done")
 
@@ -21,10 +19,10 @@ rule ont_bulk_minimap2_transcript:
     output:
         bam = results_dir + "/Alignment/ont_bulk_{pool}_{cell_line}.bam"
     resources:
-        cpus_per_task=8,
-        mem_gb=64
+        cpus_per_task=16,
+        mem_mb=64000
     params:
-        minimap2 = "/home/users/allstaff/you.yu/LongBench/software/minimap2-2.28_x64-linux/minimap2"
+        minimap2 = config["software"]["minimap2"]
     shell:
         """
         module load samtools
@@ -35,11 +33,11 @@ rule ont_bulk_cat_unsorted_bam:
     input:
         # lambda w: expand(results_dir + "/Alignment/ont_bulk_{p}_{cl}.bam",
         #                 p = ["pool", "pool2", "pool3"], cl = [w.cell_line])
-        expand(results_dir + "/Alignment/ont_bulk_{pool}_{cell_line}.bam", 
-                        cell_line = cell_line_to_barcode.keys(),
-                        pool = ["pool", "pool2", "pool3"])
+        [results_dir + f"/Alignment/ont_bulk_{pool}_" + "{cell_line}.bam" for pool  in ["pool", "pool2", "pool3"]]
     output:
         results_dir + "/Alignment/ont_bulk_{cell_line}.bam"
+    wildcard_constraints:
+        cell_line='|'.join(cell_line_to_barcode.keys())
     resources:
         cpus_per_task=8,
         mem_gb=64
@@ -58,7 +56,7 @@ rule ont_bulk_clean_up:
     params:
         bam = lambda w: expand(results_dir + "/Alignment/ont_bulk_{pool}_{x}.bam",
                         pool = ["pool", "pool2", "pool3"], x = [w.cell_line])
-    shell:
-        """
-        rm -f {params.bam}
-        """
+    # shell:
+    #     """
+    #     rm -f {params.bam}
+    #     """

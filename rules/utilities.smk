@@ -17,16 +17,15 @@ rule sort_and_index_bam:
         rm {input}.tmp.bam
         """
 
-rule sam_to_bam:
-    input:
-        os.path.join(config['output_path'],"{x}.sam")
-    output:
-        os.path.join(config['output_path'],"{x}.bam")
-    priority: -100  # Lowest priority, only run if no other rules can generate the output
-    shell:
-        """
-        module load samtools && samtools view -bS {input} > {output}
-        """
+# rule sam_to_bam:
+#     input:
+#         os.path.join(config['output_path'],"{x}.sam")
+#     output:
+#         os.path.join(config['output_path'],"{x}.bam")
+#     shell:
+#         """
+#         module load samtools && samtools view -bS {input} > {output}
+#         """
 
 
 rule subsample_bam:
@@ -79,7 +78,7 @@ rule git_check_commit:
     output:
         touch(os.path.join(config['output_path'],".flag/gitrepo_{git_repo}.commit"))
     params:
-        local_dir = config['git_script_dir'],
+        local_dir = config['git_repo_dir'],
         git_repo = lambda w: w.git_repo.replace("_", '/')
     localrule: True
     shell:
@@ -107,7 +106,7 @@ rule _git_clone:
     output:
         touch(os.path.join(config['output_path'],".flag/gitrepo_{git_repo}.exist"))
     params:
-        local_dir = config['git_script_dir'],
+        local_dir = config['git_repo_dir'],
         git_repo = lambda w: w.git_repo.replace("_", '/')
     localrule: True
     shell:

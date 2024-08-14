@@ -1,23 +1,24 @@
 results_dir = config["output_path"]
 
 ###################### Run QC pipelines ###############################
-rule all_qc:
+rule qc:
     input:
         expand(
             [
-                os.path.join(results_dir, "qc/{sample}.{read_length_source}.read_length.txt"),
-                os.path.join(results_dir, "qc/{sample}_coverage_picard.RNA_Metrics"),
-                os.path.join(results_dir, "qc/{sample}_QualityScoreDistribution_picard.pdf"),
-                os.path.join(results_dir, "qc/{sample}_align2genome.bam.picard_AlignmentSummaryMetrics.txt"),
-                os.path.join(results_dir, "qc/{sample}_flame_coverage_plot.{flames_cov_plot_suffix}"),
-                os.path.join(results_dir, ".flag/{sample}_sqanti3.done")
+                # os.path.join(results_dir, "qc/{sample}.{read_length_source}.read_length.txt"),
+                # os.path.join(results_dir, "qc/{sample}_coverage_picard.RNA_Metrics"),
+                # os.path.join(results_dir, "qc/{sample}_QualityScoreDistribution_picard.pdf"),
+                # os.path.join(results_dir, "qc/{sample}_align2genome.bam.picard_AlignmentSummaryMetrics.txt"),
+                # os.path.join(results_dir, "qc/{sample}_flame_coverage_plot.{flames_cov_plot_suffix}"),
+                os.path.join(results_dir, ".flag/{sample}_sqanti3.done"),
+                os.path.join(results_dir, ".flag/{sample}_LongReadSum.done")
             ],
             sample=config["sample_id"],
             read_length_source=["raw", "blaze_demux"],
             flames_cov_plot_suffix = ['png', 'CDS.png']
         )
     output:
-        os.path.join(results_dir, "qc/.flag/all_qc.done")
+        os.path.join(results_dir, "qc/.flag/qc.done")
     shell:
         """
         mkdir -p $(dirname {output})
@@ -161,10 +162,12 @@ rule flame_coverage_plot:
         cpus_per_task=1,
         mem_mb=32000,
         slurm_extra="--mail-type=END,FAIL --mail-user=you.yu@wehi.edu.au"
+    params:
+        script = os.path.join(config['sub_wf_dir'],'scripts/plot_coverage.R')
     shell:
         """
         mkdir -p $(dirname {output})
-        Rscript scripts/plot_coverage.R {input.bam} {input.gtf} {output}
+        Rscript  {params.script} {input.bam} {input.gtf} {output}
         """
 
 
@@ -178,7 +181,7 @@ rule sqanti3:
     output:
         touch(results_dir + "/.flag/{sample}_sqanti3.done")
     conda: 
-        config['software']['sqanti3_env']
+        config['conda']['sqanti3']
     resources:
         cpus_per_task=16,
         mem_mb=32000,
@@ -189,12 +192,11 @@ rule sqanti3:
         additional_arg = "--skipORF"
     shell:
         """
+        module unload R
         {params.sqanti3_qc_script} {input.reads} {input.gtf} {input.genome} {params.additional_arg} --fasta  --cpus {resources.cpus_per_task} --force_id_ignore -d {params.outidr} --report html
         """
     
 rule _subsample_1M_reads_for_sqanti3:
-    """
-    """
     input:
         os.path.join(results_dir, "flames_out/{sample}/matched_reads.fastq")
     output:
@@ -203,12 +205,32 @@ rule _subsample_1M_reads_for_sqanti3:
         cpus_per_task=1,
         mem_mb=32000
     params:
-        n_reads = 200
+        n_reads = 1000000,
+        seed = config['random_seed']
     shell:
         """
-        seqtk sample -s1000000 {input} {params.n_reads} > {output}
+        seqtk sample -s {params.n_reads} {input} {params.n_reads} > {output}
         """
 
+
+# Try LongReadSum
+rule LongReadSum:
+    input:
+        reads=os.path.join(results_dir, "flames_out/{sample}/matched_reads_subsampled.fastq")
+    output:
+        flag = touch(os.path.join(results_dir, ".flag/{sample}_LongReadSum.done"))
+    container:
+        "docker://genomicslab/longreadsum"
+    resources:
+        cpus_per_task=16,
+        mem_mb=32000,
+        slurm_extra="--mail-type=END,FAIL --mail-user=you.yu@wehi.edu.au"
+    params:
+        dir = os.path.join(results_dir,"qc/LongReadSum")
+    shell:
+        """
+        genomicslab/longreadsum fq -i {input.reads} -o {params.dir} --threads {resources.cpus_per_task}
+        """
 # rule get_intronic_pct:
 #     input:
 #         expand(os.path.join(results_dir, "qc/{sample}_coverage_picard.RNA_Metrics"), sample=config['sample_id'])

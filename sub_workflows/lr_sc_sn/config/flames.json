@@ -1,12 +1,15 @@
 {
-    "comment": "this is the default config for nanopore single cell long read data using 10x VDJ kit (5'end). use splice annotation in alignment. ",
     "pipeline_parameters": {
         "seed": 2023,
         "do_barcode_demultiplex": false,
         "do_genome_alignment": true,
         "do_gene_quantification": true,
-        "do_isoform_identification": false,
-        "bambu_isoform_identification": false,
+        "do_isoform_identification": true, 
+        "comment": [
+            "Config below only used when do_isoform_identification: true", 
+            "and the novel isoform discovery happens only when bambu_discovery (under 'isoform_parameters') is set to true"
+        ],
+        "bambu_isoform_identification": true,
         "do_read_realignment": true,
         "do_transcript_quantification": true,
         "threads": 32
@@ -33,7 +36,7 @@
         "min_cnt_pct": 0.001,
         "min_sup_pct": 0.2,
         "bambu_trust_reference": true,
-        "bambu_discovery": true,
+        "bambu_discovery": false,
         "strand_specific": 0,
         "remove_incomp_reads": 4,
         "downsample_ratio": 1

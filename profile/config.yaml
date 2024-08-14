@@ -1,8 +1,11 @@
 executor: "slurm"
 jobs: 50
 use-conda: true
+use-singularity: true
 rerun-incomplete: true
 default-resources:
-    mem_mb: 5000
+    mem_mb: 8000
+    runtime: 600
 conda-prefix: "/vast/projects/LongBench/analysis/workflow/conda/envs"
-keep-going: true
+singularity-prefix: "/vast/projects/LongBench/analysis/workflow/singularity"
+keep-going: false

@@ -2,7 +2,7 @@ reference:
   # have to exist
   genome: "/home/users/allstaff/you.yu/LongBench/reference_files/GRCh38.add.spikein/GRCh38.primary_assembly.genome.add.spikein.fa"
   gtf: "/home/users/allstaff/you.yu/LongBench/reference_files/GRCh38.add.spikein/gencode.v44.transcripts.add.spikein.gtf"
-  transcript: "/home/users/allstaff/you.yu/LongBench/reference_files/GRCh38.add.spikein/GRCh38.primary_assembly.genome.add.spikein.fa"
+  transcript: "/home/users/allstaff/you.yu/LongBench/reference_files/GRCh38.add.spikein/gencode.v44.transcripts.add.spikein.fa"
   picard_reference: '/home/users/allstaff/you.yu/LongBench/reference_files/GRCh38/refFlat.txt'
 
 
@@ -39,6 +39,3 @@ output_path:
 run_id:
   - 'ont_bulk'
 
-software:
-  sqanti3_dir: "/home/users/allstaff/you.yu/LongBench/software/SQANTI3/"
-  sqanti3_env: "SQANTI3"

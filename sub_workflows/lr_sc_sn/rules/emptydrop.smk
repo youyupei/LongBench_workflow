@@ -1,11 +1,23 @@
+main_conda = config["conda"]["main"]
+
+rule emptydrop:
+    input:
+        expand(config['output_path'] + '/.flag/{sample}_flames/emptydrop_gene_quantification.done',
+                sample = config['sample_id'])
+    output:
+        touch(config['output_path'] + '/.flag/emptydrop.done')
+
+
+
 rule get_empty_drop:
     """
     Get the empty drop cells from BLAZE
-    * BC ranked at 20000-30000 but excluding BC that are <3 ED a way from the whitelist
+    * BC ranked at 20000-30000 but excluding BC that are <4 ED a way from the whitelist
     * Use High quality reads only
-    * ED=0 for fast process. 
+    * Assignment ED=0 for fast process. 
     """
     input:
+        flag = rules.blaze.output.flag,
         putative_bc_csv = config['output_path'] + '/flames_out/{sample}/putative_bc.csv'
     output:
         config['output_path'] + '/emptydrop/{sample}.empty_drops_list.csv'
@@ -56,15 +68,18 @@ rule filter_empty_list:
     Filter the empty drop list by excluding BC that are <4 ED a way from the whitelist
     """
     input:
+        flag = rules.blaze.output.flag,
         emp_list = config['output_path'] + '/emptydrop/{sample}.empty_drops_list.csv',
         whitelist = config['output_path'] + '/flames_out/{sample}/whitelist.csv'
     output:
         config['output_path'] + '/emptydrop/{sample}.empty_drops_list.filtered.csv'
     localrule:
         True
+    conda:
+        main_conda
     shell:
         """
-    /stornext/System/data/apps/miniconda3/miniconda3-latest/bin/python3 -c '
+    python3 -c '
 from fast_edit_distance import edit_distance
 with open("{input.emp_list}") as el, open("{input.whitelist}") as wl:
     whitelist = [x.strip() for x in wl]
@@ -76,7 +91,6 @@ with open("{output}", "w") as f:
     '
         """
 
-
 rule empty_drop_read_assignment:
     input:
         emp_list = config['output_path'] + '/emptydrop/{sample}.empty_drops_list.filtered.csv',
@@ -84,13 +98,15 @@ rule empty_drop_read_assignment:
         fastq = lambda wildcards: config["samples_fastq_dir"][wildcards.sample]
     output:
         config['output_path'] + '/emptydrop/{sample}.empty_drops.fastq'
+    conda:
+        main_conda
     resources:
         cpus_per_task=32,
         mem_mb=20000,
         slurm_extra="--mail-type=END,FAIL --mail-user=you.yu@wehi.edu.au"
     shell:
         """
-    /stornext/System/data/apps/miniconda3/miniconda3-latest/bin/python3 -c '
+    python3 -c '
 from blaze import read_assignment
 read_assignment.assign_read(
     fastq_fns=["{input.fastq}"], # has to be a list
@@ -106,20 +122,27 @@ read_assignment.assign_read(
 
 rule empty_drop_run_flames:
     input:
-        config_file = 'config/flames_gene_quant_only.json',
-        fastq = config['output_path'] + '/emptydrop/{sample}.empty_drops.fastq'
+        config_file = config['flames_config'],
+        fastq = config['output_path'] + '/emptydrop/{sample}.empty_drops.fastq',
+        gtf = config['reference']['gtf'],
+        genome = config['reference']['genome']
     output:
-        flag = config['output_path'] + '/.flag/{sample}_flames/emptydrop_gene_quantification.done'
+        flag = touch(config['output_path'] + '/.flag/{sample}_flames/emptydrop_gene_quantification.done'),
+        dir = directory(config['output_path'] + '/emptydrop/{sample}_flames/')
     resources:
         cpus_per_task=32,
         mem_mb=500000,
         slurm_extra="--mail-type=END,FAIL --mail-user=you.yu@wehi.edu.au"
+    params:
+        minimap2 = config["software"]["minimap2"],
+        k8 = os.path.dirname(config["software"]["minimap2"]) + '/k8'
     shell:
         """
-        module load minimap2
         module load samtools
+        module unload R
+        module load R/4.4.0
 
-        out_dir=$(dirname {output.flag})
+        out_dir={output.dir}
         mkdir -p $out_dir
 
         Rscript -e "
@@ -127,16 +150,16 @@ rule empty_drop_run_flames:
             config_file <- '{input.config_file}'
             fastq_flames= '{input.fastq}'
             outdir = '$out_dir'
-            GTF = '{config[reference][gtf]}'
-            genome = '{config[reference][genome]}'
+            GTF = '{input.gtf}'
+            genome = '{input.genome}'
 
             sce <- sc_long_pipeline(fastq=fastq_flames, 
                                     outdir=outdir, 
                                     annot=GTF, 
                                     genome_fa=genome, 
                                     config_file=config_file,
-                                    barcodes_file='not used')
+                                    barcodes_file='not used',
+                                    minimap2='{params.minimap2}',
+                                    k8='{params.k8}')
             "
-
-        touch {output.flag}
         """

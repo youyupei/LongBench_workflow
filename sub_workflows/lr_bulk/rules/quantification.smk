@@ -1,5 +1,5 @@
 results_dir = config["output_path"]
-main_conda_env = config['conda_config_path'] + "/main.yaml"
+main_conda = config["conda"]["main"]
 
 # PseudoBulk quantificaiton
 rule run_salmon:
@@ -19,15 +19,16 @@ rule salmon:
         out_dir = directory(os.path.join(results_dir,"salmon_output/{run_id}_{cell_line}")),
         out_flag = touch(results_dir + "/.flag/{run_id}_{cell_line}.salmon.done")
     conda:
-        main_conda_env
+        main_conda
     resources:
         cpus_per_task=32,
         mem_mb=32000,
         slurm_extra="--mail-type=END,FAIL --mail-user=you.yu@wehi.edu.au"
     params:
-        lib_type = "A" # auto
+        lib_type = "A", # auto
+        gibbs_samples = 40
     shell:
-        "salmon quant -t {input.ref} -l {params.lib_type} -a {input.bam} -p {resources.cpus_per_task}  -o {output.out_dir} --ont "
+        "salmon quant -t {input.ref} -l {params.lib_type} -a {input.bam} -p {resources.cpus_per_task}  -o {output.out_dir} --ont --numBootstraps {params.gibbs_samples}"
 
 
 # rule picard_SortSam:

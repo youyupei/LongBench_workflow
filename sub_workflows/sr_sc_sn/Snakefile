@@ -2,15 +2,17 @@ configfile: "config/config.yaml"
 envvars:
     "GITHUB_TOKEN"
 
-sys.path.insert(0, config['main_wf_dir'] + "/rules/")
-import smk_utils
-
 # Load the configuration
-config = smk_utils.load_configfile(config['global_config_path'])
-sub_wf_config = smk_utils.load_configfile(config['sub_wf_config']['sr_sc_sn'])
-config = smk_utils.update_config(config, sub_wf_config)
+sys.path.insert(0, config['main_wf_dir'] + "/config/")
+import config_parser
+config = config_parser.sub_wf_config_parser(
+   main_cfg_fn = config['global_config_path'], 
+   sub_wf_name = "sr_sc_sn")
+
+
 
 include: "rules/cellranger.smk"
+include: "rules/demuxlet.smk"
 
 EMAIL = config["email"]
 onsuccess:
@@ -20,4 +22,5 @@ onerror:
 
 rule all:
     input:
-       ".flag/cellranger.done"
+         rules.cellranger.output,
+         rules.demuxlet.output

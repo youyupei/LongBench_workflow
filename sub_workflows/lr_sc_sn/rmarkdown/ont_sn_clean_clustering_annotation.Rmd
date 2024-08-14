@@ -1,0 +1,128 @@
+---
+title: "Processing of ONT single cell/nuclei data"
+author: "Yupei"
+date: '2024-06-07'
+output:
+  html_document:
+    code_folding: hide
+    toc: yes
+    toc_float: yes
+    number_sections: yes
+    toc_depth: 4
+  pdf_document:
+    toc: yes
+    toc_depth: '4'
+params:
+    random_seed: 2024
+    cache_dir: NULL
+    sc_long_preprocessing_script: NULL
+    out_annotated_so_rds: NULL
+    fn_flames_gene_quant: NULL
+    ref_sc_rds: NULL
+
+---
+
+```{r setup, include=FALSE}
+options(future.globals.maxSize = 5 * 1024 * 1024 * 1024)
+knitr::opts_chunk$set(echo = T)
+knitr::opts_chunk$set(cache = TRUE, cache.path = params$cache_dir)
+library(dplyr)
+library(tidyverse)
+library(Seurat)
+library(patchwork)
+library(Matrix)
+library(ggplot2)
+library(gridExtra)
+library(stringr)
+library(grid)
+library(knitr)
+library(DT)
+library(glue)
+library(kableExtra)
+```
+
+```{r, file setup}
+# other setting:
+seed <- params$random_seed
+# make sure the output directory exists
+dir.create(dirname(params$out_annotated_so_rds), showWarnings = F, recursive = T)
+source(params$sc_long_preprocessing_script)
+```
+
+
+# sing-cell QC and clustring
+```{r input file, echo=T, cache=TRUE, warning=F, eval=T}
+# input file
+so <- load_flames_gene_quant(params$fn_flames_gene_quant, assay = "Gene_quant")
+```
+
+## Basic QC
+
+```{r}
+# Step 1: Remove Doublet
+so <- so %>% remove.doublet %>%  remove_outliers 
+so <- so %>% get_clusters(ndim=30,res=0.5,seed = 2024)
+## Check the ndim preserve most of the variance:
+ElbowPlot(so, ndims = 30, reduction = "pca.Gene_quant")
+```
+
+
+```{r, fig.height=20, fig.width=20}
+p <- DimPlot(
+  so,
+  group.by='seurat_clusters_Gene_quant_res0.5',
+  reduction = "umap.Gene_quant",
+  combine = FALSE, label.size = 5,
+  label = TRUE)
+p <-c(p, FeaturePlot(so, features = c("nFeature_Gene_quant", "nCount_Gene_quant", "percent.mt") , combine = F))
+do.call(grid.arrange, p)
+```
+
+
+# Cell line annotation from sc data
+```{r}
+sc.so <- readRDS(params$ref_sc_rds)
+
+anchors <- FindTransferAnchors(reference = sc.so, query = so, dims = 1:30, reference.reduction = "pca.Gene_quant")
+predictions <- TransferData(anchorset = anchors, refdata = sc.so$cell_lines, dims = 1:30)
+so$cell_lines <- predictions$predicted.id
+DimPlot(so, group.by = 'cell_lines', label = T) + ggtitle("Cell line annotation transfered from sc Data") + NoLegend()
+```
+
+## Sanity check: Marker gene expression in sc data and sn data
+```{r, fig.height=15, fig.width=15}
+# Idents(sc.so) <- sc.so$cell_lines
+# sc.cl.markers <- FindAllMarkers(sc.so)
+# 
+# 
+# sc.cl.markers %>%
+#     group_by(cluster) %>%
+#     dplyr::filter(avg_log2FC > 1) %>%
+#     slice_head(n = 20) %>%
+#     ungroup() -> top20
+# 
+# plot_gene <- top20$gene[top20$gene %in% intersect(so[['SCT']]@scale.data %>% rownames, sc.so[['SCT']]@scale.data %>% rownames)]
+# arrangeGrob(
+#   DimPlot(SetIdent(so, value=so$seurat_clusters_Gene_quant_res0.5), label=T)  +
+#     NoLegend() + 
+#     ggtitle("A. SN data clustering result") +
+#     theme(plot.title = element_text(face = "bold", size = 15)),
+#   DimPlot(so, group.by = 'cell_lines', label = T) + 
+#     ggtitle("B. Cell line annotation transfered from sc Data") + 
+#     NoLegend() +
+#     theme(plot.title = element_text(face = "bold", size = 15)),
+#   DoHeatmap(sc.so, features = plot_gene, size=3, angle=0, hjust=0.5)  + 
+#     NoLegend()+ 
+#     ggtitle("C. Marker gene expression in SC data") +
+#     theme(plot.title = element_text(face = "bold", size = 15)),
+#   DoHeatmap(SetIdent(so, value=factor(so$cell_lines, levels = levels(sc.so@active.ident))), features =plot_gene, size=3, angle=0, hjust=0.5)  + 
+#     NoLegend() + ggtitle("D. Marker gene (from C) expression in SN data") + 
+#     theme(plot.title = element_text(face = "bold", size = 15)),
+#   ncol = 2
+# ) %>% grid.arrange()
+```
+
+
+```{r}
+saveRDS(so, file = params$out_annotated_so_rds)
+```

@@ -182,7 +182,7 @@ rule sqanti3:
     output:
         touch(".flag/{sample}_sqanti3.done")
     conda: 
-        config['software']['sqanti3_env']
+        config['conda']['sqanti3']
     resources:
         cpus_per_task=32,
         mem_mb=200000,

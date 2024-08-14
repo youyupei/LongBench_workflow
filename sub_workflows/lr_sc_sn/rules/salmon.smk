@@ -1,4 +1,4 @@
-
+main_conda = config["conda"]["main"]
 rule salmon:
     input:
         bam = "/home/users/allstaff/you.yu/LongBench/analysis/lr_sc_sn/result/flames_out/ont_sc/test_Sortsam.name_sorted.bam",
@@ -7,7 +7,7 @@ rule salmon:
         out_dir = directory(os.path.join(results_dir,"salmon_output/test")),
 
     conda:
-        "../envs/main.yaml"
+        main_conda
     resources:
         cpus_per_task=32,
         mem_mb=32000,

@@ -1,11 +1,11 @@
 results_dir = config["output_path"]
 
-rule run_cellranger:
+rule cellranger:
     input:
         #expand(".flag/{sample_id}_cellranger.done", sample_id=config["sample_name"])
-        expand(".flag/{sample_id}_cellranger.done", sample_id=config["sample_name"])
+        expand(os.path.join(results_dir,".flag/{sample_id}_cellranger.done"), sample_id=config["sample_name"])
     output:
-        touch(".flag/cellranger.done")
+        touch(os.path.join(results_dir, ".flag/cellranger.done"))
 
 
 rule _cellranger_mkref:
@@ -13,7 +13,7 @@ rule _cellranger_mkref:
         gtf=config['reference']['gtf'],
         genome=config['reference']['genome']
     output:
-        os.path.join(results_dir, 'cellranger/refdata_genecodev44')
+        directory(os.path.join(results_dir, 'cellranger/refdata_genecodev44'))
     resources:
         mem_mb=256000,
         cpus_per_task=32
@@ -35,8 +35,8 @@ rule _cellranger_count_sc:
         fastq = "/home/users/allstaff/you.yu/LongBench/sequencing_data/illumina_sc",
         ref = os.path.join(results_dir, 'cellranger/refdata_genecodev44')
     output:
-        flag = touch('.flag/ill_sc_cellranger.done'),
-        dir = report(directory(os.path.join(results_dir, 'cellranger/ill_sc')), htmlindex="outs/web_summary.html")
+        flag = touch(os.path.join(results_dir,'.flag/ill_sc_cellranger.done')),
+        dir = directory(os.path.join(results_dir, 'cellranger/ill_sc'))
     resources:
         mem_mb=200000,
         cpus_per_task=16
@@ -59,8 +59,8 @@ rule _cellranger_count_sn:
         fastq = "/home/users/allstaff/you.yu/LongBench/sequencing_data/illumina_sn",
         ref = os.path.join(results_dir, 'cellranger/refdata_genecodev44')
     output:
-        flag = touch('.flag/ill_sn_cellranger.done'),
-        dir = report(directory(os.path.join(results_dir, 'cellranger/ill_sn')), htmlindex="outs/web_summary.html")
+        flag = touch(os.path.join(results_dir,'.flag/ill_sn_cellranger.done')),
+        dir = directory(os.path.join(results_dir, 'cellranger/ill_sn'))
     resources:
         mem_mb=200000,
         cpus_per_task=16

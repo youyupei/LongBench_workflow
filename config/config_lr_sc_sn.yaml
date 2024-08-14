@@ -5,6 +5,7 @@ output_path: "/vast/projects/LongBench/analysis/lr_sc_sn/result"
 reference:
   genome: "/home/users/allstaff/you.yu/project/ref_files/GRCh38.primary_assembly.genome.fa"
   gtf: "/home/users/allstaff/you.yu/LongBench/reference_files/GRCh38/gencode.v44.annotation.gtf"
+  transcript: "/home/users/allstaff/you.yu/LongBench/reference_files/GRCh38/gencode.v44.transcripts.fa"
   cellline_mutations: '/home/users/allstaff/you.yu/LongBench/reference_files/celllines_mutation/mutations_subsetted_NAsdropped.csv'
   picard_reference: '/home/users/allstaff/you.yu/LongBench/reference_files/GRCh38/refFlat.txt'
 
@@ -53,9 +54,13 @@ whitelist_10x:
   ont_sn_clean: 
   ont_sc_clean:
 
-flames_env_path: "/stornext/Home/data/allstaff/y/you.yu/.cache/R/basilisk/1.14.0/FLAMES/1.9.1/flames_env"
 
-software:
-  sqanti3_dir: "/home/users/allstaff/you.yu/LongBench/software/SQANTI3/"
-  sqanti3_env: "SQANTI3"
-  demuxlet: "/home/users/allstaff/you.yu/LongBench/software/demuxlet/demuxlet/bin/demuxlet"
+cell_line_list:
+  - H146
+  - H69
+  - H526
+  - H211
+  - SHP77
+  - H1975
+  - H2228
+  - HCC827

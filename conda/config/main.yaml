@@ -7,5 +7,5 @@ dependencies:
   - python=3.10
   - salmon=1.10.2
   - pip:
-    - blaze2==2.2.1
+    - blaze2==2.3.0a2
     - fast-edit-distance==1.2.1

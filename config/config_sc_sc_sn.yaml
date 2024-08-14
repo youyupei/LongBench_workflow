@@ -4,8 +4,10 @@ output_path:
 reference:
   # have to exist
   genome: "/home/users/allstaff/you.yu/project/ref_files/GRCh38.primary_assembly.genome.fa"
-  gtf: "/home/users/allstaff/you.yu/project/ref_files/gencode.v44.primary_assembly.basic.annotation.gtf"
+  gtf: "/home/users/allstaff/you.yu/LongBench/reference_files/GRCh38/gencode.v44.annotation.gtf"
   picard_reference: '/home/users/allstaff/you.yu/LongBench/reference_files/GRCh38/refFlat.txt'
+  transcript: "/home/users/allstaff/you.yu/LongBench/reference_files/GRCh38/gencode.v44.transcripts.fa"
+  cellline_mutations: '/home/users/allstaff/you.yu/LongBench/reference_files/celllines_mutation/mutations_subsetted_NAsdropped.csv'
 
 # This is current not used in the pipeline, as the data has been basecalled
 samples_fastq_dir:

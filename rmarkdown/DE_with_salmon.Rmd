@@ -1,0 +1,557 @@
+---
+title: "DE analysis"
+author: "Yupei"
+date: '2024-08-07'
+output:
+  html_document:
+    code_folding: hide
+    toc: yes
+    toc_float: yes
+    number_sections: yes
+    toc_depth: 4
+  pdf_document:
+    toc: yes
+    toc_depth: '4'
+params:
+  random_seed: 2024
+  cache_dir: NULL
+  sirv_ercc_gtf: '/home/users/allstaff/you.yu/LongBench/reference_files/SIRV_Set4_Norm_Sequences_20210507/SIRV_ERCC_longSIRV_multi-fasta_20210507.gtf'
+  sequins_gtf: '/vast/projects/LongBench/reference_files/Sequin_resources/v2.4/rnasequin_annotation_2.4.gtf'
+  sequins_tsv: '/vast/projects/LongBench/reference_files/Sequin_resources/v2.4/rnasequin_isoforms_2.4.tsv'
+  human_gtf: '/vast/projects/LongBench/reference_files/GRCh38/gencode.v44.annotation.gtf'
+  ont_bulk_salmon_dir: "/home/users/allstaff/you.yu/LongBench/analysis/lr_bulk/result/salmon_output/"
+  ont_sc_clean_salmon_dir: "/home/users/allstaff/you.yu/LongBench/analysis/lr_sc_sn/result/PseudoBulkSalmon/ont_sc_clean"
+  ont_sn_clean_salmon_dir: "/home/users/allstaff/you.yu/LongBench/analysis/lr_sc_sn/result/PseudoBulkSalmon/ont_sn_clean"
+  ont_sc_salmon_dir: "/home/users/allstaff/you.yu/LongBench/analysis/lr_sc_sn/result/PseudoBulkSalmon/ont_sc"
+  ont_sn_salmon_dir: "/home/users/allstaff/you.yu/LongBench/analysis/lr_sc_sn/result/PseudoBulkSalmon/ont_sn"
+  ill_bulk_salmon_dir: "/home/users/allstaff/you.yu/LongBench/analysis/illumina_bulk/tx_de_analysis/salmon_bs"
+  bulk_meta: '/vast/projects/LongBench/sequencing_data/illumina_bulk/metadata.txt'
+---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, fig.width = 20)
+```
+
+```{r}
+library(limma)
+library(edgeR)
+library(tidyverse)
+library(RColorBrewer)
+library(dplyr)
+library(ggplot2)
+library(Glimma)
+library(ggrepel)
+library(NMF)
+library(glue)
+library(ggplot2)
+library(gridExtra)
+library(knitr)
+library(kableExtra)
+library(rtracklayer)
+library(scales)
+library(UpSetR)
+```
+
+
+
+# Read the data
+```{r}
+bulk.meta <- read.csv(params$bulk_meta)
+rownames(bulk.meta) <- bulk.meta$sample
+
+
+get_dge_from_salmon <- function(dir, sample_prefix_regex) {
+  salmon.dirs <- file.path(dir, 
+                               list.dirs(dir, full.names = FALSE, recursive = FALSE))
+  catched.salmon <- edgeR::catchSalmon(salmon.dirs, verbose = TRUE)
+  rst.dge <- DGEList(counts=catched.salmon$counts, gene=catched.salmon$annotation)
+  rownames(rst.dge$samples) <- rownames(rst.dge$samples) %>% sub(sample_prefix_regex, '', .)
+  colnames(rst.dge$counts) <- colnames(rst.dge$counts) %>% sub(sample_prefix_regex, '', .)
+  rst.dge$samples <- merge(rst.dge$samples %>% select(-group), bulk.meta, by = "row.names", all.x = TRUE) %>% select(-Row.names)
+  rst.dge$samples <- rst.dge$samples[match(colnames(rst.dge$counts), rst.dge$samples$sample),]
+  return(rst.dge)
+}
+
+#ill_bulk.dge <- get_dge_from_salmon(params$ill_bulk_salmon_dir, ".*_S")
+ont_bulk.dge <- get_dge_from_salmon(params$ont_bulk_salmon_dir, ".*_")
+ont_sc.dge <- get_dge_from_salmon(params$ont_sc_salmon_dir, ".*/")
+ont_sn.dge <- get_dge_from_salmon(params$ont_sn_salmon_dir, ".*/")
+ont_sc_clean.dge <- get_dge_from_salmon(params$ont_sc_clean_salmon_dir, ".*/")
+ont_sn_clean.dge <- get_dge_from_salmon(params$ont_sn_clean_salmon_dir, ".*/")
+
+
+
+# Bulk ill
+salmon.ill_bulk.dirs <- file.path(params$ill_bulk_salmon_dir,
+                               list.dirs(params$ill_bulk_salmon_dir, full.names = FALSE, recursive = FALSE))
+ill_bulk.salmon <- edgeR::catchSalmon(salmon.ill_bulk.dirs, verbose = TRUE)
+ill_bulk.dge <- DGEList(counts=ill_bulk.salmon$counts, gene=ill_bulk.salmon$annotation)
+rownames(ill_bulk.dge$samples) <- rownames(ill_bulk.dge$samples) %>% sub(".*_S", '', .)
+rownames(ill_bulk.dge$samples) <- bulk.meta$sample[match(bulk.meta$index, rownames(ill_bulk.dge$samples))]
+colnames(ill_bulk.dge$counts) <- colnames(ill_bulk.dge$counts) %>% sub(".*_S", '', .)
+colnames(ill_bulk.dge$counts) <- bulk.meta$sample[match(bulk.meta$index, colnames(ill_bulk.dge$counts))]
+ill_bulk.dge$samples <- merge(ill_bulk.dge$samples %>% select(-group), bulk.meta, by = "row.names", all.x = TRUE) %>% select(-Row.names)
+ill_bulk.dge$samples <- ill_bulk.dge$samples[match(colnames(ill_bulk.dge$counts), ill_bulk.dge$samples$sample),]
+
+```
+
+# Split the origin
+```{r}
+is.sequins <- function(dge) {grepl("^R", rownames(dge))}
+is.human <- function(dge) {grepl("^ENS", rownames(dge))}
+is.sirv <- function(dge) {!is.human(dge) & !is.sequins(dge)}
+```
+
+
+# Raw count distribution
+```{r, fig.width=10}
+
+plot_df <- data.frame(
+  ill_bulk = ill_bulk.dge[is.human(ill_bulk.dge), ]$counts %>% sum,
+  ont_bulk = ont_bulk.dge[is.human(ont_bulk.dge), ]$counts %>% sum,
+  ont_sc = ont_sc.dge[is.human(ont_sc.dge), ]$counts %>% sum,
+  ont_sn = ont_sn.dge[is.human(ont_sn.dge), ]$counts %>% sum,
+  ont_sn_clean = ont_sn_clean.dge[is.human(ont_sn_clean.dge), ]$counts %>% sum,
+  ont_sc_clean = ont_sc_clean.dge[is.human(ont_sc_clean.dge), ]$counts %>% sum
+) %>% pivot_longer(everything(), names_to = "Dataset", values_to = "Total Count")
+
+ggplot(plot_df, aes(x = Dataset, y = `Total Count`, fill = Dataset)) +
+  geom_bar(stat = "identity", position = position_dodge()) +
+  theme_minimal() +
+  labs(title = "Total counts", x = "Sample", y = "Total Count") 
+```
+
+
+# Overdispesion
+## Stratify by transcript number
+```{r, functions}
+calcTxNum <- function(G.Tx.map){
+  geneid = rep(NA, nrow(G.Tx.map))
+  txcount = table(G.Tx.map$gene_id)
+  txnum = as.numeric(txcount[match(G.Tx.map$gene_id, names(txcount))])
+  txnum
+}
+# SIRV
+SIRV_tx <- GenomicFeatures::makeTxDbFromGFF(params$sirv_ercc_gtf, format = "gtf") %>% GenomicFeatures::transcripts(columns = c("tx_id", "tx_name", "gene_id"))
+SIRV.G.Tx.map <- tibble(
+  gene_id = SIRV_tx$gene_id %>% unlist,
+  tx_name = SIRV_tx$tx_name
+)
+rm(SIRV_tx)
+SIRV.G.Tx.map$tx_count <- SIRV.G.Tx.map %>% calcTxNum
+
+# Sequins
+sequins_tx  <- GenomicFeatures::makeTxDbFromGFF(params$sequins_gtf, format = "gtf") %>% GenomicFeatures::transcripts(columns = c("tx_id", "tx_name", "gene_id"))
+sequins.G.Tx.map <- tibble(
+  gene_id = sequins_tx$gene_id %>% unlist,
+  tx_name = sequins_tx$tx_name
+)
+rm(sequins_tx)
+sequins.G.Tx.map$tx_count <- sequins.G.Tx.map %>% calcTxNum
+
+# Human
+human_tx  <- GenomicFeatures::makeTxDbFromGFF(params$human_gtf, format = "gtf") %>% GenomicFeatures::transcripts(columns = c("tx_id", "tx_name", "gene_id"))
+human.G.Tx.map <- tibble(
+  gene_id = human_tx$gene_id %>% unlist,
+  tx_name = human_tx$tx_name
+)
+rm(human_tx)
+human.G.Tx.map$tx_count <- human.G.Tx.map %>% calcTxNum
+```
+
+
+```{r, Overdispersion}
+# Make boxplot of the overdispersion, stratified by transcript number, split figure by human, sequins and sirv
+## human
+
+ill_bulk.dge.human <-  ill_bulk.dge[is.human(ill_bulk.dge),]
+ont_bulk.dge.human <- ont_bulk.dge[is.human(ont_bulk.dge),]
+ont_sc.dge.human <- ont_sc_clean.dge[is.human(ont_sc_clean.dge),]
+ont_sn.dge.human <- ont_sn_clean.dge[is.human(ont_sn_clean.dge),]
+
+overdisp.human <- data.frame(
+  Overdispersion.ont_bulk = ont_bulk.dge.human$genes$Overdispersion,
+  Overdispersion.ill_bulk = ill_bulk.dge.human$genes$Overdispersion[match(rownames(ont_bulk.dge.human), rownames(ill_bulk.dge.human))],
+  Overdispersion.ont_sc = ont_sc.dge.human$genes$Overdispersion[match(rownames(ont_bulk.dge.human), rownames(ont_sc.dge.human))],
+  Overdispersion.ont_sn = ont_sn.dge.human$genes$Overdispersion[match(rownames(ont_bulk.dge.human), rownames(ont_sn.dge.human))],
+  tx_count = human.G.Tx.map$tx_count[match(rownames(ont_bulk.dge.human) %>% sub("\\|.*", "", .), human.G.Tx.map$tx_name)]
+)
+
+
+overdisp.human$tx_count_bin <- cut(overdisp.human$tx_count, breaks = c(0,1,5,10,20,40,80, Inf))
+overdisp.human$tx_count_bin <- factor(overdisp.human$tx_count_bin, ordered = TRUE)
+overdisp.human_pivot <- pivot_longer(overdisp.human, cols = c(Overdispersion.ont_bulk, Overdispersion.ont_sc, Overdispersion.ill_bulk, Overdispersion.ont_sn), names_to = "Method", values_to = "Overdispersion")
+
+p <- ggplot(overdisp.human_pivot, aes(x = tx_count_bin, y = Overdispersion, fill = Method)) +
+  geom_boxplot(position = position_dodge(width = 0.75)) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  labs(title = "Human transcript assignment ambiguity (Salmon overdispersion)", x = "Transcript number", y = "Overdispersion") 
+
+
+# ## sequins
+ont_bulk.dge.sequins <- ont_bulk.dge[is.sequins(ont_bulk.dge),]
+ill_bulk.dge.sequins <- ill_bulk.dge[is.sequins(ill_bulk.dge),]
+
+overdisp.sequins <- data.frame(
+  Overdispersion.ont_bulk = ont_bulk.dge.sequins$genes$Overdispersion,
+  Overdispersion.ill_bulk = ill_bulk.dge.sequins$genes$Overdispersion[match(rownames(ont_bulk.dge.sequins), rownames(ill_bulk.dge.sequins))],
+  tx_count = sequins.G.Tx.map$tx_count[match(rownames(ont_bulk.dge.sequins), sequins.G.Tx.map$tx_name)]
+)
+
+overdisp.sequins$tx_count_bin <- cut(overdisp.sequins$tx_count, breaks = c(0,1,2,3,4,5, Inf))
+overdisp.sequins$tx_count_bin <- factor(overdisp.sequins$tx_count_bin, ordered = TRUE)
+overdisp.sequins_pivot <- pivot_longer(overdisp.sequins, cols = c(Overdispersion.ont_bulk, Overdispersion.ill_bulk), names_to = "Method", values_to = "Overdispersion")
+
+p1 <- ggplot(overdisp.sequins_pivot, aes(x = tx_count_bin, y = Overdispersion, fill = Method)) +
+  geom_boxplot(position = position_dodge(width = 0.75)) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  labs(title = "Sequins assignment ambiguity (Salmon overdispersion)", x = "Transcript number", y = "Overdispersion")
+
+## sirv
+ont_bulk.dge.sirv <- ont_bulk.dge[is.sirv(ont_bulk.dge),]
+ill_bulk.dge.sirv <- ill_bulk.dge[is.sirv(ill_bulk.dge),]
+
+overdisp.sirv <- data.frame(
+  Overdispersion.ont_bulk = ont_bulk.dge.sirv$genes$Overdispersion,
+  Overdispersion.ill_bulk = ill_bulk.dge.sirv$genes$Overdispersion[match(rownames(ill_bulk.dge.sirv), rownames(ill_bulk.dge.sirv))
+  ],
+  tx_count = SIRV.G.Tx.map$tx_count[match(rownames(ont_bulk.dge.sirv), SIRV.G.Tx.map$tx_name)]
+)
+
+overdisp.sirv$tx_count_bin <- cut(overdisp.sirv$tx_count, breaks = c(0,1,2,3,4,5, 10,15,Inf))
+overdisp.sirv$tx_count_bin <- factor(overdisp.sirv$tx_count_bin, ordered = TRUE)
+overdisp.sirv_pivot <- pivot_longer(overdisp.sirv, cols = c(Overdispersion.ont_bulk, Overdispersion.ill_bulk), names_to = "Method", values_to = "Overdispersion")
+
+p2 <- ggplot(overdisp.sirv_pivot, aes(x = tx_count_bin, y = Overdispersion, fill = Method)) +
+  geom_boxplot(position = position_dodge(width = 0.75), ) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  labs(title = "SIRV assignment ambiguity (Salmon overdispersion)", x = "Transcript number", y = "Overdispersion") +   ylim(0,20)
+
+grid.arrange(p, p+ylim(0,10), p1, p2,  ncol=2)
+```
+
+
+# Sequins (Scatter)
+```{r, fig.width=20}
+get_sequins_scatter_plot <- function(dge, figure_name) {
+    # ground truth
+    sequins.gt <- read_tsv(params$sequins_tsv)
+    # get log CPM from the bulk data
+    sequins.gt.lcpm <- sequins.gt %>% select(MIX_A, MIX_B) %>% as.data.frame()
+    rownames(sequins.gt.lcpm) <- sequins.gt$NAME
+    
+    # ONT BULK
+    dge.sequins <- dge[is.sequins(dge),]
+    dge.sequins$lcpm <- cpm(dge.sequins, log=TRUE)
+    ## add the ground truth to the data
+    mixA_df <- merge(dge.sequins$lcpm[,dge.sequins$samples$sequins == "A"], sequins.gt.lcpm, by = "row.names") %>% 
+      mutate(GT=MIX_A, MIX='A')  %>% 
+      select(-MIX_B, -MIX_A)
+    mixB_df <- merge(dge.sequins$lcpm[,dge.sequins$samples$sequins == "B"], sequins.gt.lcpm, by = "row.names") %>% 
+      mutate(GT=MIX_B, MIX='B')  %>% 
+      select(-MIX_B, -MIX_A)
+    
+    mixA_df.long <- mixA_df %>% pivot_longer(cols = mixA_df %>% select(-Row.names, -GT, -MIX) %>% colnames, names_to = "Sample", values_to = "Observed log-CPM")
+    mixB_df.long <- mixB_df %>% pivot_longer(cols = mixB_df %>% select(-Row.names, -GT, -MIX) %>% colnames, names_to = "Sample", values_to = "Observed log-CPM")
+    combined_df <- rbind(mixA_df.long, mixB_df.long) %>% mutate(Dataset ="ont_bulk")
+    
+    per_sample_cor <- sapply(dge$samples$sample, function(x) {
+      cor(cpm(combined_df[combined_df$Sample == x,]$GT, log = T), combined_df[combined_df$Sample == x,]$`Observed log-CPM`) %>% unlist
+    })
+    
+    # Calculate the correlation
+    combined_df$Sample <- factor(combined_df$Sample)
+    combined_df$MIX <- factor(combined_df$MIX)
+    correlation <- cor(cpm(combined_df$GT, log = T), combined_df$`Observed log-CPM`)
+    
+    
+    p <- ggplot(combined_df[rownames(combined_df) %>% sample(nrow(combined_df), replace = F),], aes(y = GT, x = `Observed log-CPM`, color = Sample, shape = MIX)) +
+      geom_point() +
+      theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+      theme_classic() + 
+      scale_y_log10(labels = label_number()) + 
+      labs(title = figure_name, y = "Expected abundance", x = "Observed log-CPM") +
+      annotate("text", x = min(combined_df$`Observed log-CPM`), y = max(combined_df$GT), 
+               label = paste("Correlation: ", round(correlation, 2)), 
+               hjust = 0, vjust = 1, 
+               color = "black", size = 4, 
+               fontface = "italic")
+    
+    
+    t <- tibble(
+      sample = dge$samples$sample,
+      sample_correlation = per_sample_cor,
+      merged_correlation = correlation
+    )
+    return(list(plot = p,  table = t))
+}
+
+cor.ont_bulk <- get_sequins_scatter_plot(ont_bulk.dge, figure_name = "ONT BULK Sequins")
+cor.ill_bulk <- get_sequins_scatter_plot(ill_bulk.dge, figure_name = "ILL BULK Sequins")
+
+
+plot_df <- cor.ont_bulk$table %>% 
+            left_join(cor.ill_bulk$table, by = 'sample', suffix = c(".ont_bulk", ".ill_bulk")) %>% 
+            select(sample_correlation.ont_bulk,sample_correlation.ill_bulk ) %>% 
+            pivot_longer(col=c(sample_correlation.ont_bulk,sample_correlation.ill_bulk), values_to = "correlation", names_to = "Sample")
+
+bx_plot <- ggplot(plot_df, aes(x = Sample, y = correlation, fill = Sample)) +
+  geom_boxplot(position = position_dodge(width = 0.75)) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  labs(title = "Sequins transcript: per sample correlation with true abundance")
+
+grid.arrange(cor.ont_bulk$plot, cor.ill_bulk$plot, bx_plot, ncol=2)
+
+```
+
+
+## Transcript discovery rate (transcript with non-zero count)
+```{r, fig.width=20}
+get_tx_discovery_rate <- function(dge_list, dataset_list, figure_name="Transcript discovery rate"){
+  plot_df <- tibble()
+  for (i in 1:length(dge_list)) {
+    dge <- dge_list[[i]]
+    dataset <- dataset_list[[i]]
+    non_zero_proportions <- dge$counts %>% apply(2, function(x) mean(x != 0)) %>% tibble()
+    colnames(non_zero_proportions) <- "Transcript discovery rate"
+    non_zero_proportions$sample <- dge$counts %>% colnames
+    non_zero_proportions$Dataset <- dataset
+    plot_df <- rbind(plot_df, non_zero_proportions)
+  }
+  ggplot(plot_df, aes(x = sample, y = `Transcript discovery rate`, fill = Dataset)) +
+    geom_bar(stat = "identity", position = position_dodge()) +
+    theme_minimal() +
+    labs(title = figure_name, x = "Sample", y = "Transcript Discovery Rate") +
+    geom_text(aes(label = scales::percent(`Transcript discovery rate`)), 
+              position = position_dodge(width = 0.9), 
+              vjust = -0.5)
+}
+
+p1 <- get_tx_discovery_rate(
+  list(ont_bulk.dge[is.sequins(ont_bulk.dge),], ill_bulk.dge[is.sequins(ill_bulk.dge),]),
+  list("ONT BULK", "ILL BULK"),
+  figure_name = "Sequins transcript discovery rate"
+)
+
+p2 <- get_tx_discovery_rate(
+  list(ont_bulk.dge[is.sirv(ont_bulk.dge),], ill_bulk.dge[is.sirv(ill_bulk.dge),]),
+  list("ONT BULK", "ILL BULK"),
+  figure_name = "SIRV transcript discovery rate"
+)
+
+p3 <- get_tx_discovery_rate(
+  list(ont_bulk.dge[is.human(ont_bulk.dge),], ill_bulk.dge[is.human(ill_bulk.dge),], ont_sc_clean.dge[is.human(ont_sc_clean.dge),], ont_sn_clean.dge[is.human(ont_sn_clean.dge),]),
+  list("ONT BULK", "ILL BULK", "ONT SC (cleaned)", "ONT SN (cleaned)"),
+  figure_name = "Human transcript discovery rate"
+)
+
+p4 <- get_tx_discovery_rate(
+  list(ont_sc.dge[is.human(ont_sc.dge),], ont_sn.dge[is.human(ont_sn.dge),], ont_sc_clean.dge[is.human(ont_sc_clean.dge),], ont_sn_clean.dge[is.human(ont_sn_clean.dge),]),
+  list("ONT SC", "ONT SN", "ONT SC (cleaned)", "ONT SN (cleaned)"),
+  figure_name = "Human transcript discovery rate"
+)
+
+# Combine all plots
+grid.arrange(p1, p2, p3, p4, ncol=2)
+
+
+```
+
+
+# DE workflow
+## Normalisation and MDS
+```{r, fig.height=15, fig.width=10}
+norm_and_mds <- function(dge, dataset='ont_bulk', col = NULL, text = NULL, norm.method = "TMM") {
+  # filter 
+  filter <- filterByExpr(dge, group=dge$samples$sample)
+  dge <- dge[filter, , keep.lib.sizes = FALSE]
+  
+  
+   # normalisation
+  if (!is.null(norm.method)) {
+     dge <- calcNormFactors(dge, method = norm.method)
+  }
+ 
+  cpm <- cpm(dge, log = TRUE)
+
+  # MDS
+  if (is.null(col)) {
+    col <- dge$samples$group
+  }
+  
+  if (is.null(text)) {
+    text <- dge$samples$group
+  }
+
+  factor_vector <- as.factor(col)
+  col <- brewer.pal(n = length(levels(factor_vector)), name = "Set1")
+  color_mapping <- setNames(col, levels(factor_vector))
+  boxplot(cpm, las=2, col=color_mapping[as.character(factor_vector)], main="")
+  plotMDS(cpm, main = dataset,
+          text = text,
+          col = color_mapping[as.character(factor_vector)])
+}
+
+
+par(mfrow=c(3,2))
+
+norm_and_mds(ont_bulk.dge[is.human(ont_bulk.dge),], 
+            dataset='ont bulk human (colored by sample groups)',
+            col = ont_bulk.dge$samples$group)
+
+norm_and_mds(ont_bulk.dge[is.sequins(ont_bulk.dge),], 
+            dataset='ont bulk sequins (colored by sequins mix A or B)',
+            col = ont_bulk.dge$samples$sequins,
+            norm.method = NULL)
+norm_and_mds(ont_bulk.dge[is.sirv(ont_bulk.dge),], 
+            dataset='ont bulk SIRV (colored by sample groups)',
+            col = ont_bulk.dge$samples$group,
+            norm.method = NULL)
+
+
+norm_and_mds(ill_bulk.dge[is.human(ill_bulk.dge),], 
+            dataset='ILL bulk human (colored by sample groups)',
+            col = ill_bulk.dge$samples$group)
+
+norm_and_mds(ill_bulk.dge[is.sequins(ill_bulk.dge),], 
+            dataset='ILL bulk sequins (colored by sequins mix A or B)',
+            col = ill_bulk.dge$samples$sequins,
+            norm.method = NULL)
+
+norm_and_mds(ill_bulk.dge[is.sirv(ill_bulk.dge),], 
+            dataset='ILL bulk SIRV (colored by sample groups)',
+            col = ill_bulk.dge$samples$group,
+            norm.method = NULL)
+
+par(mfrow=c(3,2))
+norm_and_mds(ont_sc_clean.dge[is.human(ont_sc_clean.dge),], 
+            dataset='ONT SC pseudobulk human (colored by sample groups)',
+            col = ont_sc_clean.dge$samples$group,
+            norm.method = NULL)
+
+norm_and_mds(ont_sn_clean.dge[is.human(ont_sn_clean.dge),], 
+            dataset='ONT SN pseudobulk human (colored by sample groups)',
+            col = ont_sn_clean.dge$samples$group,
+            norm.method = NULL)
+
+par(mfrow=c(3,2))
+norm_and_mds(ont_sc.dge[is.human(ont_sc.dge),], 
+            dataset='ONT SC pseudobulk human (colored by sample groups)',
+            col = ont_sc_clean.dge$samples$group,
+            norm.method = NULL)
+
+norm_and_mds(ont_sn.dge[is.human(ont_sn.dge),], 
+            dataset='ONT SN pseudobulk human (colored by sample groups)',
+            col = ont_sn_clean.dge$samples$group,
+            norm.method = NULL)
+
+
+```
+# DTE
+```{r, fig.width=8}
+DTE.edgeR <- function(dge){
+  design <- model.matrix(~0+group, data = dge$samples)
+  dge <- estimateDisp(dge, design)
+  qlfit <- glmQLFit(dge, design)
+  contrasts <- makeContrasts(AvsL=groupsclc_a-groupluad, PvsL=groupsclc_p-groupluad, AvsP = groupsclc_a-groupsclc_p, levels=design)
+  AvsL.QLF.test <- glmQLFTest(qlfit, contrast=contrasts[,"AvsL"]) %>% decideTests
+  PvsL.QLF.test <- glmQLFTest(qlfit, contrast=contrasts[,"PvsL"]) %>% decideTests
+  AvsP.QLF.test <- glmQLFTest(qlfit, contrast=contrasts[,"AvsP"]) %>% decideTests
+  
+ list(
+    AvsL.DE = rownames(AvsL.QLF.test)[AvsL.QLF.test!=0],
+    PvsL.DE = rownames(PvsL.QLF.test)[PvsL.QLF.test!=0],
+    AvsP.DE = rownames(AvsP.QLF.test)[AvsP.QLF.test!=0]
+  )
+}
+
+
+ill_bulk.dte.list <- DTE.edgeR(ill_bulk.dge[is.human(ill_bulk.dge),])
+ont_bulk.dte.list <- DTE.edgeR(ont_bulk.dge[is.human(ont_bulk.dge),])
+ont_sc.dte.list <- DTE.edgeR(ont_sc.dge[is.human(ont_sc.dge),])
+ont_sn.dte.list <- DTE.edgeR(ont_sn.dge[is.human(ont_sn.dge),])
+ont_sn_clean.dte.list <- DTE.edgeR(ont_sn_clean.dge[is.human(ont_sn_clean.dge),])
+ont_sc_clean.dte.list <- DTE.edgeR(ont_sc_clean.dge[is.human(ont_sc_clean.dge),])
+
+
+
+# A vs L
+all_elements <- unique(c(
+ ILL_BULK = ill_bulk.dte.list$AvsL.DE,
+ ONT_BULK = ont_bulk.dte.list$AvsL.DE,
+ ONT_SC = ont_sc.dte.list$AvsL.DE,
+ ONT_SN = ont_sn.dte.list$AvsL.DE,
+  ONT_SN_CLEAN = ont_sn_clean.dte.list$AvsL.DE,
+  ONT_SC_CLEAN = ont_sc_clean.dte.list$AvsL.DE
+))
+
+plot_d_AvsL.DE <- data.frame(
+  Element = all_elements,
+  ill_bulk= as.integer(all_elements %in% ill_bulk.dte.list$AvsL.DE),
+  ont_bulk= as.integer(all_elements %in% ont_bulk.dte.list$AvsL.DE),
+  ont_sc= as.integer(all_elements %in% ont_sc.dte.list$AvsL.DE),
+  ont_sn= as.integer(all_elements %in% ont_sn.dte.list$AvsL.DE),
+  ont_sn_clean= as.integer(all_elements %in% ont_sn_clean.dte.list$AvsL.DE),
+  ont_sc_clean= as.integer(all_elements %in% ont_sc_clean.dte.list$AvsL.DE)
+)
+upset(plot_d_AvsL.DE,  order.by = "freq", nsets = 6) 
+grid::grid.text("DTE SCLC_A vs LUAD", x = 0.5, y = 0.95)
+
+
+# P vs L
+all_elements <- unique(c(
+ ILL_BULK = ill_bulk.dte.list$PvsL.DE,
+ ONT_BULK = ont_bulk.dte.list$PvsL.DE,
+ ONT_SC = ont_sc.dte.list$PvsL.DE,
+ ONT_SN = ont_sn.dte.list$PvsL.DE,
+  ONT_SN_CLEAN = ont_sn_clean.dte.list$PvsL.DE,
+  ONT_SC_CLEAN = ont_sc_clean.dte.list$PvsL.DE
+))
+
+plot_d_PvsL.DE <- data.frame(
+  Element = all_elements,
+  ill_bulk= as.integer(all_elements %in% ill_bulk.dte.list$PvsL.DE),
+  ont_bulk= as.integer(all_elements %in% ont_bulk.dte.list$PvsL.DE),
+  ont_sc= as.integer(all_elements %in% ont_sc.dte.list$PvsL.DE),
+  ont_sn= as.integer(all_elements %in% ont_sn.dte.list$PvsL.DE),
+  ont_sn_clean= as.integer(all_elements %in% ont_sn_clean.dte.list$PvsL.DE),
+  ont_sc_clean= as.integer(all_elements %in% ont_sc_clean.dte.list$PvsL.DE)
+)
+p2 <- upset(plot_d_PvsL.DE,  order.by = "freq", nsets = 6) 
+
+
+# A vs P
+all_elements <- unique(c(
+ ILL_BULK = ill_bulk.dte.list$AvsP.DE,
+ ONT_BULK = ont_bulk.dte.list$AvsP.DE,
+ ONT_SC = ont_sc.dte.list$AvsP.DE,
+ ONT_SN = ont_sn.dte.list$AvsP.DE,
+  ONT_SN_CLEAN = ont_sn_clean.dte.list$AvsP.DE,
+  ONT_SC_CLEAN = ont_sc_clean.dte.list$AvsP.DE
+))
+
+plot_d_AvsP.DE <- data.frame(
+  Element = all_elements,
+  ill_bulk= as.integer(all_elements %in% ill_bulk.dte.list$AvsP.DE),
+  ont_bulk= as.integer(all_elements %in% ont_bulk.dte.list$AvsP.DE),
+  ont_sc= as.integer(all_elements %in% ont_sc.dte.list$AvsP.DE),
+  ont_sn= as.integer(all_elements %in% ont_sn.dte.list$AvsP.DE),
+  ont_sn_clean= as.integer(all_elements %in% ont_sn_clean.dte.list$AvsP.DE),
+  ont_sc_clean= as.integer(all_elements %in% ont_sc_clean.dte.list$AvsP.DE)
+)
+p3 <- upset(plot_d_AvsP.DE,  order.by = "freq", nsets = 6) 
+
+par(mfrow = c(2, 1))
+p1
+grid::grid.text("DTE SCLC_A vs LUAD", x = 0.5, y = 0.95)
+
+p2
+grid::grid.text("DTE SCLC_P vs LUAD", x = 0.5, y = 0.95)
+
+
+p3
+grid::grid.text("DTE SCLC_P vs SCLC_A", x = 0.5, y = 0.95)
+```
+
+
+
+

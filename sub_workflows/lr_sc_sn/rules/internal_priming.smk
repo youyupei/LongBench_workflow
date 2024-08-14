@@ -1,5 +1,7 @@
 import textwrap, os
 results_dir = config["output_path"]
+main_conda = config["conda"]["main"]
+git_repo = config["git_repo_dir"]
 
 rule run_internal_priming_analysis:
     input:
@@ -23,15 +25,16 @@ rule _internal_priming_identifier:
         cpus_per_task=32,
         mem_mb=32000,
         slurm_extra="--mail-type=END,FAIL --mail-user=you.yu@wehi.edu.au"
+    conda: 
+        main_conda
     params:
-        python_script="git_repo/PrimeSpotter/PrimeSpotter/PrimeSpotter.py",
-        python_dir="/stornext/Home/data/allstaff/y/you.yu/.cache/R/basilisk/1.14.0/FLAMES/1.9.1/flames_env/bin/python3"
+        python_script=os.path.join(git_repo,  "/PrimeSpotter/PrimeSpotter/PrimeSpotter.py")
     shell:
         """
         mkdir -p $(dirname {output.summary})
         module load samtools
         
-        {params.python_dir} {params.python_script} --bam_file {input.bam} \
+        python3 {params.python_script} --bam_file {input.bam} \
                                         --gtf_file {input.gtf} \
                                         --output-summary {output.summary} \
                                         --genome-ref {input.genome} \

@@ -1,25 +1,38 @@
+# workflow dir setup
 global_config_path: "/vast/projects/LongBench/analysis/workflow/config/config.yaml"
 main_wf_dir: "/vast/projects/LongBench/analysis/workflow"
 
+# sub workflow dir setup, the abs path will be automatically generated and accessible as config['sub_wf_dir'] in 
+# corresponding sub workflow
+sub_wf_dir:
+  lr_sc_sn: sub_workflows/lr_sc_sn
+  lr_bulk: sub_workflows/lr_bulk
+  sr_sc_sn: sub_workflows/sr_sc_sn
 
+# they will be not converted to absolute path in the config parser
+git_repo_dir: "script/git_repo"
 
-# relative path to the main workflow directory
-git_script_dir: "script/git_repo"
-conda_config:
-  root_path: '/home/users/allstaff/you.yu/LongBench/analysis/workflow/conda/config'
-  main: "main.yaml"
+conda_config: # the parser will convert it to absolute path will be accessible as config['conda_config'] or config['conda']
+  main: "conda/config/main.yaml" # relative path to the main workflow directory (main_wf_dir)
 
+conda:
+  sqanti3: "SQANTI3" # prebuilt conda env name
 
-# sub workflow config
+# sub workflow config relative to main_wf_dir!
 sub_wf_config:
-  lr_sc_sn: /vast/projects/LongBench/analysis/workflow/config/config_lr_sc_sn.yaml
-  lr_bulk: /vast/projects/LongBench/analysis/workflow/config/config_lr_bulk.yaml
-  sr_sc_sn: /vast/projects/LongBench/analysis/workflow/config/config_sc_sc_sn.yaml
+  main_wf: config/config_main_wf.yaml
+  lr_sc_sn: config/config_lr_sc_sn.yaml
+  lr_bulk: config/config_lr_bulk.yaml
+  sr_sc_sn: config/config_sc_sc_sn.yaml
 
 
-# conda
-conda_config_path: '/home/users/allstaff/you.yu/LongBench/analysis/workflow/conda/config'
+# software
+software:
+  sqanti3_dir: "/home/users/allstaff/you.yu/LongBench/software/SQANTI3/"
+  demuxlet: "/home/users/allstaff/you.yu/LongBench/software/demuxlet/demuxlet/bin/demuxlet"
+  minimap2: "/home/users/allstaff/you.yu/LongBench/software/minimap2-2.28_x64-linux/minimap2"
 
+  
 # for all random process
 random_seed: 2024
 

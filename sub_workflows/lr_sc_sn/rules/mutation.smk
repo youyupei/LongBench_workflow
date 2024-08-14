@@ -9,10 +9,12 @@ rule _find_mutations:
         cpus_per_task=32,
         mem_mb=1000000,
         slurm_extra="--mail-type=END,FAIL --mail-user=you.yu@wehi.edu.au"
+    params:
+        script = os.path.join(config['sub_wf_dir'],'scripts/mutation.R')
     shell:
         """
         mkdir -p $(dirname {output.output_rds})
-        Rscript scripts/mutation.R {input.bam_path} {input.allele_stat_path} {input.barcode_file} {resources.cpus_per_task} {output.output_rds} 
+        Rscript {params.script} {input.bam_path} {input.allele_stat_path} {input.barcode_file} {resources.cpus_per_task} {output.output_rds} 
         """
 
 

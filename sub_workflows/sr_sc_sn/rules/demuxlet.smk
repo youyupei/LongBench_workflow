@@ -4,7 +4,7 @@ rule demuxlet:
     """
     input:
         expand(config['output_path'] + '/demuxlet/{sample}.demuxlet.best',
-                sample=config['sample_id'])
+                sample=config['sample_name'])
     output:
         touch(os.path.join(results_dir, ".flag/demuxlet.done"))
 
@@ -28,34 +28,13 @@ rule prepare_input_vcf:
         python3 {params.script} {input} {output}
         """
 
-
-rule prepare_input_bam:
-    """
-    The default bam file from flames does not directly fit into demuxlet. It required UMI and BC to be stored as tags
-    """
-    input:
-        config['output_path'] + '/flames_out/{sample}/align2genome.bam'
-    output:
-        config['output_path'] + '/demuxlet/{sample}.tag_added.bam'
-    resources:
-        cpus_per_task=16,
-        mem_mb=160000
-    params:
-        script=os.path.join(config['sub_wf_dir'], "scripts/DemuxletPreareBam.py"),
-        # TODO: change this to use the conda env
-        python_dir="/stornext/Home/data/allstaff/y/you.yu/.cache/R/basilisk/1.14.0/FLAMES/1.9.1/flames_env/bin/python3"
-    shell:
-        """
-        {params.python_dir}  {params.script} {input} {output}  {resources.cpus_per_task}
-        """
-
 rule demuxlet_rule:
     """
     Run the demultiplexing tool on the input VCF file.
     """
     input:
-        bam= config['output_path'] + '/demuxlet/{sample}.tag_added.bam',
-        bam_sorted_idx= config['output_path'] + '/demuxlet/{sample}.tag_added.bam.bai',
+        rules.cellranger.output,
+        cr_out= os.path.join(results_dir, 'cellranger/{sample}/'),
         vcf = config['output_path'] + '/demuxlet/DepmapMutTabConverted.vcf'
     output:
         config['output_path'] + '/demuxlet/{sample}.demuxlet.best'
@@ -73,7 +52,7 @@ rule demuxlet_rule:
         mkdir -p $(dirname $filename)   
 
         {params.demuxlet_excutable} \
-        --sam {input.bam} \
+        --sam {input.cr_out}/outs/possorted_genome_bam.bam \
         --tag-group CB \
         --tag-UMI UB \
         --vcf {input.vcf} \
