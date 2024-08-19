@@ -12,9 +12,9 @@ config = config_parser.sub_wf_config_parser(
 
 include: "rules/minimap2.smk"
 include: "rules/internal_priming.smk"
-include: "rules/qc.smk"
+include: config['main_wf_dir'] + "/modules/qc.smk"
 include: "rules/quantification.smk"
-include: config['main_wf_dir'] + "/rules/utilities.smk"
+include: config['main_wf_dir'] + "/modules/utilities.smk"
 
 results_dir = config["output_path"]
 # make sure the results_dir exists

@@ -11,7 +11,7 @@ config = config_parser.sub_wf_config_parser(
 
 
 include: "rules/flames.smk"
-include: "rules/qc.smk"
+include: config['main_wf_dir'] + "/modules/qc.smk"
 include: "rules/internal_priming.smk"
 include: "rules/mutation.smk"
 include: "rules/demuxlet.smk"
@@ -19,7 +19,7 @@ include: "rules/emptydrop.smk"
 include: "rules/rmarkdown.smk"
 include: "rules/pseudo_bulk_salmon_quant.smk"
 #include: "rules/salmon.smk"
-include: config['main_wf_dir'] + "/rules/utilities.smk"
+include: config['main_wf_dir'] + "/modules/utilities.smk"
 
 
 
