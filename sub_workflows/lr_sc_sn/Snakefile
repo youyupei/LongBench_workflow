@@ -24,10 +24,7 @@ include: config['main_wf_dir'] + "/rules/utilities.smk"
 
 
 EMAIL = config["email"]
-onsuccess:
-   shell("mail -s 'DONE: lr_sc_sn Snakemake run' {EMAIL} < {log}")
-onerror:
-   shell("mail -s 'ERROR: lr_sc_sn Snakemake run' {EMAIL} < {log}")
+
 
 
 rule all: 
@@ -41,6 +38,10 @@ rule all:
         rules.pseudo_bulk_salmon_quant.output
     output:
         touch(os.path.join(results_dir, ".flag/all.done"))
+    onsuccess:
+        shell("mail -s 'DONE: lr_sc_sn Snakemake run' {EMAIL} < {log}")
+    onerror:
+        shell("mail -s 'ERROR: lr_sc_sn Snakemake run' {EMAIL} < {log}")
 
 
 # rule internal_priming_analysis:

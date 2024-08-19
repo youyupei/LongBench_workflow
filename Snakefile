@@ -23,8 +23,13 @@ module sr_sc_sn:
     config:config
 use rule * from sr_sc_sn as sr_sc_sn_*
 
+
+
+EMAIL = config["email"]
 rule all:
     input:
         rules.lr_bulk_all.input,
         rules.lr_sc_sn_all.input,
         rules.sr_sc_sn_all.input
+    onsuccess:
+        shell("mail -s 'DONE: Snakemake main workflow' {EMAIL} < {log}")

@@ -22,10 +22,7 @@ shell("mkdir -p {results_dir}")
 
 # Email the workflow status
 EMAIL = config["email"]
-onsuccess:
-   shell("mail -s 'DONE: lr_bulk Snakemake run' {EMAIL} < {log}")
-onerror:
-   shell("mail -s 'ERROR: lr_bulk Snakemake run' {EMAIL} < {log}")
+
 
 
 # Main rule
@@ -35,3 +32,7 @@ rule all:
       results_dir + "/.flag/run_salmon.done"
    output:
       touch(os.path.join(results_dir, ".flag/all.done"))
+   onsuccess:
+      shell("mail -s 'DONE: lr_bulk Snakemake run' {EMAIL} < {log}")
+   onerror:
+      shell("mail -s 'ERROR: lr_bulk Snakemake run' {EMAIL} < {log}")

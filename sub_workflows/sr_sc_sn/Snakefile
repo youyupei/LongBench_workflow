@@ -15,12 +15,13 @@ include: "rules/cellranger.smk"
 include: "rules/demuxlet.smk"
 
 EMAIL = config["email"]
-onsuccess:
-   shell("mail -s 'DONE: ill_sc_sn Snakemake run' {EMAIL} < {log}")
-onerror:
-   shell("mail -s 'ERROR: ill_sc_sn Snakemake run' {EMAIL} < {log}")
+
 
 rule all:
     input:
          rules.cellranger.output,
          rules.demuxlet.output
+   onsuccess:
+      shell("mail -s 'DONE: ill_sc_sn Snakemake run' {EMAIL} < {log}")
+   onerror:
+      shell("mail -s 'ERROR: ill_sc_sn Snakemake run' {EMAIL} < {log}")
