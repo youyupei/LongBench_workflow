@@ -19,7 +19,8 @@ samples_fastq_dir:
   ont_sc: "/home/users/allstaff/you.yu/LongBench/sequencing_data/ONT_sc/ont_sc.fastq"
   ont_sn_clean: "/home/users/allstaff/you.yu/LongBench/sequencing_data/ONT_sn/ont_sn_clean.fastq"
   ont_sc_clean: "/home/users/allstaff/you.yu/LongBench/sequencing_data/ONT_sc/ont_sc_clean.fastq"
-
+  pb_sc: "/home/users/allstaff/you.yu/LongBench/sequencing_data/pb_sc/pb_sc.fastq"
+  pb_sn: "/home/users/allstaff/you.yu/LongBench/sequencing_data/pb_sn/pb_sn.fastq"
 
 flames_config: /home/users/allstaff/you.yu/LongBench/analysis/workflow/sub_workflows/lr_sc_sn/config/flames.json
 
@@ -28,6 +29,8 @@ sample_id:
   - 'ont_sc'
   - 'ont_sn_clean'
   - 'ont_sc_clean'
+  - 'pb_sc'
+  - 'pb_sn'
 
 # Config for FLAMES/BLAZE
 expected_cells:
@@ -35,24 +38,32 @@ expected_cells:
   ont_sc: 5000
   ont_sn_clean: 5000
   ont_sc_clean: 5000
+  pb_sc: 5000
+  pb_sn: 5000
 
 count_thres: # Count threshold will override expected_cells
-  ont_sn: 500
+  ont_sn: 
   ont_sc: 
-  ont_sn_clean: 
+  ont_sn_clean: 10000
   ont_sc_clean:
+  pb_sc:
+  pb_sn:
  
 force_cells: # Count threshold will override expected_cells
   ont_sn: 
   ont_sc: 
   ont_sn_clean: 10000
   ont_sc_clean:
+  pb_sc:
+  pb_sn:
 
 whitelist_10x:
   ont_sn: 
   ont_sc: 
   ont_sn_clean: 
   ont_sc_clean:
+  pb_sc:
+  pb_sn:
 
 
 cell_line_list:

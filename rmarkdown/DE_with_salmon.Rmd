@@ -28,7 +28,7 @@ params:
   bulk_meta: '/vast/projects/LongBench/sequencing_data/illumina_bulk/metadata.txt'
 ---
 ```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE, fig.width = 20)
+knitr::opts_chunk$set(cache = TRUE, fig.width = 20, fig.height=15, warning = F)
 ```
 
 ```{r}
@@ -103,7 +103,7 @@ is.sirv <- function(dge) {!is.human(dge) & !is.sequins(dge)}
 
 
 # Raw count distribution
-```{r, fig.width=10}
+```{r, fig.width=10, fig.height=5}
 
 plot_df <- data.frame(
   ill_bulk = ill_bulk.dge[is.human(ill_bulk.dge), ]$counts %>% sum,
@@ -114,10 +114,26 @@ plot_df <- data.frame(
   ont_sc_clean = ont_sc_clean.dge[is.human(ont_sc_clean.dge), ]$counts %>% sum
 ) %>% pivot_longer(everything(), names_to = "Dataset", values_to = "Total Count")
 
-ggplot(plot_df, aes(x = Dataset, y = `Total Count`, fill = Dataset)) +
+p1 <- ggplot(plot_df, aes(x = Dataset, y = `Total Count`, fill = Dataset)) +
   geom_bar(stat = "identity", position = position_dodge()) +
   theme_minimal() +
-  labs(title = "Total counts", x = "Sample", y = "Total Count") 
+  labs(title = "Total counts (HUMAN transcript)", x = "Sample", y = "Total Count") 
+
+plot_df <- data.frame(
+  ill_bulk = ill_bulk.dge[is.sequins(ill_bulk.dge), ]$counts %>% sum,
+  ont_bulk = ont_bulk.dge[is.sequins(ont_bulk.dge), ]$counts %>% sum,
+  ont_sc = ont_sc.dge[is.sequins(ont_sc.dge), ]$counts %>% sum,
+  ont_sn = ont_sn.dge[is.sequins(ont_sn.dge), ]$counts %>% sum,
+  ont_sn_clean = ont_sn_clean.dge[is.sequins(ont_sn_clean.dge), ]$counts %>% sum,
+  ont_sc_clean = ont_sc_clean.dge[is.sequins(ont_sc_clean.dge), ]$counts %>% sum
+) %>% pivot_longer(everything(), names_to = "Dataset", values_to = "Total Count")
+
+p2 <- ggplot(plot_df, aes(x = Dataset, y = `Total Count`, fill = Dataset)) +
+  geom_bar(stat = "identity", position = position_dodge()) +
+  theme_minimal() +
+  labs(title = "Total counts (Sequins transcript)", x = "Sample", y = "Total Count") 
+
+grid.arrange(p1, p2, ncol = 2)
 ```
 
 
@@ -447,7 +463,7 @@ norm_and_mds(ont_sn.dge[is.human(ont_sn.dge),],
 
 ```
 # DTE
-```{r, fig.width=8}
+```{r, fig.width=8, fig.height=6}
 DTE.edgeR <- function(dge){
   design <- model.matrix(~0+group, data = dge$samples)
   dge <- estimateDisp(dge, design)
@@ -493,8 +509,7 @@ plot_d_AvsL.DE <- data.frame(
   ont_sn_clean= as.integer(all_elements %in% ont_sn_clean.dte.list$AvsL.DE),
   ont_sc_clean= as.integer(all_elements %in% ont_sc_clean.dte.list$AvsL.DE)
 )
-upset(plot_d_AvsL.DE,  order.by = "freq", nsets = 6) 
-grid::grid.text("DTE SCLC_A vs LUAD", x = 0.5, y = 0.95)
+p1 <- upset(plot_d_AvsL.DE,  order.by = "freq", nsets = 6) 
 
 
 # P vs L
@@ -540,13 +555,11 @@ plot_d_AvsP.DE <- data.frame(
 )
 p3 <- upset(plot_d_AvsP.DE,  order.by = "freq", nsets = 6) 
 
-par(mfrow = c(2, 1))
 p1
 grid::grid.text("DTE SCLC_A vs LUAD", x = 0.5, y = 0.95)
 
 p2
 grid::grid.text("DTE SCLC_P vs LUAD", x = 0.5, y = 0.95)
-
 
 p3
 grid::grid.text("DTE SCLC_P vs SCLC_A", x = 0.5, y = 0.95)

@@ -2,6 +2,7 @@ reference:
   # have to exist
   genome: "/home/users/allstaff/you.yu/LongBench/reference_files/GRCh38.add.spikein/GRCh38.primary_assembly.genome.add.spikein.fa"
   gtf: "/home/users/allstaff/you.yu/LongBench/reference_files/GRCh38.add.spikein/gencode.v44.transcripts.add.spikein.gtf"
+  bed_human: "/home/users/allstaff/you.yu/LongBench/reference_files/GRCh38/gencode.v44.annotation.gtf.bed"
   transcript: "/home/users/allstaff/you.yu/LongBench/reference_files/GRCh38.add.spikein/gencode.v44.transcripts.add.spikein.fa"
   picard_reference: '/home/users/allstaff/you.yu/LongBench/reference_files/GRCh38/refFlat.txt'
 
@@ -12,6 +13,10 @@ samples_raw_dir:
 
 samples_raw_bam_dir:
   ont_bulk: "/home/users/allstaff/you.yu/LongBench/sequencing_data/ONT_bulk/"
+  
+samples_fastq_dir: 
+  ont_bulk: "/home/users/allstaff/you.yu/LongBench/sequencing_data/ONT_bulk/fastqs/"
+  pb_bulk: "/home/users/allstaff/you.yu/LongBench/sequencing_data/pb_bulk"
 
 barcode_list:
   - 1: H146
@@ -23,7 +28,7 @@ barcode_list:
   - 7: H2228
   - 8: HCC827
 
-cell_line_list:
+cell_lines:
   - H146
   - H69
   - H526
@@ -36,6 +41,15 @@ cell_line_list:
 output_path: 
   "/vast/projects/LongBench/analysis/lr_bulk/result"
 
-run_id:
+sample_id:
   - 'ont_bulk'
+  - 'pb_bulk'
 
+minimap2_genome_options:
+  ont_bulk: "-ax splice:hq"
+  pb_bulk: "-ax splice:hq"
+  
+
+minimap2_trans_options:
+  ont_bulk: "-ax lr:hq"
+  pb_bulk: "-ax lr:hq"

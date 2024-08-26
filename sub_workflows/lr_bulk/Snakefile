@@ -12,7 +12,7 @@ config = config_parser.sub_wf_config_parser(
 
 include: "rules/minimap2.smk"
 include: "rules/internal_priming.smk"
-include: config['main_wf_dir'] + "/modules/qc.smk"
+include: "rules/qc.smk"
 include: "rules/quantification.smk"
 include: config['main_wf_dir'] + "/modules/utilities.smk"
 
@@ -20,19 +20,17 @@ results_dir = config["output_path"]
 # make sure the results_dir exists
 shell("mkdir -p {results_dir}")
 
-# Email the workflow status
-EMAIL = config["email"]
 
-
+# These wildcards names are reserved for special meanings
+wildcard_constraints:
+   cell_line='|'.join(config['cell_lines']),
+   sample='|'.join(config['sample_id'])
 
 # Main rule
 rule all:
    input:
       results_dir + "/.flag/run_all_mapping.done",
-      results_dir + "/.flag/run_salmon.done"
+      results_dir + "/.flag/run_salmon.done",
+      rules.qc.output
    output:
       touch(os.path.join(results_dir, ".flag/all.done"))
-   onsuccess:
-      shell("mail -s 'DONE: lr_bulk Snakemake run' {EMAIL} < {log}")
-   onerror:
-      shell("mail -s 'ERROR: lr_bulk Snakemake run' {EMAIL} < {log}")

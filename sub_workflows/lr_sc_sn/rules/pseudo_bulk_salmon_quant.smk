@@ -6,7 +6,7 @@ rule get_cell_line_bc_list:
         [os.path.join(results_dir,  "misc/{sample}/", f"{x}_BC_list.txt") for x in config['cell_line_list']]
     shell:
         """
-        module load R
+        # module load R
         Rscript -e '
             library(dplyr)
             outdir <- dirname("{output[0]}")
@@ -58,8 +58,9 @@ rule ont_bulk_minimap2_transcript:
         minimap2 = config["software"]["minimap2"]
     shell:
         """
-        module load samtools
+        # module load samtools
         {params.minimap2} -ax lr:hq -t {resources.cpus_per_task} {input.ref}  {input.fastq} | samtools view -bS - > {output.bam}
+        rm {input.fastq}
         """
 
 

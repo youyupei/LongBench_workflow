@@ -5,125 +5,109 @@ cell_line_to_barcode = {cl: bc for d in barcode_list for bc, cl in d.items()}
 
 
 ###################### Run QC pipelines ###############################
-rule all_qc:
+rule qc:
     input:
         expand(
             [
-                os.path.join(results_dir, "qc/{sample}.{read_length_source}.read_length.txt"),
-                os.path.join(results_dir, "qc/{sample}_coverage_picard.RNA_Metrics"),
-                os.path.join(results_dir, "qc/{sample}_QualityScoreDistribution_picard.pdf"),
-                os.path.join(results_dir, "qc/{sample}_align2genome.bam.picard_AlignmentSummaryMetrics.txt"),
-                os.path.join(results_dir, "qc/{sample}_flame_coverage_plot.{flames_cov_plot_suffix}"),
-                ".flag/{sample}_sqanti3.done"
+                os.path.join(results_dir, "qc/coverage/{sample}_{cell_line}.flame.coverage_plot.{flames_cov_plot_suffix}"),
+                os.path.join(results_dir, "qc/sqanti3/{sample}_{cell_line}/"),
+                os.path.join(results_dir, "qc/NanoPlot/{sample}_{cell_line}/"),
+                #os.path.join(results_dir, "qc/coverage/{sample}_{cell_line}.RSeQC.geneBodyCoverage.pdf"),
+                os.path.join(results_dir, "qc/coverage/{sample}_{cell_line}.picard.RNA_Metrics")
             ],
-            sample=config["run_id"],
-            read_length_source=["raw", "blaze_demux"],
-            flames_cov_plot_suffix = ['png', 'CDS.png']
+            sample=config["sample_id"],
+            flames_cov_plot_suffix = ['png'],
+            cell_line = cell_line_to_barcode.keys()
         )
     output:
-        os.path.join(results_dir, "qc/.flag/all_qc.done")
+        os.path.join(results_dir, "qc/.flag/qc.done")
     shell:
         """
         mkdir -p $(dirname {output})
         touch {output}
         """
-###################### Rules ###############################
+###################################################################################
 
-## Read length related
-rule generate_demux_read_length_statistics:
+######## Subsample ########
+rule _subsample_1M_reads:
     input:
-        os.path.join(results_dir, "flames_out/{sample}/matched_reads.fastq")
+        lambda wildcards:  os.path.join(config["samples_fastq_dir"][wildcards.sample], "{cell_line}.fastq")
     output:
-        os.path.join(results_dir, "qc/{sample}.blaze_demux.read_length.txt")
+        os.path.join(results_dir, "qc/subsample_fq/{sample}_{cell_line}_subsampled1M.fastq")
     resources:
         cpus_per_task=1,
-        mem_mb=32000,
-        slurm_extra="--mail-type=END,FAIL --mail-user=you.yu@wehi.edu.au"
+        mem_mb=32000
+    params:
+        n_reads = 1000000,
+        seed = config['random_seed']
     shell:
         """
         mkdir -p $(dirname {output})
-
-        # remove output file if it already exists
-        if [ -f {output} ]; then
-            rm {output}
-        fi
-
-        # if input is a directory, iterate through all the fastq 
-        if [ -d {input} ]; then
-            for f in {input}/*.fastq; do
-                awk '{{if(NR%4==2){{print length($0)}}}}' $f >> {output}
-            done
-        else
-            awk '{{if(NR%4==2){{print length($0)}}}}' {input} > {output}
-        fi
+        seqtk sample -s {params.n_reads} {input} {params.n_reads} > {output}
         """
 
-## Read length related
-rule generate_raw_read_length_statistics:
+
+######## Read length (subsampled fastq) ########
+# rule generate_read_length_statistics:
+#     input:
+#         os.path.join(results_dir, "qc/subsample_fq/{sample}.{cell_line}_matched_reads_subsampled.fastq")
+#     output:
+#         os.path.join(results_dir, "qc/{sample}.{cell_line}.read_length.txt")
+#     resources:
+#         cpus_per_task=1,
+#         mem_mb=32000
+#     shell:
+#         """
+#         mkdir -p $(dirname {output})
+# 
+#         # remove output file if it already exists
+#         if [ -f {output} ]; then
+#             rm {output}
+#         fi
+# 
+#         # if input is a directory, iterate through all the fastq 
+#         if [ -d {input} ]; then
+#             for f in {input}/*.fastq; do
+#                 awk '{{if(NR%4==2){{print length($0)}}}}' $f >> {output}
+#             done
+#         else
+#             awk '{{if(NR%4==2){{print length($0)}}}}' {input} > {output}
+#         fi
+#         """
+
+######## NanoPlot ########
+rule NanoPlot:
     input:
-        lambda wildcards: config["samples_fastq_dir"][wildcards.sample]
+        reads=os.path.join(results_dir, "qc/subsample_fq/{sample}_{cell_line}_subsampled1M.fastq")
     output:
-        os.path.join(results_dir, "qc/{sample}.raw.read_length.txt")
+        directory(os.path.join(results_dir, "qc/NanoPlot/{sample}_{cell_line}/"))
+    conda:
+        config['conda']['NanoPlot']
     resources:
-        cpus_per_task=1,
-        mem_mb=32000,
-        slurm_extra="--mail-type=END,FAIL --mail-user=you.yu@wehi.edu.au"
+        cpus_per_task=16,
+        mem_mb=32000
     shell:
         """
-        mkdir -p $(dirname {output})
-
-        # remove output file if it already exists
-        if [ -f {output} ]; then
-            rm {output}
-        fi
-
-        # if input is a directory, iterate through all the fastq 
-        if [ -d {input} ]; then
-            for f in {input}/*.fastq; do
-                awk '{{if(NR%4==2){{print length($0)}}}}' $f >> {output}
-            done
-        else
-            awk '{{if(NR%4==2){{print length($0)}}}}' {input} > {output}
-        fi
-        """
-
-# QualityScoreDistribution
-rule picard_QualityScoreDistribution:
-    input:
-        bam = os.path.join(results_dir,"flames_out/{sample}/align2genome.bam"),
-        picard_dir = "/home/users/allstaff/you.yu/project/software/picard.jar"
-    output:
-        chart = os.path.join(results_dir, "qc/{sample}_QualityScoreDistribution_picard.pdf"),
-        txt = os.path.join(results_dir, "qc/{sample}_QualityScoreDistribution_picard.txt")
-    resources:
-        cpus_per_task=1,
-        mem_mb=32000,
-        slurm_extra="--mail-type=END,FAIL --mail-user=you.yu@wehi.edu.au"
-    shell:
-        """
-        module load picard-tools/2.26.11
-        mkdir -p $(dirname {output.chart})
-        java -jar {input.picard_dir} QualityScoreDistribution \
-            I={input.bam} \
-            O={output.txt} \
-            CHART={output.chart}
+        output_dir={output}
+        mkdir -p $output_dir
+        NanoPlot --fastq {input.reads} --outdir $output_dir -t {resources.cpus_per_task} --raw  --tsv_stats
         """
 
 # Coverage
 rule picard_coverage_data:
     input:
-        bam = os.path.join(results_dir,"flames_out/{sample}/align2genome.bam"),
+        bam = results_dir + "/GenomeAlignment/{sample}_{cell_line}.sorted.bam",
         refFlat = '/home/users/allstaff/you.yu/LongBench/reference_files/GRCh38/refFlat.txt',
         picard_dir = "/home/users/allstaff/you.yu/project/software/picard.jar"
     output:
-        os.path.join(results_dir, "qc/{sample}_coverage_picard.RNA_Metrics")
+        os.path.join(results_dir, "qc/coverage/{sample}_{cell_line}.picard.RNA_Metrics")
     resources:
         cpus_per_task=16,
         mem_mb=32000,
         slurm_extra="--mail-type=END,FAIL --mail-user=you.yu@wehi.edu.au"
     shell:
         """
-        module load picard-tools/2.26.11
+        module load picard-tools
         mkdir -p $(dirname {output})
         java -jar {input.picard_dir} \
             CollectRnaSeqMetrics  \
@@ -146,7 +130,7 @@ rule picard_CollectAlignmentSummaryMetrics:
         slurm_extra="--mail-type=END,FAIL --mail-user=you.yu@wehi.edu.au"
     shell:
         """
-        module load picard-tools/2.26.11
+        module load picard-tools
         mkdir -p $(dirname {output})
         java -jar {input.picard_dir} CollectAlignmentSummaryMetrics \
           R={input.ref} \
@@ -156,93 +140,71 @@ rule picard_CollectAlignmentSummaryMetrics:
 
 rule flame_coverage_plot:
     input:
-        bam = os.path.join(results_dir,"flames_out/{sample}/realign2transcript.bam"),
+        bam = os.path.join(results_dir,"TranscriptAlignment/{sample}_{cell_line}.sorted.bam"),
         gtf = config['reference']['gtf']
     output:
-        os.path.join(results_dir, "qc/{sample}_flame_coverage_plot.{suffix}")
+        report(
+            os.path.join(results_dir, "qc/coverage/{sample}_{cell_line}.flame.coverage_plot.{suffix}"), 
+            category="QC", subcategory="Coverage",  labels=lambda wildcards: {
+              "Sample": "{sample}",
+              "Region": "CDS" if "CDS" in wildcards.suffix else "Whole transcript",
+              "figure": "flame_coverage_plot"
+          })
     resources:
         cpus_per_task=1,
-        mem_mb=32000,
-        slurm_extra="--mail-type=END,FAIL --mail-user=you.yu@wehi.edu.au"
+        mem_mb=32000
+        #slurm_extra="--mail-type=END,FAIL --mail-user=you.yu@wehi.edu.au"
+    params:
+        script = os.path.join(config['main_wf_dir'],'scripts/flames_coverage_plot.R')
     shell:
         """
         mkdir -p $(dirname {output})
-        Rscript scripts/plot_coverage.R {input.bam} {input.gtf} {output}
+        Rscript  {params.script} {input.bam} {input.gtf} {output}
         """
 
 
 ## SQANTI3
-
 rule sqanti3:
     input:
-        reads=os.path.join(results_dir, "flames_out/{sample}/matched_reads.fastq"),
+        reads=os.path.join(results_dir, "qc/subsample_fq/{sample}_{cell_line}_subsampled1M.fastq"),
         gtf=config['reference']['gtf'],
-        genome=config['reference']['genome'],
-    
+        genome=config['reference']['genome']
     output:
-        touch(".flag/{sample}_sqanti3.done")
+        dir = directory(os.path.join(results_dir, "qc/sqanti3/{sample}_{cell_line}/"))
+        # html = report(os.path.join(results_dir, "qc/sqanti3/{sample}/matched_reads_subsampled_SQANTI3_report.html"),
+        #             category="QC", subcategory="SQANTI3") # this is not included as it is too large
     conda: 
         config['conda']['sqanti3']
     resources:
-        cpus_per_task=32,
-        mem_mb=200000,
-        slurm_extra="--mail-type=END,FAIL --mail-user=you.yu@wehi.edu.au"
+        cpus_per_task=16,
+        mem_mb=32000
+        #slurm_extra="--mail-type=END,FAIL --mail-user=you.yu@wehi.edu.au"
     params: 
         sqanti3_qc_script = os.path.join(config['software']['sqanti3_dir'], "sqanti3_qc.py"),
-        outidr = lambda w:  os.path.join(results_dir, f"qc/sqanti3/{w.sample}")
+        additional_arg = "--skipORF"
     shell:
         """
-        {params.sqanti3_qc_script} {input.reads} {input.gtf} {input.genome}   --fasta  --cpus {resources.cpus_per_task} --force_id_ignore -d {params.outidr}
+        module unload R
+        {params.sqanti3_qc_script} {input.reads} {input.gtf} {input.genome} {params.additional_arg} --fasta  --cpus {resources.cpus_per_task} --force_id_ignore -d {output} --report html
         """
 
-# rule get_intronic_pct:
-#     input:
-#         expand(os.path.join(results_dir, "qc/{sample}_coverage_picard.RNA_Metrics"), sample=config['run_id'])
-#     output:
-#         os.path.join(results_dir, "qc/coverage_intronic_pct.txt")
-#     localrule: True
-#     run:
-#         import pandas as pd
-#         import os
-
-#         def read_metrics_class(file):
-#             with open(file, 'r') as f:
-#                 lines = f.readlines()
-#                 for i, line in enumerate(lines):
-#                     if line.startswith("## METRICS CLASS"):
-#                         matrix_df = pd.read_csv(file, skiprows=i+1, nrows=1, sep="\t")
-#                     if line.startswith("## HISTOGRAM"):
-#                         coverage_df = pd.read_csv(file, skiprows=i+1, sep="\t")
-#                         break
-#             return matrix_df, coverage_df 
-        
-#         intronic_pcts = []
-#         # Create the directory if it does not exist
-#         if not os.path.exists(os.path.dirname(output)):
-#             os.makedirs(os.path.dirname(output))
-
-#         with open(output, 'w') as f:
-#             for i, file in enumerate(input):
-#                 df, _ = read_metrics_class(file)
-#                 intronic_pct = df['PCT_INTRONIC_BASES'].values[0]
-#                 f.write(f"{config['run_id'][i]}\t{intronic_pct}\n")
-#                 intronic_pcts.append(intronic_pct)
 
 
-# rule seqkit_qc_state:
-#     input:
-#         config["samples_fastq_dir"]["ont_sn"],
-#         config["samples_fastq_dir"]["ont_sc"],
-#         config["output_path"] + "/flames_out/ont_sn/matched_reads.fastq",
-#         config["output_path"] + "/flames_out/ont_sc/matched_reads.fastq"
-#     output:
-#         os.path.join(results_dir, "qc/seqkit_qc_state.tsv")
-#     resources:
-#         cpus_per_task=8,
-#         mem_mb=32000,
-#         slurm_extra="--mail-type=END,FAIL --mail-user=you.yu@wehi.edu.au"
-#     shell:
-#         """
-#         mkdir -p $(dirname {output})
-#         /home/users/allstaff/you.yu/software/bin/seqkit stats  -Ta {input} > {output}
-#         """
+rule RSeQC_gene_body_coverage:
+    input:
+        bed=config['reference']['bed_human'], # I have rules to convert gtf to bed
+        genome_bam = results_dir + "/GenomeAlignment/{sample}_{cell_line}.sorted.bam"
+    output:
+        os.path.join(results_dir, "qc/coverage/{sample}_{cell_line}.RSeQC.geneBodyCoverage.pdf")
+    resources:
+        cpus_per_task=1,
+        mem_mb=32000
+    conda:
+        config['conda']['RSeQC']
+    shell:
+        """
+        mkdir -p $(dirname {output})
+        geneBody_coverage.py -i {input.genome_bam} -r {input.bed} -o {output}
+        """
+
+

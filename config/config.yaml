@@ -8,12 +8,16 @@ sub_wf_dir:
   lr_sc_sn: sub_workflows/lr_sc_sn
   lr_bulk: sub_workflows/lr_bulk
   sr_sc_sn: sub_workflows/sr_sc_sn
+  sr_bulk:
 
-# they will be not converted to absolute path in the config parser
+# they will NOT be converted to absolute path in the config parser
 git_repo_dir: "script/git_repo"
 
 conda_config: # the parser will convert it to absolute path will be accessible as config['conda_config'] or config['conda']
   main: "conda/config/main.yaml" # relative path to the main workflow directory (main_wf_dir)
+  LongReadSum: "conda/config/LongReadSum.yaml"
+  NanoPlot: "conda/config/NanoPlot.yaml"
+  RSeQC: "conda/config/RSeQC.yaml"
 
 conda:
   sqanti3: "SQANTI3" # prebuilt conda env name
@@ -23,17 +27,20 @@ sub_wf_config:
   main_wf: config/config_main_wf.yaml
   lr_sc_sn: config/config_lr_sc_sn.yaml
   lr_bulk: config/config_lr_bulk.yaml
-  sr_sc_sn: config/config_sc_sc_sn.yaml
+  sr_sc_sn: config/config_sr_sc_sn.yaml
+  sr_bulk: config/config_sr_bulk.yaml
 
 
 # software
 software:
   sqanti3_dir: "/home/users/allstaff/you.yu/LongBench/software/SQANTI3/"
   demuxlet: "/home/users/allstaff/you.yu/LongBench/software/demuxlet/demuxlet/bin/demuxlet"
-  minimap2: "/home/users/allstaff/you.yu/LongBench/software/minimap2-2.28_x64-linux/minimap2"
-
+  minimap2: "/home/users/allstaff/you.yu/LongBench/software/minimap2-2.28_x64-linux/minimap2" # require the exisitence of k8 in the same directory
   
 # for all random process
 random_seed: 2024
 
 email: "you.yu@wehi.edu.au"
+
+
+combined_output_path: "/vast/projects/LongBench/analysis/all_samples/result"

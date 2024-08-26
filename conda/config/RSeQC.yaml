@@ -1,0 +1,9 @@
+name: RSeQC
+channels:
+  - defaults
+  - conda-forge
+dependencies:
+  - python=3.9  # Specify the Python version you want
+  - pip
+  - pip:
+      - RSeQC==5.0.1

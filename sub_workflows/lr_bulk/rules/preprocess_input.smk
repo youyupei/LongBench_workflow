@@ -16,7 +16,7 @@ rule split_pooled_bam:
         cell_line = config["cell_line"].values()
     shell:
         """
-        module load samtools
+        # module load samtools
         cd $(dirname {input})
         samtools split -d BC --threads {resources.cpus_per_task} {input} 
         """
@@ -37,7 +37,7 @@ rule split_pooled_bam:
         cell_line = config["cell_line"].values()
     shell:
         """
-        module load samtools
+        # module load samtools
         cd $(dirname {input})
         samtools split -d BC --threads {resources.cpus_per_task} {input} 
         """

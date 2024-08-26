@@ -46,7 +46,7 @@ rule demuxlet_rule:
         demuxlet_excutable = config['software']['demuxlet']
     shell:
         """
-        module load samtools
+        # module load samtools
         module load htslib
         filename={output}
         mkdir -p $(dirname $filename)   

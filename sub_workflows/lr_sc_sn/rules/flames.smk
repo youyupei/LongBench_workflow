@@ -11,7 +11,8 @@ rule blaze:
         out_fastq = config["output_path"] + "/flames_out/{sample}/matched_reads.fastq",
         other_output = [
             config["output_path"] + "/flames_out/{sample}/putative_bc.csv",
-            config["output_path"] + "/flames_out/{sample}/whitelist.csv"
+            config["output_path"] + "/flames_out/{sample}/whitelist.csv",
+            config["output_path"] + "/flames_out/{sample}/summary.txt"
         ]
     params:
         manual_count_thres = lambda wildcards: config["count_thres"][wildcards.sample] if config["count_thres"][wildcards.sample] else "",
@@ -83,10 +84,6 @@ rule flame_run_no_novel_discovery:
         k8 = os.path.dirname(config["software"]["minimap2"]) + '/k8'
     shell:
         """
-        module load samtools
-        module unload R
-        module load R/4.4.0
-
         out_dir=$(dirname {input.fastq})
         mkdir -p $out_dir
         mkdir -p $(dirname {output.flag})

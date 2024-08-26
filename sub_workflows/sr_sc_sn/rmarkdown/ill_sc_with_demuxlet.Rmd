@@ -1,7 +1,6 @@
 ---
-title: "Processing of ONT single cell/nuclei data"
+title: "`r params$report_title`"
 author: "Yupei"
-date: '2024-06-07'
 output:
   html_document:
     code_folding: hide
@@ -13,14 +12,13 @@ output:
     toc: yes
     toc_depth: '4'
 params:
+  report_title: "Untitled"
   random_seed: 2024
   cache_dir: NULL
-  sc_long_preprocessing_script: NULL
+  preprocessing_script: NULL
   demuxlet_out: NULL
-  out_annotated_so_rds: NULL
-  fn_flames_gene_quant: NULL
-
-    
+  out_rds: NULL
+  in_10x: NULL
 ---
 
 ```{r setup, include=FALSE}
@@ -42,23 +40,30 @@ library(glue)
 library(kableExtra)
 ```
 
-```{r, all input files}
-# other setting:
-seed <- params$random_seed
-# output directory
-params$out_annotated_so_rds
+```{r, set up}
+args <- as.list(params)
 
-# make sure the output directory exists
-dir.create(dirname(params$out_annotated_so_rds), showWarnings = F, recursive = T)
-source(params$sc_long_preprocessing_script)
+
+# set up default args for testing (when not params are provided)
+if (is.null(args$in_10x)) {
+  args$in_10x <- "/home/users/allstaff/you.yu/LongBench/analysis/illumina_sc_sn/result/cellranger/ill_sc/outs/filtered_feature_bc_matrix"
+  args$preprocessing_script <- "sc_processing.R"
+  args$demuxlet_out <- "/home/users/allstaff/you.yu/LongBench/analysis/illumina_sc_sn/result/demuxlet/ill_sc.demuxlet.best"
+}
 ```
 
+
+```{r}
+source(args$preprocessing_script)
+# make sure the output directory exists
+dir.create(dirname(args$out_rds), showWarnings = F, recursive = T)
+```
 
 
 # sing-cell QC and clustring
 ```{r input file, echo=T, cache=TRUE, warning=F, eval=T}
 # input file
-so <- load_flames_gene_quant(params$fn_flames_gene_quant, assay = "Gene_quant")
+so <- load_longbench_result(args$in_10x)
 ```
 
 ## Basic QC
@@ -66,11 +71,10 @@ so <- load_flames_gene_quant(params$fn_flames_gene_quant, assay = "Gene_quant")
 ```{r}
 # Step 1: Remove Doublet
 so <- so %>% remove.doublet %>%  remove_outliers 
-so <- so %>% get_clusters(ndim=30,res=0.5,seed = params$random_seed)
+so <- so %>% get_clusters(ndim=30,res=0.5,seed = 2024)
 ## Check the ndim preserve most of the variance:
 ElbowPlot(so, ndims = 30, reduction = "pca.Gene_quant")
 ```
-
 
 ```{r, fig.height=20, fig.width=20}
 p <- DimPlot(
@@ -87,7 +91,7 @@ do.call(grid.arrange, p)
 Get demuxlet result
 ```{r}
 # read the demuxlet output:
-demuxlet_out <- read.csv(params$demuxlet_out, header = T, sep = '\t') %>% dplyr::select(BARCODE, BEST, SNG.1ST)
+demuxlet_out <- read.csv(args$demuxlet_out, header = T, sep = '\t') %>% dplyr::select(BARCODE, BEST, SNG.1ST)
 
 demuxlet_out <- demuxlet_out %>% mutate(
   demuxlet.LABEL = case_when(
@@ -165,5 +169,6 @@ p <- DimPlot(
 
 
 ```{r}
-saveRDS(so, file = params$out_annotated_so_rds)
+
+saveRDS(so, file = args$out_rds)
 ```

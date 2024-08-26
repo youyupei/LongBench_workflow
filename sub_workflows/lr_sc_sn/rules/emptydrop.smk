@@ -138,9 +138,9 @@ rule empty_drop_run_flames:
         k8 = os.path.dirname(config["software"]["minimap2"]) + '/k8'
     shell:
         """
-        module load samtools
-        module unload R
-        module load R/4.4.0
+        # module load samtools
+        # module unload R
+        # module load R/4.4.0
 
         out_dir={output.dir}
         mkdir -p $out_dir

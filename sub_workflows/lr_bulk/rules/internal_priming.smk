@@ -29,7 +29,7 @@ rule _internal_priming_identifier:
     shell:
         """
         mkdir -p $(dirname {output.summary})
-        module load samtools
+        # module load samtools
         
         {params.python_dir} {params.python_script} --bam_file {input.bam} \
                                         --gtf_file {input.gtf} \

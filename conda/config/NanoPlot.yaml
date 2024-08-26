@@ -1,0 +1,5 @@
+name: NanoPlot
+channels:
+  - bioconda
+dependencies:
+  - nanoplot

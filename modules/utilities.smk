@@ -1,20 +1,18 @@
 # BAM SAM and fastq
-rule sort_and_index_bam:
+rule utilities_sort_and_index_bam:
     input:
         os.path.join(config['output_path'],"{x}.bam")
     output:
-        os.path.join(config['output_path'],"{x}.bam.bai")
+        bam = os.path.join(config['output_path'],"{x}.sorted.bam"),
+        bai = os.path.join(config['output_path'],"{x}.sorted.bam.bai")
     resources:
         cpus_per_task=8,
         mem_mb=64000
         #slurm_extra="--mail-type=END,FAIL --mail-user=you.yu@wehi.edu.au --job-name=coverage_plot"
     shell:
         """
-        module load samtools/1.20
-        mv {input} {input}.tmp.bam
-        samtools sort -@ {resources.cpus_per_task} -o {input} {input}.tmp.bam
-        samtools index -@ {resources.cpus_per_task} {input}
-        rm {input}.tmp.bam
+        samtools sort -@ {resources.cpus_per_task} -o {output.bam} {input}
+        samtools index -@ {resources.cpus_per_task} {output.bam}
         """
 
 # rule sam_to_bam:
@@ -28,7 +26,7 @@ rule sort_and_index_bam:
 #         """
 
 
-rule subsample_bam:
+rule utilities_subsample_bam:
     input:
         os.path.join(config['output_path'],"{x}.bam")
     output:
@@ -37,29 +35,29 @@ rule subsample_bam:
         cpus_per_task=1,
         mem_mb=32000
     shell:
-        "module load samtools && samtools view -s {wildcards.rate} -b {input} > {output}"
+        "samtools view -s {wildcards.rate} -b {input} > {output}"
 
 
-rule bam_to_fastq:
-    input:
-        os.path.join(config['output_path'],"{x}.bam")
-    output:
-        os.path.join(config['output_path'],"{x}.fastq")
-    resources:
-        cpus_per_task=1,
-        mem_mb=32000
-    shell:
-        """
-        module load samtools 
-        samtools fastq {input} > {output}
-        """
+# rule bam_to_fastq:
+#     input:
+#         os.path.join(config['output_path'],"{x}.bam")
+#     output:
+#         os.path.join(config['output_path'],"{x}.fastq")
+#     resources:
+#         cpus_per_task=1,
+#         mem_mb=32000
+#     shell:
+#         """
+#         module load samtools 
+#         samtools fastq {input} > {output}
+#         """
 
 # GTF and BED
-rule gtf_to_bed:
+rule utilities_gtf_to_bed:
     input:
-        os.path.join(config['output_path'],"{x}.gtf")
+        "{x}.gtf"
     output:
-        os.path.join(config['output_path'],"{x}.gtf.bed")
+        "{x}.gtf.bed"
     resources:
         cpus_per_task=1,
         mem_mb=32000
@@ -69,7 +67,7 @@ rule gtf_to_bed:
         """
         
 # github
-rule git_check_commit:
+rule utilities_git_check_commit:
     """
     usage: ask for .flag/gitrepo_{git_repo}.commit where git_repo takes the form of "user_repo"
     """
@@ -102,7 +100,7 @@ rule git_check_commit:
         fi
         """
 
-rule _git_clone:
+rule utilities__git_clone:
     output:
         touch(os.path.join(config['output_path'],".flag/gitrepo_{git_repo}.exist"))
     params:

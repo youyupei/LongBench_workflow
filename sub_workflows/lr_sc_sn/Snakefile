@@ -9,22 +9,15 @@ config = config_parser.sub_wf_config_parser(
    main_cfg_fn = config['global_config_path'], 
    sub_wf_name = "lr_sc_sn")
 
-
 include: "rules/flames.smk"
-include: config['main_wf_dir'] + "/modules/qc.smk"
+include: "rules/qc.smk"
 include: "rules/internal_priming.smk"
 include: "rules/mutation.smk"
 include: "rules/demuxlet.smk"
 include: "rules/emptydrop.smk"
 include: "rules/rmarkdown.smk"
 include: "rules/pseudo_bulk_salmon_quant.smk"
-#include: "rules/salmon.smk"
 include: config['main_wf_dir'] + "/modules/utilities.smk"
-
-
-
-EMAIL = config["email"]
-
 
 
 rule all: 
@@ -38,11 +31,6 @@ rule all:
         rules.pseudo_bulk_salmon_quant.output
     output:
         touch(os.path.join(results_dir, ".flag/all.done"))
-    onsuccess:
-        shell("mail -s 'DONE: lr_sc_sn Snakemake run' {EMAIL} < {log}")
-    onerror:
-        shell("mail -s 'ERROR: lr_sc_sn Snakemake run' {EMAIL} < {log}")
-
 
 # rule internal_priming_analysis:
 #     input:
