@@ -43,7 +43,7 @@ rule rmd_lr_sn_clustering_and_annotation:
         fn_empty_gene_count = os.path.join(results_dir, "emptydrop/{sample}_flames/gene_count.csv"),
         rmd = os.path.join(config['sub_wf_dir'],  "rmarkdown/lr_sn_clustering_annotation.Rmd"),
         preprocessing_script = os.path.join(config['sub_wf_dir'],  "rmarkdown/sc_long_preprocessing.R"),
-        ref_sc_rds = os.path.join(results_dir,  "reports/RDS/ont_sc_clean_annotated.rds")
+        ref_sc_rds = os.path.join(results_dir,  "reports/RDS/ont_sc_annotated.rds")
     output:
         html = os.path.join(results_dir,  "reports/{sample,.*_sn.*}_clustering_and_annotation.html"),
         annotated_so_rds = os.path.join(results_dir,  "reports/RDS/{sample,.*_sn.*}_annotated.rds")

@@ -1,6 +1,6 @@
 # result
-output_path: "/vast/projects/LongBench/analysis/lr_sc_sn/result_subsample"
-#output_path: "/vast/projects/LongBench/analysis/lr_sc_sn/result"
+#output_path: "/vast/projects/LongBench/analysis/lr_sc_sn/result_subsample"
+output_path: "/vast/projects/LongBench/analysis/lr_sc_sn/result"
 scratch_dir: "/vast/scratch/users/you.yu/LongBench/lr_sc_sn"
 
 # reference file
@@ -18,10 +18,8 @@ reference:
 #   ont_sc: "/stornext/Projects/promethion/promethion_access/lab_ritchie/20240529_WEHI_RITCHIE_LongBenchSC/long_term/"
   
 samples_fastq_dir:
-  ont_sn: "/home/users/allstaff/you.yu/LongBench/sequencing_data/ONT_sn/sn_ONT.fastq.gz"
-  ont_sc: "/home/users/allstaff/you.yu/LongBench/sequencing_data/ONT_sc/ont_sc.fastq.gz"
-  ont_sn_clean: "/home/users/allstaff/you.yu/LongBench/sequencing_data/ONT_sn/ont_sn_clean.fastq.gz"
-  ont_sc_clean: "/home/users/allstaff/you.yu/LongBench/sequencing_data/ONT_sc/ont_sc_clean.fastq.gz"
+  ont_sn: "/home/users/allstaff/you.yu/LongBench/sequencing_data/ONT_sn/ont_sn_clean.fastq.gz"
+  ont_sc: "/home/users/allstaff/you.yu/LongBench/sequencing_data/ONT_sc/ont_sc_clean.fastq.gz"
   pb_sc: "/home/users/allstaff/you.yu/LongBench/sequencing_data/pb_sc/pb_sc.fastq.gz"
   pb_sn: "/home/users/allstaff/you.yu/LongBench/sequencing_data/pb_sn/pb_sn.fastq.gz"
 
@@ -35,43 +33,34 @@ flames_config:
 
 
 sample_id:
-  # - 'ont_sn'
-  # - 'ont_sc'
-  - 'ont_sn_clean'
-  - 'ont_sc_clean'
   - 'pb_sc'
   - 'pb_sn'
+  - 'ont_sn'
+  - 'ont_sc'
+
 
 # Config for FLAMES/BLAZE
 expected_cells:
   ont_sn: 5000
   ont_sc: 5000
-  ont_sn_clean: 5000
-  ont_sc_clean: 5000
   pb_sc: 5000
   pb_sn: 5000
 
 count_thres: # Count threshold will override expected_cells
-  ont_sn: 
-  ont_sc: 
-  ont_sn_clean:
-  ont_sc_clean:
+  ont_sn:
+  ont_sc:
   pb_sc:
   pb_sn:
  
 force_cells: # Count threshold will override expected_cells
-  ont_sn: 
-  ont_sc: 
-  ont_sn_clean: 10000
-  ont_sc_clean:
+  ont_sn: 10000
+  ont_sc:
   pb_sc:
   pb_sn: 10000
 
 whitelist_10x:
   ont_sn: 
-  ont_sc: 
-  ont_sn_clean: 
-  ont_sc_clean:
+  ont_sc:
   pb_sc:
   pb_sn:
 

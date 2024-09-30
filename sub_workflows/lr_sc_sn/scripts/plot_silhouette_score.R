@@ -44,7 +44,7 @@ cell_lines <- c(cell_lines, so.pb.sn$cell_lines)
 sample_names <- c(sample_names, rep("PB SN", length(so.pb.sn.sil)))
 rm(so.pb.sn)
 
-so.ont.sc <- readRDS("/vast/projects/LongBench/analysis/lr_sc_sn/result/reports/RDS/ont_sc_clean_annotated.rds")
+so.ont.sc <- readRDS("/vast/projects/LongBench/analysis/lr_sc_sn/result/reports/RDS/ont_sc_annotated.rds")
 so.ont.sc.sil <- get_silhouette_score(
   so.ont.sc,
   cluster_col = "cell_lines",
@@ -56,7 +56,7 @@ cell_lines <- c(cell_lines, so.ont.sc$cell_lines)
 sample_names <- c(sample_names, rep("ONT SC", length(so.ont.sc.sil)))
 rm(so.ont.sc)
 
-so.ont.sn <- readRDS("/vast/projects/LongBench/analysis/lr_sc_sn/result/reports/RDS/ont_sn_clean_annotated.rds")
+so.ont.sn <- readRDS("/vast/projects/LongBench/analysis/lr_sc_sn/result/reports/RDS/ont_sn_annotated.rds")
 so.ont.sn.sil <- get_silhouette_score(
   so.ont.sn,
   cluster_col = "cell_lines",

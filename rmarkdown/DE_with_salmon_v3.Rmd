@@ -20,8 +20,8 @@ params:
   human_gtf: '/vast/projects/LongBench/reference_files/GRCh38/gencode.v44.annotation.gtf'
   ont_bulk_salmon_dir: "/vast/projects/LongBench/analysis/lr_bulk/result/salmon_output/ont_bulk"
   pb_bulk_salmon_dir: "/vast/projects/LongBench/analysis/lr_bulk/result/salmon_output/pb_bulk"
-  ont_sc_clean_salmon_dir: "/vast/projects/LongBench/analysis/lr_sc_sn/result/PseudoBulkSalmon/ont_sc_clean"
-  ont_sn_clean_salmon_dir: "/vast/projects/LongBench/analysis/lr_sc_sn/result/PseudoBulkSalmon/ont_sn_clean"
+  ont_sc_salmon_dir: "/vast/projects/LongBench/analysis/lr_sc_sn/result/PseudoBulkSalmon/ont_sc"
+  ont_sn_salmon_dir: "/vast/projects/LongBench/analysis/lr_sc_sn/result/PseudoBulkSalmon/ont_sn"
   ont_sc_salmon_dir: "/vast/projects/LongBench/analysis/lr_sc_sn/result/PseudoBulkSalmon/ont_sc"
   ont_sn_salmon_dir: "/vast/projects/LongBench/analysis/lr_sc_sn/result/PseudoBulkSalmon/ont_sn"
   ill_bulk_salmon_dir: "/vast/projects/LongBench/analysis/illumina_bulk/tx_de_analysis/salmon_bs"
@@ -42,8 +42,8 @@ params <- list(
   human_gtf = '/vast/projects/LongBench/reference_files/GRCh38/gencode.v44.annotation.gtf',
   ont_bulk_salmon_dir = "/vast/projects/LongBench/analysis/lr_bulk/result/salmon_output/ont_bulk",
   pb_bulk_salmon_dir = "/vast/projects/LongBench/analysis/lr_bulk/result/salmon_output/pb_bulk",
-  ont_sc_clean_salmon_dir = "/vast/projects/LongBench/analysis/lr_sc_sn/result/PseudoBulkSalmon/ont_sc_clean",
-  ont_sn_clean_salmon_dir = "/vast/projects/LongBench/analysis/lr_sc_sn/result/PseudoBulkSalmon/ont_sn_clean",
+  ont_sc_salmon_dir = "/vast/projects/LongBench/analysis/lr_sc_sn/result/PseudoBulkSalmon/ont_sc",
+  ont_sn_salmon_dir = "/vast/projects/LongBench/analysis/lr_sc_sn/result/PseudoBulkSalmon/ont_sn",
   ont_sc_salmon_dir = "/vast/projects/LongBench/analysis/lr_sc_sn/result/PseudoBulkSalmon/ont_sc",
   ont_sn_salmon_dir = "/vast/projects/LongBench/analysis/lr_sc_sn/result/PseudoBulkSalmon/ont_sn",
   ill_bulk_salmon_dir = "/vast/projects/LongBench/analysis/illumina_bulk/tx_de_analysis/salmon_bs",
@@ -94,8 +94,8 @@ ont_bulk.dge <- get_dge_from_salmon(params$ont_bulk_salmon_dir, ".*/")
 pb_bulk.dge <- get_dge_from_salmon(params$pb_bulk_salmon_dir, ".*/")
 ont_sc.dge <- get_dge_from_salmon(params$ont_sc_salmon_dir, ".*/")
 ont_sn.dge <- get_dge_from_salmon(params$ont_sn_salmon_dir, ".*/")
-ont_sc_clean.dge <- get_dge_from_salmon(params$ont_sc_clean_salmon_dir, ".*/")
-ont_sn_clean.dge <- get_dge_from_salmon(params$ont_sn_clean_salmon_dir, ".*/")
+ont_sc.dge <- get_dge_from_salmon(params$ont_sc_salmon_dir, ".*/")
+ont_sn.dge <- get_dge_from_salmon(params$ont_sn_salmon_dir, ".*/")
 
 
 
@@ -132,8 +132,8 @@ plot_df <- data.frame(
   pb_bulk = pb_bulk.dge[is.human(pb_bulk.dge), ]$counts %>% sum,
   ont_sc = ont_sc.dge[is.human(ont_sc.dge), ]$counts %>% sum,
   ont_sn = ont_sn.dge[is.human(ont_sn.dge), ]$counts %>% sum,
-  ont_sn_clean = ont_sn_clean.dge[is.human(ont_sn_clean.dge), ]$counts %>% sum,
-  ont_sc_clean = ont_sc_clean.dge[is.human(ont_sc_clean.dge), ]$counts %>% sum
+  ont_sn = ont_sn.dge[is.human(ont_sn.dge), ]$counts %>% sum,
+  ont_sc = ont_sc.dge[is.human(ont_sc.dge), ]$counts %>% sum
 ) %>% pivot_longer(everything(), names_to = "Dataset", values_to = "Total Count")
 
 p1 <- ggplot(plot_df, aes(x = Dataset, y = `Total Count`, fill = Dataset)) +
@@ -148,8 +148,8 @@ plot_df <- data.frame(
   pb_bulk = pb_bulk.dge[is.sequins(pb_bulk.dge), ]$counts %>% sum,
   ont_sc = ont_sc.dge[is.sequins(ont_sc.dge), ]$counts %>% sum,
   ont_sn = ont_sn.dge[is.sequins(ont_sn.dge), ]$counts %>% sum,
-  ont_sn_clean = ont_sn_clean.dge[is.sequins(ont_sn_clean.dge), ]$counts %>% sum,
-  ont_sc_clean = ont_sc_clean.dge[is.sequins(ont_sc_clean.dge), ]$counts %>% sum
+  ont_sn = ont_sn.dge[is.sequins(ont_sn.dge), ]$counts %>% sum,
+  ont_sc = ont_sc.dge[is.sequins(ont_sc.dge), ]$counts %>% sum
 ) %>% pivot_longer(everything(), names_to = "Dataset", values_to = "Total Count")
 
 p2 <- ggplot(plot_df, aes(x = Dataset, y = `Total Count`, fill = Dataset)) +
@@ -165,8 +165,8 @@ plot_df <- data.frame(
   pb_bulk = pb_bulk.dge[is.sequins(pb_bulk.dge), ]$counts %>% sum / pb_bulk.dge$counts %>% sum,
   ont_sc = ont_sc.dge[is.sequins(ont_sc.dge), ]$counts %>% sum / ont_sc.dge$counts %>% sum,
   ont_sn = ont_sn.dge[is.sequins(ont_sn.dge), ]$counts %>% sum / ont_sn.dge$counts %>% sum,
-  ont_sn_clean = ont_sn_clean.dge[is.sequins(ont_sn_clean.dge), ]$counts %>% sum / ont_sn_clean.dge$counts %>% sum,
-  ont_sc_clean = ont_sc_clean.dge[is.sequins(ont_sc_clean.dge), ]$counts %>% sum / ont_sc_clean.dge$counts %>% sum
+  ont_sn = ont_sn.dge[is.sequins(ont_sn.dge), ]$counts %>% sum / ont_sn.dge$counts %>% sum,
+  ont_sc = ont_sc.dge[is.sequins(ont_sc.dge), ]$counts %>% sum / ont_sc.dge$counts %>% sum
 ) %>% pivot_longer(everything(), names_to = "Dataset", values_to = "Proportion of Sequins Count")
 
 p3 <- ggplot(plot_df, aes(x = Dataset, y = `Proportion of Sequins Count`, fill = Dataset)) +
@@ -182,8 +182,8 @@ plot_df <- data.frame(
   pb_bulk = pb_bulk.dge[is.sirv(pb_bulk.dge), ]$counts %>% sum,
   ont_sc = ont_sc.dge[is.sirv(ont_sc.dge), ]$counts %>% sum,
   ont_sn = ont_sn.dge[is.sirv(ont_sn.dge), ]$counts %>% sum,
-  ont_sn_clean = ont_sn_clean.dge[is.sirv(ont_sn_clean.dge), ]$counts %>% sum,
-  ont_sc_clean = ont_sc_clean.dge[is.sirv(ont_sc_clean.dge), ]$counts %>% sum
+  ont_sn = ont_sn.dge[is.sirv(ont_sn.dge), ]$counts %>% sum,
+  ont_sc = ont_sc.dge[is.sirv(ont_sc.dge), ]$counts %>% sum
 ) %>% pivot_longer(everything(), names_to = "Dataset", values_to = "Total Count")
 
 p4 <- ggplot(plot_df, aes(x = Dataset, y = `Total Count`, fill = Dataset)) +
@@ -199,8 +199,8 @@ plot_df <- data.frame(
   pb_bulk = pb_bulk.dge[is.sirv(pb_bulk.dge), ]$counts %>% sum / pb_bulk.dge$counts %>% sum,
   ont_sc = ont_sc.dge[is.sirv(ont_sc.dge), ]$counts %>% sum / ont_sc.dge$counts %>% sum,
   ont_sn = ont_sn.dge[is.sirv(ont_sn.dge), ]$counts %>% sum / ont_sn.dge$counts %>% sum,
-  ont_sn_clean = ont_sn_clean.dge[is.sirv(ont_sn_clean.dge), ]$counts %>% sum / ont_sn_clean.dge$counts %>% sum,
-  ont_sc_clean = ont_sc_clean.dge[is.sirv(ont_sc_clean.dge), ]$counts %>% sum / ont_sc_clean.dge$counts %>% sum
+  ont_sn = ont_sn.dge[is.sirv(ont_sn.dge), ]$counts %>% sum / ont_sn.dge$counts %>% sum,
+  ont_sc = ont_sc.dge[is.sirv(ont_sc.dge), ]$counts %>% sum / ont_sc.dge$counts %>% sum
 ) %>% pivot_longer(everything(), names_to = "Dataset", values_to = "Proportion of SIRV Count")
 
 p5 <- ggplot(plot_df, aes(x = Dataset, y = `Proportion of SIRV Count`, fill = Dataset)) +
@@ -259,8 +259,8 @@ human.G.Tx.map$tx_count <- human.G.Tx.map %>% calcTxNum
 ill_bulk.dge.human <-  ill_bulk.dge[is.human(ill_bulk.dge),]
 ont_bulk.dge.human <- ont_bulk.dge[is.human(ont_bulk.dge),]
 pb_bulk.dge.human <- pb_bulk.dge[is.human(pb_bulk.dge),]
-ont_sc.dge.human <- ont_sc_clean.dge[is.human(ont_sc_clean.dge),]
-ont_sn.dge.human <- ont_sn_clean.dge[is.human(ont_sn_clean.dge),]
+ont_sc.dge.human <- ont_sc.dge[is.human(ont_sc.dge),]
+ont_sn.dge.human <- ont_sn.dge[is.human(ont_sn.dge),]
 
 overdisp.human <- data.frame(
   ont_bulk = ont_bulk.dge.human$genes$Overdispersion,
@@ -652,15 +652,15 @@ p2 <- get_tx_discovery_rate(
 p3 <- get_tx_discovery_rate(
   list(ont_bulk.dge[is.human(ont_bulk.dge),], 
        ill_bulk.dge[is.human(ill_bulk.dge),], 
-       ont_sc_clean.dge[is.human(ont_sc_clean.dge),], 
-       ont_sn_clean.dge[is.human(ont_sn_clean.dge),], 
+       ont_sc.dge[is.human(ont_sc.dge),], 
+       ont_sn.dge[is.human(ont_sn.dge),], 
        pb_bulk.dge[is.human(pb_bulk.dge),]),
   list("ONT BULK", "Illumina BULK", "ONT SC (cleaned)", "ONT SN (cleaned)", "PacBio BULK"),
   figure_name = "Human transcript discovery rate"
 )
 
 p4 <- get_tx_discovery_rate(
-  list(ont_sc.dge[is.human(ont_sc.dge),], ont_sn.dge[is.human(ont_sn.dge),], ont_sc_clean.dge[is.human(ont_sc_clean.dge),], ont_sn_clean.dge[is.human(ont_sn_clean.dge),]),
+  list(ont_sc.dge[is.human(ont_sc.dge),], ont_sn.dge[is.human(ont_sn.dge),], ont_sc.dge[is.human(ont_sc.dge),], ont_sn.dge[is.human(ont_sn.dge),]),
   list("ONT SC", "ONT SN", "ONT SC (cleaned)", "ONT SN (cleaned)"),
   figure_name = "Human transcript discovery rate (SC/SN data)"
 )
@@ -751,25 +751,25 @@ norm_and_mds(ill_bulk.dge[is.sirv(ill_bulk.dge),],
             norm.method = NULL)
 
 par(mfrow=c(3,2))
-norm_and_mds(ont_sc_clean.dge[is.human(ont_sc_clean.dge),], 
+norm_and_mds(ont_sc.dge[is.human(ont_sc.dge),], 
             dataset='ONT SC pseudobulk human (colored by sample groups)',
-            col = ont_sc_clean.dge$samples$group,
+            col = ont_sc.dge$samples$group,
             norm.method = NULL)
 
-norm_and_mds(ont_sn_clean.dge[is.human(ont_sn_clean.dge),], 
+norm_and_mds(ont_sn.dge[is.human(ont_sn.dge),], 
             dataset='ONT SN pseudobulk human (colored by sample groups)',
-            col = ont_sn_clean.dge$samples$group,
+            col = ont_sn.dge$samples$group,
             norm.method = NULL)
 
 par(mfrow=c(3,2))
 norm_and_mds(ont_sc.dge[is.human(ont_sc.dge),], 
             dataset='ONT SC pseudobulk human (colored by sample groups)',
-            col = ont_sc_clean.dge$samples$group,
+            col = ont_sc.dge$samples$group,
             norm.method = NULL)
 
 norm_and_mds(ont_sn.dge[is.human(ont_sn.dge),], 
             dataset='ONT SN pseudobulk human (colored by sample groups)',
-            col = ont_sn_clean.dge$samples$group,
+            col = ont_sn.dge$samples$group,
             norm.method = NULL)
 
 
@@ -800,8 +800,8 @@ salmon_dirs <- list(
   pb_bulk = params$pb_bulk_salmon_dir,
   ont_sc = params$ont_sc_salmon_dir,
   ont_sn = params$ont_sn_salmon_dir,
-  ont_sc_clean = params$ont_sc_clean_salmon_dir,
-  ont_sn_clean = params$ont_sn_clean_salmon_dir
+  ont_sc = params$ont_sc_salmon_dir,
+  ont_sn = params$ont_sn_salmon_dir
 )
 
 # Apply function to each directory
@@ -834,8 +834,8 @@ txi_ont_bulk.dge <- get_dge_from_txi(quant_paths$ont_bulk,".*/")
 txi_pb_bulk.dge <- get_dge_from_txi(quant_paths$pb_bulk,".*/")
 txi_ont_sc.dge <- get_dge_from_txi(quant_paths$ont_sc,".*/")
 txi_ont_sn.dge <- get_dge_from_txi(quant_paths$ont_sn,".*/")
-txi_ont_sc_clean.dge <- get_dge_from_txi(quant_paths$ont_sc_clean,".*/")
-txi_ont_sn_clean.dge <- get_dge_from_txi(quant_paths$ont_sn_clean,".*/")
+txi_ont_sc.dge <- get_dge_from_txi(quant_paths$ont_sc,".*/")
+txi_ont_sn.dge <- get_dge_from_txi(quant_paths$ont_sn,".*/")
 
 
 # Bulk ill
@@ -927,8 +927,8 @@ ont_bulk.dge_human.list <- DGE.edgeR_human(txi_ont_bulk.dge[is.human(txi_ont_bul
 pb_bulk.dge_human.list <- DGE.edgeR_human(txi_pb_bulk.dge[is.human(txi_pb_bulk.dge),])
 # ont_sc.dge_human.list <- DGE.edgeR_human(txi_ont_sc.dge[is.human(txi_ont_sc.dge),])
 # ont_sn.dge_human.list <- DGE.edgeR_human(txi_ont_sn.dge[is.human(txi_ont_sn.dge),])
-# ont_sn_clean.dge_human.list <- DGE.edgeR_human(txi_ont_sc_clean.dge[is.human(txi_ont_sc_clean.dge),])
-# ont_sc_clean.dge_human.list <- DGE.edgeR_human(txi_ont_sn_clean.dge[is.human(txi_ont_sn_clean.dge),])
+# ont_sn.dge_human.list <- DGE.edgeR_human(txi_ont_sc.dge[is.human(txi_ont_sc.dge),])
+# ont_sc.dge_human.list <- DGE.edgeR_human(txi_ont_sn.dge[is.human(txi_ont_sn.dge),])
 
 ill_bulk.dge_sequins.list <- DGE.edgeR_sequins(txi_ill_bulk.dge[is.sequins(txi_ill_bulk.dge),])
 ont_bulk.dge_sequins.list <- DGE.edgeR_sequins(txi_ont_bulk.dge[is.sequins(txi_ont_bulk.dge),])
@@ -1002,8 +1002,8 @@ ont_bulk.dte_human.list <- DTE.edgeR_human(ont_bulk.dge[is.human(ont_bulk.dge),]
 pb_bulk.dte_human.list <- DTE.edgeR_human(pb_bulk.dge[is.human(pb_bulk.dge),])
 # ont_sc.dte_human.list <- DTE.edgeR_human(ont_sc.dge[is.human(ont_sc.dge),])
 # ont_sn.dte_human.list <- DTE.edgeR_human(ont_sn.dge[is.human(ont_sn.dge),])
-# ont_sn_clean.dte_human.list <- DTE.edgeR_human(ont_sn_clean.dge[is.human(ont_sn_clean.dge),])
-# ont_sc_clean.dte_human.list <- DTE.edgeR_human(ont_sc_clean.dge[is.human(ont_sc_clean.dge),])
+# ont_sn.dte_human.list <- DTE.edgeR_human(ont_sn.dge[is.human(ont_sn.dge),])
+# ont_sc.dte_human.list <- DTE.edgeR_human(ont_sc.dge[is.human(ont_sc.dge),])
 
 ill_bulk.dte_sequins.list <- DTE.edgeR_sequins(ill_bulk.dge[is.sequins(ill_bulk.dge),])
 ont_bulk.dte_sequins.list <- DTE.edgeR_sequins(ont_bulk.dge[is.sequins(ont_bulk.dge),])
@@ -1040,8 +1040,8 @@ ont_bulk.scale_dge <- scale_dge_from_salmon(params$ont_bulk_salmon_dir, ".*/")
 pb_bulk.scale_dge <- scale_dge_from_salmon(params$pb_bulk_salmon_dir, ".*/")
 # ont_sc.scale_dge <- scale_dge_from_salmon(params$ont_sc_salmon_dir, ".*/")
 # ont_sn.scale_dge <- scale_dge_from_salmon(params$ont_sn_salmon_dir, ".*/")
-# ont_sc_clean.scale_dge <- scale_dge_from_salmon(params$ont_sc_clean_salmon_dir, ".*/")
-# ont_sn_clean.scale_dge <- scale_dge_from_salmon(params$ont_sn_clean_salmon_dir, ".*/")
+# ont_sc.scale_dge <- scale_dge_from_salmon(params$ont_sc_salmon_dir, ".*/")
+# ont_sn.scale_dge <- scale_dge_from_salmon(params$ont_sn_salmon_dir, ".*/")
 
 
 # Bulk ill
@@ -1066,8 +1066,8 @@ ont_bulk.scl_dte_human.list <- DTE.edgeR_human(ont_bulk.scale_dge[is.human(ont_b
 pb_bulk.scl_dte_human.list <- DTE.edgeR_human(pb_bulk.scale_dge[is.human(pb_bulk.scale_dge),])
 # ont_sc.scl_dte_human.list <- DTE.edgeR_human(ont_sc.scale_dge[is.human(ont_sc.scale_dge),])
 # ont_sn.scl_dte_human.list <- DTE.edgeR_human(ont_sn.scale_dge[is.human(ont_sn.scale_dge),])
-# ont_sn_clean.scl_dte_human.list <- DTE.edgeR_human(ont_sn_clean.scale_dge[is.human(ont_sn_clean.scale_dge),])
-# ont_sc_clean.scl_dte_human.list <- DTE.edgeR_human(ont_sc_clean.scale_dge[is.human(ont_sc_clean.scale_dge),])
+# ont_sn.scl_dte_human.list <- DTE.edgeR_human(ont_sn.scale_dge[is.human(ont_sn.scale_dge),])
+# ont_sc.scl_dte_human.list <- DTE.edgeR_human(ont_sc.scale_dge[is.human(ont_sc.scale_dge),])
 
 ill_bulk.scl_dte_sequins.list <- DTE.edgeR_sequins(ill_bulk.scale_dge[is.sequins(ill_bulk.scale_dge),])
 ont_bulk.scl_dte_sequins.list <- DTE.edgeR_sequins(ont_bulk.scale_dge[is.sequins(ont_bulk.scale_dge),])
@@ -1087,8 +1087,8 @@ all_elements <- unique(c(
   PB_BULK = pb_bulk.dge_human.list$AvsL.DE
   # ONT_SC = ont_sc.dge_human.list$AvsL.DE,
   # ONT_SN = ont_sn.dge_human.list$AvsL.DE,
-  # ONT_SN_CLEAN = ont_sn_clean.dge_human.list$AvsL.DE,
-  # ONT_SC_CLEAN = ont_sc_clean.dge_human.list$AvsL.DE
+  # ONT_SN_CLEAN = ont_sn.dge_human.list$AvsL.DE,
+  # ONT_SC_CLEAN = ont_sc.dge_human.list$AvsL.DE
 ))
 
 plot_d_AvsL.DE <- data.frame(
@@ -1098,8 +1098,8 @@ plot_d_AvsL.DE <- data.frame(
   pb_bulk = as.integer(all_elements %in% pb_bulk.dge_human.list$AvsL.DE)
   # ont_sc= as.integer(all_elements %in% ont_sc.dge_human.list$AvsL.DE),
   # ont_sn= as.integer(all_elements %in% ont_sn.dge_human.list$AvsL.DE),
-  # ont_sn_clean= as.integer(all_elements %in% ont_sn_clean.dge_human.list$AvsL.DE),
-  # ont_sc_clean= as.integer(all_elements %in% ont_sc_clean.dge_human.list$AvsL.DE)
+  # ont_sn= as.integer(all_elements %in% ont_sn.dge_human.list$AvsL.DE),
+  # ont_sc= as.integer(all_elements %in% ont_sc.dge_human.list$AvsL.DE)
 )
 plt1 <- upset(plot_d_AvsL.DE,  order.by = "freq", nsets = 8) 
 
@@ -1111,8 +1111,8 @@ all_elements <- unique(c(
  PB_BULK = pb_bulk.dge_human.list$PvsL.DE
 #  ONT_SC = ont_sc.dge_human.list$PvsL.DE,
 #  ONT_SN = ont_sn.dge_human.list$PvsL.DE,
-#   ONT_SN_CLEAN = ont_sn_clean.dge_human.list$PvsL.DE,
-#   ONT_SC_CLEAN = ont_sc_clean.dge_human.list$PvsL.DE
+#   ONT_SN_CLEAN = ont_sn.dge_human.list$PvsL.DE,
+#   ONT_SC_CLEAN = ont_sc.dge_human.list$PvsL.DE
 ))
 
 plot_d_PvsL.DE <- data.frame(
@@ -1122,8 +1122,8 @@ plot_d_PvsL.DE <- data.frame(
   pb_bulk = as.integer(all_elements %in% pb_bulk.dge_human.list$PvsL.DE)
   # ont_sc= as.integer(all_elements %in% ont_sc.dge_human.list$PvsL.DE),
   # ont_sn= as.integer(all_elements %in% ont_sn.dge_human.list$PvsL.DE),
-  # ont_sn_clean= as.integer(all_elements %in% ont_sn_clean.dge_human.list$PvsL.DE),
-  # ont_sc_clean= as.integer(all_elements %in% ont_sc_clean.dge_human.list$PvsL.DE)
+  # ont_sn= as.integer(all_elements %in% ont_sn.dge_human.list$PvsL.DE),
+  # ont_sc= as.integer(all_elements %in% ont_sc.dge_human.list$PvsL.DE)
 )
 plt2 <- upset(plot_d_PvsL.DE,  order.by = "freq", nsets = 8) 
 
@@ -1135,8 +1135,8 @@ all_elements <- unique(c(
  PB_BULK = pb_bulk.dge_human.list$AvsP.DE
 #  ONT_SC = ont_sc.dge_human.list$AvsP.DE,
 #  ONT_SN = ont_sn.dge_human.list$AvsP.DE,
-#   ONT_SN_CLEAN = ont_sn_clean.dge_human.list$AvsP.DE,
-#   ONT_SC_CLEAN = ont_sc_clean.dge_human.list$AvsP.DE
+#   ONT_SN_CLEAN = ont_sn.dge_human.list$AvsP.DE,
+#   ONT_SC_CLEAN = ont_sc.dge_human.list$AvsP.DE
 ))
 
 plot_d_AvsP.DE <- data.frame(
@@ -1146,8 +1146,8 @@ plot_d_AvsP.DE <- data.frame(
   pb_bulk = as.integer(all_elements %in% pb_bulk.dge_human.list$AvsP.DE)
   # ont_sc= as.integer(all_elements %in% ont_sc.dge_human.list$AvsP.DE),
   # ont_sn= as.integer(all_elements %in% ont_sn.dge_human.list$AvsP.DE),
-  # ont_sn_clean= as.integer(all_elements %in% ont_sn_clean.dge_human.list$AvsP.DE),
-  # ont_sc_clean= as.integer(all_elements %in% ont_sc_clean.dge_human.list$AvsP.DE)
+  # ont_sn= as.integer(all_elements %in% ont_sn.dge_human.list$AvsP.DE),
+  # ont_sc= as.integer(all_elements %in% ont_sc.dge_human.list$AvsP.DE)
 )
 plt3 <- upset(plot_d_AvsP.DE,  order.by = "freq", nsets = 8) 
 
@@ -1203,8 +1203,8 @@ all_elements <- unique(c(
   PB_BULK = pb_bulk.dte_human.list$AvsL.DE
   # ONT_SC = ont_sc.dte_human.list$AvsL.DE,
   # ONT_SN = ont_sn.dte_human.list$AvsL.DE,
-  # ONT_SN_CLEAN = ont_sn_clean.dte_human.list$AvsL.DE,
-  # ONT_SC_CLEAN = ont_sc_clean.dte_human.list$AvsL.DE
+  # ONT_SN_CLEAN = ont_sn.dte_human.list$AvsL.DE,
+  # ONT_SC_CLEAN = ont_sc.dte_human.list$AvsL.DE
 ))
 
 plot_d_AvsL.DE <- data.frame(
@@ -1214,8 +1214,8 @@ plot_d_AvsL.DE <- data.frame(
   pb_bulk = as.integer(all_elements %in% pb_bulk.dte_human.list$AvsL.DE)
   # ont_sc= as.integer(all_elements %in% ont_sc.dte_human.list$AvsL.DE),
   # ont_sn= as.integer(all_elements %in% ont_sn.dte_human.list$AvsL.DE),
-  # ont_sn_clean= as.integer(all_elements %in% ont_sn_clean.dte_human.list$AvsL.DE),
-  # ont_sc_clean= as.integer(all_elements %in% ont_sc_clean.dte_human.list$AvsL.DE)
+  # ont_sn= as.integer(all_elements %in% ont_sn.dte_human.list$AvsL.DE),
+  # ont_sc= as.integer(all_elements %in% ont_sc.dte_human.list$AvsL.DE)
 )
 p1 <- upset(plot_d_AvsL.DE,  order.by = "freq", nsets = 8) 
 
@@ -1227,8 +1227,8 @@ all_elements <- unique(c(
  PB_BULK = pb_bulk.dte_human.list$PvsL.DE
 #  ONT_SC = ont_sc.dte_human.list$PvsL.DE,
 #  ONT_SN = ont_sn.dte_human.list$PvsL.DE,
-#   ONT_SN_CLEAN = ont_sn_clean.dte_human.list$PvsL.DE,
-#   ONT_SC_CLEAN = ont_sc_clean.dte_human.list$PvsL.DE
+#   ONT_SN_CLEAN = ont_sn.dte_human.list$PvsL.DE,
+#   ONT_SC_CLEAN = ont_sc.dte_human.list$PvsL.DE
 ))
 
 plot_d_PvsL.DE <- data.frame(
@@ -1238,8 +1238,8 @@ plot_d_PvsL.DE <- data.frame(
   pb_bulk = as.integer(all_elements %in% pb_bulk.dte_human.list$PvsL.DE)
   # ont_sc= as.integer(all_elements %in% ont_sc.dte_human.list$PvsL.DE),
   # ont_sn= as.integer(all_elements %in% ont_sn.dte_human.list$PvsL.DE),
-  # ont_sn_clean= as.integer(all_elements %in% ont_sn_clean.dte_human.list$PvsL.DE),
-  # ont_sc_clean= as.integer(all_elements %in% ont_sc_clean.dte_human.list$PvsL.DE)
+  # ont_sn= as.integer(all_elements %in% ont_sn.dte_human.list$PvsL.DE),
+  # ont_sc= as.integer(all_elements %in% ont_sc.dte_human.list$PvsL.DE)
 )
 p2 <- upset(plot_d_PvsL.DE,  order.by = "freq", nsets = 8) 
 
@@ -1251,8 +1251,8 @@ all_elements <- unique(c(
  PB_BULK = pb_bulk.dte_human.list$AvsP.DE
 #  ONT_SC = ont_sc.dte_human.list$AvsP.DE,
 #  ONT_SN = ont_sn.dte_human.list$AvsP.DE,
-#   ONT_SN_CLEAN = ont_sn_clean.dte_human.list$AvsP.DE,
-#   ONT_SC_CLEAN = ont_sc_clean.dte_human.list$AvsP.DE
+#   ONT_SN_CLEAN = ont_sn.dte_human.list$AvsP.DE,
+#   ONT_SC_CLEAN = ont_sc.dte_human.list$AvsP.DE
 ))
 
 plot_d_AvsP.DE <- data.frame(
@@ -1262,8 +1262,8 @@ plot_d_AvsP.DE <- data.frame(
   pb_bulk = as.integer(all_elements %in% pb_bulk.dte_human.list$AvsP.DE)
   # ont_sc= as.integer(all_elements %in% ont_sc.dte_human.list$AvsP.DE),
   # ont_sn= as.integer(all_elements %in% ont_sn.dte_human.list$AvsP.DE),
-  # ont_sn_clean= as.integer(all_elements %in% ont_sn_clean.dte_human.list$AvsP.DE),
-  # ont_sc_clean= as.integer(all_elements %in% ont_sc_clean.dte_human.list$AvsP.DE)
+  # ont_sn= as.integer(all_elements %in% ont_sn.dte_human.list$AvsP.DE),
+  # ont_sc= as.integer(all_elements %in% ont_sc.dte_human.list$AvsP.DE)
 )
 p3 <- upset(plot_d_AvsP.DE,  order.by = "freq", nsets = 8) 
 
@@ -1314,8 +1314,8 @@ all_elements <- unique(c(
   PB_BULK = pb_bulk.scl_dte_human.list$AvsL.DE
   # ONT_SC = ont_sc.scl_dte_human.list$AvsL.DE,
   # ONT_SN = ont_sn.scl_dte_human.list$AvsL.DE,
-  # ONT_SN_CLEAN = ont_sn_clean.scl_dte_human.list$AvsL.DE,
-  # ONT_SC_CLEAN = ont_sc_clean.scl_dte_human.list$AvsL.DE
+  # ONT_SN_CLEAN = ont_sn.scl_dte_human.list$AvsL.DE,
+  # ONT_SC_CLEAN = ont_sc.scl_dte_human.list$AvsL.DE
 ))
 
 plot_d_AvsL.DE <- data.frame(
@@ -1325,8 +1325,8 @@ plot_d_AvsL.DE <- data.frame(
   pb_bulk = as.integer(all_elements %in% pb_bulk.scl_dte_human.list$AvsL.DE)
   # ont_sc= as.integer(all_elements %in% ont_sc.scl_dte_human.list$AvsL.DE),
   # ont_sn= as.integer(all_elements %in% ont_sn.scl_dte_human.list$AvsL.DE),
-  # ont_sn_clean= as.integer(all_elements %in% ont_sn_clean.scl_dte_human.list$AvsL.DE),
-  # ont_sc_clean= as.integer(all_elements %in% ont_sc_clean.scl_dte_human.list$AvsL.DE)
+  # ont_sn= as.integer(all_elements %in% ont_sn.scl_dte_human.list$AvsL.DE),
+  # ont_sc= as.integer(all_elements %in% ont_sc.scl_dte_human.list$AvsL.DE)
 )
 pp1 <- upset(plot_d_AvsL.DE,  order.by = "freq", nsets = 8) 
 
@@ -1338,8 +1338,8 @@ all_elements <- unique(c(
  PB_BULK = pb_bulk.scl_dte_human.list$PvsL.DE
 #  ONT_SC = ont_sc.scl_dte_human.list$PvsL.DE,
 #  ONT_SN = ont_sn.scl_dte_human.list$PvsL.DE,
-#   ONT_SN_CLEAN = ont_sn_clean.scl_dte_human.list$PvsL.DE,
-#   ONT_SC_CLEAN = ont_sc_clean.scl_dte_human.list$PvsL.DE
+#   ONT_SN_CLEAN = ont_sn.scl_dte_human.list$PvsL.DE,
+#   ONT_SC_CLEAN = ont_sc.scl_dte_human.list$PvsL.DE
 ))
 
 plot_d_PvsL.DE <- data.frame(
@@ -1349,8 +1349,8 @@ plot_d_PvsL.DE <- data.frame(
   pb_bulk = as.integer(all_elements %in% pb_bulk.scl_dte_human.list$PvsL.DE)
   # ont_sc= as.integer(all_elements %in% ont_sc.scl_dte_human.list$PvsL.DE),
   # ont_sn= as.integer(all_elements %in% ont_sn.scl_dte_human.list$PvsL.DE),
-  # ont_sn_clean= as.integer(all_elements %in% ont_sn_clean.scl_dte_human.list$PvsL.DE),
-  # ont_sc_clean= as.integer(all_elements %in% ont_sc_clean.scl_dte_human.list$PvsL.DE)
+  # ont_sn= as.integer(all_elements %in% ont_sn.scl_dte_human.list$PvsL.DE),
+  # ont_sc= as.integer(all_elements %in% ont_sc.scl_dte_human.list$PvsL.DE)
 )
 pp2 <- upset(plot_d_PvsL.DE,  order.by = "freq", nsets = 8) 
 
@@ -1362,8 +1362,8 @@ all_elements <- unique(c(
  PB_BULK = pb_bulk.scl_dte_human.list$AvsP.DE
 #  ONT_SC = ont_sc.scl_dte_human.list$AvsP.DE,
 #  ONT_SN = ont_sn.scl_dte_human.list$AvsP.DE,
-#   ONT_SN_CLEAN = ont_sn_clean.scl_dte_human.list$AvsP.DE,
-#   ONT_SC_CLEAN = ont_sc_clean.scl_dte_human.list$AvsP.DE
+#   ONT_SN_CLEAN = ont_sn.scl_dte_human.list$AvsP.DE,
+#   ONT_SC_CLEAN = ont_sc.scl_dte_human.list$AvsP.DE
 ))
 
 plot_d_AvsP.DE <- data.frame(
@@ -1373,8 +1373,8 @@ plot_d_AvsP.DE <- data.frame(
   pb_bulk = as.integer(all_elements %in% pb_bulk.scl_dte_human.list$AvsP.DE)
   # ont_sc= as.integer(all_elements %in% ont_sc.scl_dte_human.list$AvsP.DE),
   # ont_sn= as.integer(all_elements %in% ont_sn.scl_dte_human.list$AvsP.DE),
-  # ont_sn_clean= as.integer(all_elements %in% ont_sn_clean.scl_dte_human.list$AvsP.DE),
-  # ont_sc_clean= as.integer(all_elements %in% ont_sc_clean.scl_dte_human.list$AvsP.DE)
+  # ont_sn= as.integer(all_elements %in% ont_sn.scl_dte_human.list$AvsP.DE),
+  # ont_sc= as.integer(all_elements %in% ont_sc.scl_dte_human.list$AvsP.DE)
 )
 pp3 <- upset(plot_d_AvsP.DE,  order.by = "freq", nsets = 8) 
 
