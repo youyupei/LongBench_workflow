@@ -144,8 +144,8 @@ rule flames_trans_map_and_quant:
         genome = config['reference']['genome']
     output:
         bam = os.path.join(results_dir,"flames_out/{sample}/realign2transcript.bam"),
-        bai = os.path.join(results_dir,"flames_out/{sample}/realign2transcript.bam.bai"),
-        trans_quant = os.path.join(results_dir,"flames_out/{sample}/transcript_count.csv.gz"),
+        #bai = os.path.join(results_dir,"flames_out/{sample}/realign2transcript.bam.bai"),
+        #trans_quant = os.path.join(results_dir,"flames_out/{sample}/transcript_count.csv.gz"),
         flag = touch(results_dir + "/.flag/flames_{sample}.done")
     resources:
         cpus_per_task=32,
@@ -180,6 +180,6 @@ rule flames_trans_map_and_quant:
 
 rule flames:
     input:
-        expand(os.path.join(results_dir,"flames_out/{sample}/transcript_count.csv.gz"), sample=config["sample_id"])
+        expand(os.path.join(results_dir + "/.flag/flames_{sample}.done"), sample=config["sample_id"])
     output:
         touch(results_dir + "/.flag/flames.done")

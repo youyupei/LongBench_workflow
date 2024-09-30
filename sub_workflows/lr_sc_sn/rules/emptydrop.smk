@@ -140,6 +140,12 @@ rule empty_drop_run_flames_genome_mapping:
         out_dir=$(dirname {output.bam})
         mkdir -p $out_dir
 
+        # just touch the output when the input fastq is empty
+        if [ ! -s {input.fastq} ]; then
+            touch {output}
+            exit 0
+        fi
+
         Rscript -e "
             library(FLAMES)
             config_file <- '{input.config_file}'
@@ -182,6 +188,13 @@ rule empty_drop_run_flames_gene_quantification:
         # module load samtools
         # module unload R
         # module load R/4.4.0
+
+        # just touch the output when the input fastq is empty
+        if [ ! -s {input.fastq} ]; then
+            touch {output}
+            exit 0
+        fi
+
 
         out_dir=$(dirname {output.gene_count})
         mkdir -p $out_dir

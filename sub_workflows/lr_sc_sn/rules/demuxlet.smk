@@ -29,33 +29,33 @@ rule prepare_input_vcf:
         """
 
 
-rule prepare_input_bam:
-    """
-    The default bam file from flames does not directly fit into demuxlet. It required UMI and BC to be stored as tags
-    """
-    input:
-        config['output_path'] + '/flames_out/{sample}/align2genome.bam'
-    output:
-        config['output_path'] + '/demuxlet/{sample}.tag_added.bam'
-    resources:
-        cpus_per_task=16,
-        mem_mb=160000
-    conda:
-        config['conda_config']['main']
-    params:
-        script=os.path.join(config['sub_wf_dir'], "scripts/DemuxletPreareBam.py"),
-    shell:
-        """
-        python3 {params.script} {input} {output}  {resources.cpus_per_task}
-        """
+# rule prepare_input_bam:
+#     """
+#     The default bam file from flames does not directly fit into demuxlet. It required UMI and BC to be stored as tags
+#     """
+#     input:
+#         config['output_path'] + '/flames_out/{sample}/align2genome.bam'
+#     output:
+#         config['output_path'] + '/demuxlet/{sample}.tag_added.bam'
+#     resources:
+#         cpus_per_task=16,
+#         mem_mb=160000
+#     conda:
+#         config['conda_config']['main']
+#     params:
+#         script=os.path.join(config['sub_wf_dir'], "scripts/DemuxletPreareBam.py"),
+#     shell:
+#         """
+#         python3 {params.script} {input} {output}  {resources.cpus_per_task}
+#         """
 
 rule demuxlet_rule:
     """
     Run the demultiplexing tool on the input VCF file.
     """
     input:
-        bam= config['output_path'] + '/demuxlet/{sample}.tag_added.sorted.bam',
-        bam_sorted_idx= config['output_path'] + '/demuxlet/{sample}.tag_added.sorted.bam.bai',
+        bam= config['output_path'] + '/flames_out/{sample}/align2genome.bam',
+        bam_sorted_idx= config['output_path'] + '/flames_out/{sample}/align2genome.bam.bai',
         vcf = config['output_path'] + '/demuxlet/DepmapMutTabConverted.vcf'
     output:
         config['output_path'] + '/demuxlet/{sample}.demuxlet.best'
