@@ -15,7 +15,7 @@ rule qc:
         expand(
             [
                 os.path.join(results_dir, "qc/coverage/{sample}.flame.coverage_plot.{flames_cov_plot_suffix}"),
-                os.path.join(results_dir, "qc/sqanti3/{sample}"),
+                #os.path.join(results_dir, "qc/sqanti3/{sample}"),
                 os.path.join(results_dir, "qc/NanoPlot/{sample}"),
                 os.path.join(results_dir, "qc/RSeQC/{sample}.geneBodyCoverage.curves.pdf"),
                 os.path.join(results_dir, "qc/coverage/{sample}.picard.RNA_Metrics"),

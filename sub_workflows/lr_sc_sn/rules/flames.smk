@@ -145,7 +145,8 @@ rule flames_trans_map_and_quant:
     output:
         bam = os.path.join(results_dir,"flames_out/{sample}/realign2transcript.bam"),
         bai = os.path.join(results_dir,"flames_out/{sample}/realign2transcript.bam.bai"),
-        trans_quant = os.path.join(results_dir,"flames_out/{sample}/transcript_count.csv.gz")
+        trans_quant = os.path.join(results_dir,"flames_out/{sample}/transcript_count.csv.gz"),
+        flag = touch(results_dir + "/.flag/flames_{sample}.done")
     resources:
         cpus_per_task=32,
         mem_mb=500000,

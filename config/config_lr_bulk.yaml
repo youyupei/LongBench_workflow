@@ -27,7 +27,7 @@ samples_fastq_dir:
   ont_bulk: "/home/users/allstaff/you.yu/LongBench/sequencing_data/ONT_bulk/fastqs/"
   pb_bulk: "/home/users/allstaff/you.yu/LongBench/sequencing_data/pb_bulk"
   dRNA_bulk: "/home/users/allstaff/you.yu/LongBench/sequencing_data/ONT_dRNA/fastqs"
-  dRNA_bulk_q10: "/vast/scratch/users/you.yu/LongBench/dRNA/fastq_q10_filter"
+  #dRNA_bulk_q10: "/vast/scratch/users/you.yu/LongBench/dRNA/fastq_q10_filter"
 
 barcode_list:
   - 1: H146
@@ -50,7 +50,8 @@ cell_lines:
   - HCC827
 
 output_path: 
-  "/vast/projects/LongBench/analysis/lr_bulk/result"
+  #"/vast/projects/LongBench/analysis/lr_bulk/result"
+  "/vast/projects/LongBench/analysis/lr_bulk/result_subsample"
 
 scratch_dir: "/vast/scratch/users/you.yu/LongBench/lr_bulk"
 

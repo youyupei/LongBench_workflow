@@ -8,7 +8,10 @@ wildcard_constraints:
 
 rule run_all_mapping:
     input:
-        expand(results_dir + "/.flag/ont_bulk_{cell_line}_AlignmentDone.flag", cell_line = cell_line_to_barcode.keys()) 
+        expand([results_dir + "/TranscriptAlignment/{sample}_{cell_line}.bam", 
+                results_dir + "/GenomeAlignment/{sample}_{cell_line}.sorted.bam"], 
+                sample = config['sample_id'],
+                cell_line = config['cell_lines'])
     output:
         touch(results_dir + "/.flag/run_all_mapping.done")
 
@@ -65,16 +68,16 @@ rule lr_bulk_minimap2_Genome:
 #         samtools cat -@ {resources.cpus_per_task} -o {output} {input}
 #         """
 
-rule ont_bulk_clean_up:
-    input:
-        results_dir + "/Alignment/ont_bulk_{cell_line}.bam"
-    output: 
-        touch(results_dir + "/.flag/ont_bulk_{cell_line}_AlignmentDone.flag")
-    localrule: True
-    params:
-        bam = lambda w: expand(results_dir + "/Alignment/ont_bulk_{pool}_{x}.bam",
-                        pool = ["pool", "pool2", "pool3"], x = [w.cell_line])
-    shell:
-        """
-        rm -f {params.bam}
-        """
+# rule ont_bulk_clean_up:
+#     input:
+#         results_dir + "/Alignment/ont_bulk_{cell_line}.bam"
+#     output: 
+#         touch(results_dir + "/.flag/ont_bulk_{cell_line}_AlignmentDone.flag")
+#     localrule: True
+#     params:
+#         bam = lambda w: expand(results_dir + "/Alignment/ont_bulk_{pool}_{x}.bam",
+#                         pool = ["pool", "pool2", "pool3"], x = [w.cell_line])
+#     shell:
+#         """
+#         rm -f {params.bam}
+#         """

@@ -20,6 +20,8 @@ onerror:
     shell("mail -s 'ERROR: Snakemake main workflow' {EMAIL} < {log}")
 
 
+# Config the values for main workflow
+scratch_dir = config['scratch_dir']
 
 #Sub workflows
 rule NoRuleSpecified:

@@ -20,9 +20,8 @@ conda_config: # the parser will convert it to absolute path will be accessible a
   # LongReadSum: "conda/config/LongReadSum.yaml"
   NanoPlot: "conda/config/NanoPlot.yaml"
   RSeQC: "conda/config/RSeQC.yaml"
-  # sqanti3: "conda/config/SQANTI3.conda_env.yml"
+  sqanti3: "conda/config/SQANTI3.conda_env.yml"
   oarfish: "conda/config/oarfish.yaml"
-
 
 conda:
   sqanti3: "SQANTI3" # prebuilt conda env name
@@ -48,3 +47,8 @@ random_seed: 2024
 email: "you.yu@wehi.edu.au"
 
 combined_output_path: "/vast/projects/LongBench/analysis/all_samples/result"
+
+# Other config
+# The number subsampled reads
+subsample_read_n: 10000
+subsample_dir: "/vast/scratch/users/you.yu/LongBench/subsample_fq"

@@ -65,7 +65,7 @@ rule subsample_1M_reads:
     shell:
         """
         mkdir -p $(dirname {output})
-        seqtk sample -s {params.n_reads} {input} {params.n_reads} > {output}
+        seqtk sample -s {params.seed} {input} {params.n_reads} > {output}
         """
 
 ######## Count reads ########
