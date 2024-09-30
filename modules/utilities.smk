@@ -8,7 +8,7 @@ rule utilities_sort_and_index_bam:
     resources:
         cpus_per_task=8,
         mem_mb=64000
-        #slurm_extra="--mail-type=END,FAIL --mail-user=you.yu@wehi.edu.au --job-name=coverage_plot"
+        #slurm_extra="--mail-type=FAIL --mail-user=you.yu@wehi.edu.au --job-name=coverage_plot"
     shell:
         """
         samtools sort -@ {resources.cpus_per_task} -o {output.bam} {input}

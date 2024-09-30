@@ -98,7 +98,7 @@ rule empty_drop_read_assignment:
     resources:
         cpus_per_task=32,
         mem_mb=20000,
-        slurm_extra="--mail-type=END,FAIL --mail-user=you.yu@wehi.edu.au"
+        slurm_extra="--mail-type=FAIL --mail-user=you.yu@wehi.edu.au"
     shell:
         """
     python3 -c '
@@ -127,7 +127,7 @@ rule empty_drop_run_flames_genome_mapping:
     resources:
         cpus_per_task=32,
         mem_mb=200000,
-        slurm_extra="--mail-type=END,FAIL --mail-user=you.yu@wehi.edu.au"
+        slurm_extra="--mail-type=FAIL --mail-user=you.yu@wehi.edu.au"
     params:
         minimap2 = config["software"]["minimap2"],
         k8 = os.path.dirname(config["software"]["minimap2"]) + '/k8'
@@ -173,7 +173,7 @@ rule empty_drop_run_flames_gene_quantification:
     resources:
         cpus_per_task=32,
         mem_mb=200000,
-        slurm_extra="--mail-type=END,FAIL --mail-user=you.yu@wehi.edu.au"
+        slurm_extra="--mail-type=FAIL --mail-user=you.yu@wehi.edu.au"
     params:
         minimap2 = config["software"]["minimap2"],
         k8 = os.path.dirname(config["software"]["minimap2"]) + '/k8'

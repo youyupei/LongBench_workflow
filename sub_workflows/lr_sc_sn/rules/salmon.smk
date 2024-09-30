@@ -11,7 +11,7 @@ rule salmon:
     resources:
         cpus_per_task=32,
         mem_mb=32000,
-        slurm_extra="--mail-type=END,FAIL --mail-user=you.yu@wehi.edu.au"
+        slurm_extra="--mail-type=FAIL --mail-user=you.yu@wehi.edu.au"
     params:
         lib_type = "A" # auto
     shell:

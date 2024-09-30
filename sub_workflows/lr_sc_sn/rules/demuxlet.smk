@@ -62,7 +62,7 @@ rule demuxlet_rule:
     resources:
         cpus_per_task=4,
         mem_mb=200000,
-        slurm_extra="--mail-type=END,FAIL --mail-user=you.yu@wehi.edu.au"
+        slurm_extra="--mail-type=FAIL --mail-user=you.yu@wehi.edu.au"
     params:
         demuxlet_excutable = config['software']['demuxlet']
     shell:
@@ -98,7 +98,7 @@ rule demuxlet_rule:
 #     resources:
 #         cpus_per_task=2,
 #         mem_mb=8000,
-#         slurm_extra="--mail-type=END,FAIL --mail-user=you.yu@wehi.edu.au"
+#         slurm_extra="--mail-type=FAIL --mail-user=you.yu@wehi.edu.au"
 #     threads:
 #         16
 #     params:
@@ -122,7 +122,7 @@ rule demuxlet_rule:
 #     resources:
 #         cpus_per_task=4,
 #         mem_mb=200000,
-#         slurm_extra="--mail-type=END,FAIL --mail-user=you.yu@wehi.edu.au"
+#         slurm_extra="--mail-type=FAIL --mail-user=you.yu@wehi.edu.au"
 #     shell:
 #         """
 #         module load samtools
@@ -157,7 +157,7 @@ rule demuxlet_rule:
 #     resources:
 #         cpus_per_task=1,
 #         mem_mb=8000,
-#         slurm_extra="--mail-type=END,FAIL --mail-user=you.yu@wehi.edu.au"
+#         slurm_extra="--mail-type=FAIL --mail-user=you.yu@wehi.edu.au"
 #     params:
 #         script="/home/users/allstaff/you.yu/LongBench/analysis/single_cell_nuclei/workflow/scripts/DemuxletPreareBam_clusters.py",
 #         python_dir="/stornext/Home/data/allstaff/y/you.yu/.cache/R/basilisk/1.14.0/FLAMES/1.9.1/flames_env/bin/python3"
@@ -180,7 +180,7 @@ rule demuxlet_rule:
 #     resources:
 #         cpus_per_task=4,
 #         mem_mb=200000,
-#         slurm_extra="--mail-type=END,FAIL --mail-user=you.yu@wehi.edu.au"
+#         slurm_extra="--mail-type=FAIL --mail-user=you.yu@wehi.edu.au"
 #     shell:
 #         """
 #         module load samtools
@@ -213,7 +213,7 @@ rule demuxlet_rule:
 #     resources:
 #         cpus_per_task=4,
 #         mem_mb=200000,
-#         slurm_extra="--mail-type=END,FAIL --mail-user=you.yu@wehi.edu.au"
+#         slurm_extra="--mail-type=FAIL --mail-user=you.yu@wehi.edu.au"
 #     shell:
 #         """
 #         module load samtools

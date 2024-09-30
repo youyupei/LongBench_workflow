@@ -23,7 +23,7 @@ rule blaze:
     resources:
         cpus_per_task=32,
         mem_mb=100000,
-        slurm_extra="--mail-type=END,FAIL --mail-user=you.yu@wehi.edu.au"
+        slurm_extra="--mail-type=FAIL --mail-user=you.yu@wehi.edu.au"
     shell:
         """
         out_fn=$(dirname {output.out_fastq})/
@@ -71,7 +71,7 @@ rule flames_genome_mapping:
     resources:
         cpus_per_task=32,
         mem_mb=500000,
-        slurm_extra="--mail-type=END,FAIL --mail-user=you.yu@wehi.edu.au"
+        slurm_extra="--mail-type=FAIL --mail-user=you.yu@wehi.edu.au"
     shell:
         """
         out_dir=$(dirname {input.fastq})
@@ -108,7 +108,7 @@ rule flames_gene_quant:
     resources:
         cpus_per_task=32,
         mem_mb=500000,
-        slurm_extra="--mail-type=END,FAIL --mail-user=you.yu@wehi.edu.au"
+        slurm_extra="--mail-type=FAIL --mail-user=you.yu@wehi.edu.au"
     params:
         minimap2 = config["software"]["minimap2"],
         k8 = os.path.dirname(config["software"]["minimap2"]) + '/k8'
@@ -150,7 +150,7 @@ rule flames_trans_map_and_quant:
     resources:
         cpus_per_task=32,
         mem_mb=500000,
-        slurm_extra="--mail-type=END,FAIL --mail-user=you.yu@wehi.edu.au"
+        slurm_extra="--mail-type=FAIL --mail-user=you.yu@wehi.edu.au"
     params:
         minimap2 = config["software"]["minimap2"],
         k8 = os.path.dirname(config["software"]["minimap2"]) + '/k8'

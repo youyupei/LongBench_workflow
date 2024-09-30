@@ -112,7 +112,7 @@ rule picard_coverage_data:
     resources:
         cpus_per_task=16,
         mem_mb=32000,
-        slurm_extra="--mail-type=END,FAIL --mail-user=you.yu@wehi.edu.au"
+        slurm_extra="--mail-type=FAIL --mail-user=you.yu@wehi.edu.au"
     shell:
         """
         module load picard-tools
@@ -135,7 +135,7 @@ rule picard_CollectAlignmentSummaryMetrics:
     resources:
         cpus_per_task=16,
         mem_mb=32000,
-        slurm_extra="--mail-type=END,FAIL --mail-user=you.yu@wehi.edu.au"
+        slurm_extra="--mail-type=FAIL --mail-user=you.yu@wehi.edu.au"
     shell:
         """
         module load picard-tools
@@ -161,7 +161,7 @@ rule flame_coverage_plot:
     resources:
         cpus_per_task=1,
         mem_mb=32000
-        #slurm_extra="--mail-type=END,FAIL --mail-user=you.yu@wehi.edu.au"
+        #slurm_extra="--mail-type=FAIL --mail-user=you.yu@wehi.edu.au"
     params:
         script = os.path.join(config['main_wf_dir'],'scripts/flames_coverage_plot.R')
     shell:
@@ -186,7 +186,7 @@ rule sqanti3:
     resources:
         cpus_per_task=16,
         mem_mb=32000
-        #slurm_extra="--mail-type=END,FAIL --mail-user=you.yu@wehi.edu.au"
+        #slurm_extra="--mail-type=FAIL --mail-user=you.yu@wehi.edu.au"
     params: 
         sqanti3_qc_script = os.path.join(config['software']['sqanti3_dir'], "sqanti3_qc.py"),
         additional_arg = "--skipORF"

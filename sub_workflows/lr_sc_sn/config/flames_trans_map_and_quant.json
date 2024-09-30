@@ -12,6 +12,7 @@
         "bambu_isoform_identification": false,
         "do_read_realignment": true,
         "do_transcript_quantification": true,
+        "oarfish_quantification": true,
         "threads": 32
     },
     "barcode_parameters": {
@@ -23,7 +24,10 @@
           "BC": "NNNNNNNNNNNNNNNN",
           "UMI": "NNNNNNNNNNNN",
           "polyT": "TTTTTTTTT"
-        }
+        },
+        "TSO_seq" : "CCCATGTACTCTGCGTTGATACCACTGCTT",
+        "TSO_prime": 3,
+        "full_length_only" : false
     },
     "isoform_parameters": {
         "generate_raw_isoform": false,

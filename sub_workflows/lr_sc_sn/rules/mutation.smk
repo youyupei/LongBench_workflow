@@ -8,7 +8,7 @@ rule _find_mutations:
     resources:
         cpus_per_task=32,
         mem_mb=1000000,
-        slurm_extra="--mail-type=END,FAIL --mail-user=you.yu@wehi.edu.au"
+        slurm_extra="--mail-type=FAIL --mail-user=you.yu@wehi.edu.au"
     params:
         script = os.path.join(config['sub_wf_dir'],'scripts/mutation.R')
     shell:

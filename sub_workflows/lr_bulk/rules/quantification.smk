@@ -26,7 +26,7 @@ rule salmon:
     resources:
         cpus_per_task=32,
         mem_mb=100000,
-        slurm_extra="--mail-type=END,FAIL --mail-user=you.yu@wehi.edu.au"
+        slurm_extra="--mail-type=FAIL --mail-user=you.yu@wehi.edu.au"
     params:
         lib_type = "A", # auto
         gibbs_samples = 50
@@ -46,7 +46,7 @@ rule oarfish_no_cov:
     resources:
         cpus_per_task=16,
         mem_mb=64000,
-        slurm_extra="--mail-type=END,FAIL --mail-user=you.yu@wehi.edu.au"
+        slurm_extra="--mail-type=FAIL --mail-user=you.yu@wehi.edu.au"
     params:
         lib_type = "A", # auto
         gibbs_samples = 50
@@ -67,7 +67,7 @@ rule oarfish_cov:
     resources:
         cpus_per_task=16,
         mem_mb=64000,
-        slurm_extra="--mail-type=END,FAIL --mail-user=you.yu@wehi.edu.au"
+        slurm_extra="--mail-type=FAIL --mail-user=you.yu@wehi.edu.au"
     params:
         lib_type = "A", # auto
         gibbs_samples = 50

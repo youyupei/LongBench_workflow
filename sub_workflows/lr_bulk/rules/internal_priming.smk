@@ -22,7 +22,7 @@ rule _internal_priming_identifier:
     resources:
         cpus_per_task=32,
         mem_mb=32000,
-        slurm_extra="--mail-type=END,FAIL --mail-user=you.yu@wehi.edu.au"
+        slurm_extra="--mail-type=FAIL --mail-user=you.yu@wehi.edu.au"
     params:
         python_script="git_repo/PrimeSpotter/PrimeSpotter/PrimeSpotter.py",
         python_dir="/stornext/Home/data/allstaff/y/you.yu/.cache/R/basilisk/1.14.0/FLAMES/1.9.1/flames_env/bin/python3"
@@ -50,7 +50,7 @@ rule _internal_priming_identifier:
 #     resources:
 #         cpus_per_task=1,
 #         mem_mb=32000,
-#         slurm_extra="--mail-type=END,FAIL --mail-user=you.yu@wehi.edu.au"
+#         slurm_extra="--mail-type=FAIL --mail-user=you.yu@wehi.edu.au"
 #     params:
 #         python_script="scripts/internal_priming_site_analysis.py",
 #         python_dir="/stornext/Home/data/allstaff/y/you.yu/.cache/R/basilisk/1.14.0/FLAMES/1.9.1/flames_env/bin/python3"
@@ -73,7 +73,7 @@ rule _internal_priming_identifier:
 #     resources:
 #         cpus_per_task=32,
 #         mem_mb=32000,
-#         slurm_extra="--mail-type=END,FAIL --mail-user=you.yu@wehi.edu.au"
+#         slurm_extra="--mail-type=FAIL --mail-user=you.yu@wehi.edu.au"
 #     shell:
 #         textwrap.dedent(
 #             """
