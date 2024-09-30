@@ -1,7 +1,7 @@
 rule get_cell_line_bc_list:
     input:
         #expand(os.path.join(results_dir,  "reports/RDS/{sample}_annotated.rds"), sample = config['sample_id']) 
-        lambda w: os.path.join(results_dir,  f"reports/RDS/{'sc' if 'sc' in w.sample else 'sn'}/{w.sample}_annotated.rds")
+        lambda w: os.path.join(results_dir,  f"reports/RDS/{w.sample}_annotated.rds")
     output:
         [os.path.join(results_dir,  "misc/{sample}/", f"{x}_BC_list.txt") for x in config['cell_line_list']]
     shell:
@@ -39,12 +39,23 @@ rule get_cell_line_pseudo_bulk_fq:
         FASTQ_FILE={input.fastq}
         BARCODE_FILE={input.bc_list}
         OUTPUT_FILE={output}
+        
+        # Split the barcode file into chunks in the temporary directory
+        TMP=$(mktemp -d)
+        split -l 1000 $BARCODE_FILE "$TMP/barcode_chunk_"
 
-        grep -A 3 -E "^@($(paste -sd '|' $BARCODE_FILE))_" $FASTQ_FILE  | grep -v "^--$" > $OUTPUT_FILE 
+        # Process each chunk and then remove the temporary files
+        rm -f $OUTPUT_FILE
+        for chunk in "$TMP"/barcode_chunk_*; do
+        grep -A 3 -E "^@($(paste -sd '|' $chunk))_" $FASTQ_FILE  | grep -v "^--$" >> $OUTPUT_FILE 
+        done
+
+        # Clean up temporary files
+        rm -rf "$TMP"
         """
 
 
-rule ont_bulk_minimap2_transcript:
+rule lr_bulk_minimap2_transcript:
     priority: 10
     input:
         fastq = results_dir + "/PseudoBulkAlignment/{sample}_{cell_line}_pseudo_bulk.fastq",
@@ -59,7 +70,7 @@ rule ont_bulk_minimap2_transcript:
     shell:
         """
         # module load samtools
-        {params.minimap2} -ax lr:hq -t {resources.cpus_per_task} {input.ref}  {input.fastq} | samtools view -bS - > {output.bam}
+        {params.minimap2} -ax lr:hq --eqx -N 100 -t {resources.cpus_per_task} {input.ref}  {input.fastq} | samtools view -bS - > {output.bam}
         rm {input.fastq}
         """
 
@@ -78,7 +89,7 @@ rule run_salmon:
         slurm_extra="--mail-type=END,FAIL --mail-user=you.yu@wehi.edu.au"
     params:
         lib_type = "A", # auto
-        gibbs_samples = 40
+        gibbs_samples = 50
     shell:
         """
         mkdir -p {output.out_dir}

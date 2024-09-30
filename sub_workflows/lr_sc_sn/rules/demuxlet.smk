@@ -40,13 +40,13 @@ rule prepare_input_bam:
     resources:
         cpus_per_task=16,
         mem_mb=160000
+    conda:
+        config['conda_config']['main']
     params:
         script=os.path.join(config['sub_wf_dir'], "scripts/DemuxletPreareBam.py"),
-        # TODO: change this to use the conda env
-        python_dir="/stornext/Home/data/allstaff/y/you.yu/.cache/R/basilisk/1.14.0/FLAMES/1.9.1/flames_env/bin/python3"
     shell:
         """
-        {params.python_dir}  {params.script} {input} {output}  {resources.cpus_per_task}
+        python3 {params.script} {input} {output}  {resources.cpus_per_task}
         """
 
 rule demuxlet_rule:
@@ -54,8 +54,8 @@ rule demuxlet_rule:
     Run the demultiplexing tool on the input VCF file.
     """
     input:
-        bam= config['output_path'] + '/demuxlet/{sample}.tag_added.bam',
-        bam_sorted_idx= config['output_path'] + '/demuxlet/{sample}.tag_added.bam.bai',
+        bam= config['output_path'] + '/demuxlet/{sample}.tag_added.sorted.bam',
+        bam_sorted_idx= config['output_path'] + '/demuxlet/{sample}.tag_added.sorted.bam.bai',
         vcf = config['output_path'] + '/demuxlet/DepmapMutTabConverted.vcf'
     output:
         config['output_path'] + '/demuxlet/{sample}.demuxlet.best'
@@ -82,6 +82,7 @@ rule demuxlet_rule:
         --alpha 0 --alpha 0.5 
         touch {output}
         """
+
 
 # ## Cluster level rules
 # rule prepare_input_bam_cluster_level:

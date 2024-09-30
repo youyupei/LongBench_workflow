@@ -122,7 +122,6 @@ rule utilities__git_clone:
         fi
         """
 
-
 # conda
 # rule create_conda_env_from_yml:
 #     """

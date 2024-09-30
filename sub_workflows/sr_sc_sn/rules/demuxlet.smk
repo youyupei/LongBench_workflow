@@ -39,15 +39,13 @@ rule demuxlet_rule:
     output:
         config['output_path'] + '/demuxlet/{sample}.demuxlet.best'
     resources:
-        cpus_per_task=4,
-        mem_mb=200000,
+        cpus_per_task=8,
+        mem_mb=500000,
         slurm_extra="--mail-type=END,FAIL --mail-user=you.yu@wehi.edu.au"
     params:
         demuxlet_excutable = config['software']['demuxlet']
     shell:
         """
-        # module load samtools
-        module load htslib
         filename={output}
         mkdir -p $(dirname $filename)   
 

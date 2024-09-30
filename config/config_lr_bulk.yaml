@@ -5,6 +5,15 @@ reference:
   bed_human: "/home/users/allstaff/you.yu/LongBench/reference_files/GRCh38/gencode.v44.annotation.gtf.bed"
   transcript: "/home/users/allstaff/you.yu/LongBench/reference_files/GRCh38.add.spikein/gencode.v44.transcripts.add.spikein.fa"
   picard_reference: '/home/users/allstaff/you.yu/LongBench/reference_files/GRCh38/refFlat.txt'
+  bed_housekeeping_genes: '/home/users/allstaff/you.yu/LongBench/reference_files/GRCh38/hg38.HouseKeepingGenes.bed'
+
+
+# only include the sample id that you want to process
+sample_id: 
+  - 'ont_bulk'
+  - 'pb_bulk'
+  - 'dRNA_bulk'
+  #- 'dRNA_bulk_q10'
 
 
 # This is current not used in the pipeline, as the data has been basecalled
@@ -17,6 +26,8 @@ samples_raw_bam_dir:
 samples_fastq_dir: 
   ont_bulk: "/home/users/allstaff/you.yu/LongBench/sequencing_data/ONT_bulk/fastqs/"
   pb_bulk: "/home/users/allstaff/you.yu/LongBench/sequencing_data/pb_bulk"
+  dRNA_bulk: "/home/users/allstaff/you.yu/LongBench/sequencing_data/ONT_dRNA/fastqs"
+  dRNA_bulk_q10: "/vast/scratch/users/you.yu/LongBench/dRNA/fastq_q10_filter"
 
 barcode_list:
   - 1: H146
@@ -41,15 +52,17 @@ cell_lines:
 output_path: 
   "/vast/projects/LongBench/analysis/lr_bulk/result"
 
-sample_id:
-  - 'ont_bulk'
-  - 'pb_bulk'
+scratch_dir: "/vast/scratch/users/you.yu/LongBench/lr_bulk"
+
+
 
 minimap2_genome_options:
   ont_bulk: "-ax splice:hq"
   pb_bulk: "-ax splice:hq"
-  
-
+  dRNA_bulk: "-ax splice -uf" # For RNA002, people use -k14 as the error rate is high, I removed it here to revert to the default setting as the error rate is similar to the old cDNA data
+  dRNA_bulk_q10: "-ax splice -uf"
 minimap2_trans_options:
-  ont_bulk: "-ax lr:hq"
-  pb_bulk: "-ax lr:hq"
+  ont_bulk: "-ax lr:hq --eqx -N 100 "
+  pb_bulk: "-ax lr:hq --eqx -N 100 "
+  dRNA_bulk: "-ax map-ont --eqx -N 100 " # I used a  similar setting to the old cDNA data
+  dRNA_bulk_q10: "-ax map-ont --eqx -N 100 " 

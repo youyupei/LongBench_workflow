@@ -1,7 +1,7 @@
 ---
 title: "Processing of ONT single cell/nuclei data"
 author: "Yupei"
-date: '2024-06-07'
+date: "`r Sys.Date()`"
 output:
   html_document:
     code_folding: hide
@@ -25,7 +25,7 @@ params:
 ```{r setup, include=FALSE}
 options(future.globals.maxSize = 5 * 1024 * 1024 * 1024)
 knitr::opts_chunk$set(echo = T)
-knitr::opts_chunk$set(cache = TRUE, cache.path = params$cache_dir)
+knitr::opts_chunk$set(cache = FALSE, cache.path = params$cache_dir)
 library(dplyr)
 library(tidyverse)
 library(Seurat)
@@ -51,7 +51,7 @@ source(params$sc_long_preprocessing_script)
 
 
 # sing-cell QC and clustring
-```{r input file, echo=T, cache=TRUE, warning=F, eval=T}
+```{r input file, echo=T, warning=F, eval=T}
 # input file
 so <- load_flames_gene_quant(params$fn_flames_gene_quant, assay = "Gene_quant")
 ```

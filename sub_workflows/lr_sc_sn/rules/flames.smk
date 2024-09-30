@@ -7,7 +7,6 @@ rule blaze:
     input:
         fastq = lambda wildcards: config["samples_fastq_dir"][wildcards.sample]
     output:
-        flag = results_dir + "/.flag/blaze_{sample}.done",
         out_fastq = config["output_path"] + "/flames_out/{sample}/matched_reads.fastq",
         other_output = [
             config["output_path"] + "/flames_out/{sample}/putative_bc.csv",
@@ -29,7 +28,6 @@ rule blaze:
         """
         out_fn=$(dirname {output.out_fastq})/
         mkdir -p $out_fn
-        mkdir -p $(dirname {output.flag})
 
         # check if the whitelist is empty
         if [ "{params.whitelist}" == "" ]; then
@@ -56,42 +54,32 @@ rule blaze:
         $arg_cell_calling \\
         --output-prefix $out_fn --output-fastq matched_reads.fastq --threads {resources.cpus_per_task} \\
         --minimal_stdout {input.fastq}
-
-        touch {output.flag}
         """
 
-rule flame_run_no_novel_discovery:
+rule flames_genome_mapping:
     input:
-        flag = rules.blaze.output.flag,
         fastq = rules.blaze.output.out_fastq,
-        config_file = config['flames_config'],
+        config_file = config['flames_config']['genome_mapping'],
         gtf = config['reference']['gtf'],
         genome = config['reference']['genome']
-    output:
-        flag = touch(results_dir + "/.flag/flames_{sample}.done"),
-        # output_dir = directory(os.path.join(results_dir,"flames_out/{sample}"))
-        output_list = [
-            os.path.join(results_dir,"flames_out/{sample}/align2genome.bam"),
-            os.path.join(results_dir,"flames_out/{sample}/matched_reads_dedup.fastq"),
-            os.path.join(results_dir,"flames_out/{sample}/realign2transcript.bam")
-        ]
+    output: 
+        bam = os.path.join(results_dir,"flames_out/{sample}/align2genome.bam"),
+        bai = os.path.join(results_dir,"flames_out/{sample}/align2genome.bam.bai")
+    params:
+        minimap2 = config["software"]["minimap2"],
+        k8 = os.path.dirname(config["software"]["minimap2"]) + '/k8'
     resources:
         cpus_per_task=32,
         mem_mb=500000,
         slurm_extra="--mail-type=END,FAIL --mail-user=you.yu@wehi.edu.au"
-    params:
-        minimap2 = config["software"]["minimap2"],
-        k8 = os.path.dirname(config["software"]["minimap2"]) + '/k8'
     shell:
         """
         out_dir=$(dirname {input.fastq})
-        mkdir -p $out_dir
-        mkdir -p $(dirname {output.flag})
 
         Rscript -e "
             library(FLAMES)
             config_file <- '{input.config_file}'
-            fastq_flames= '$out_dir/matched_reads.fastq'
+            fastq_flames= '{input.fastq}'
             outdir = '$out_dir'
             GTF = '{input.gtf}'
             genome = '{input.genome}'
@@ -107,8 +95,90 @@ rule flame_run_no_novel_discovery:
             "
         """
 
+rule flames_gene_quant:
+    input:
+        bam = rules.flames_genome_mapping.output,
+        fastq = rules.blaze.output.out_fastq,
+        config_file = config['flames_config']['gene_quantification'],
+        gtf = config['reference']['gtf'],
+        genome = config['reference']['genome']
+    output:
+        fastq = os.path.join(results_dir,"flames_out/{sample}/matched_reads_dedup.fastq"),
+        csv = os.path.join(results_dir,"flames_out/{sample}/gene_count.csv")
+    resources:
+        cpus_per_task=32,
+        mem_mb=500000,
+        slurm_extra="--mail-type=END,FAIL --mail-user=you.yu@wehi.edu.au"
+    params:
+        minimap2 = config["software"]["minimap2"],
+        k8 = os.path.dirname(config["software"]["minimap2"]) + '/k8'
+    shell:
+        """
+        out_dir=$(dirname {input.fastq})
+
+        Rscript -e "
+            library(FLAMES)
+            config_file <- '{input.config_file}'
+            fastq_flames= '{input.fastq}'
+            outdir = '$out_dir'
+            GTF = '{input.gtf}'
+            genome = '{input.genome}'
+
+            sce <- sc_long_pipeline(fastq=fastq_flames, 
+                                    outdir=outdir, 
+                                    annot=GTF, 
+                                    genome_fa=genome, 
+                                    config_file=config_file,
+                                    barcodes_file='not used',
+                                    minimap2='{params.minimap2}',
+                                    k8='{params.k8}')
+            "
+        """
+
+
+rule flames_trans_map_and_quant:
+    input:
+        fastq = rules.flames_gene_quant.output.fastq,
+        config_file = config['flames_config']['flames_trans_map_and_quant'],
+        gtf = config['reference']['gtf'],
+        genome = config['reference']['genome']
+    output:
+        bam = os.path.join(results_dir,"flames_out/{sample}/realign2transcript.bam"),
+        bai = os.path.join(results_dir,"flames_out/{sample}/realign2transcript.bam.bai"),
+        trans_quant = os.path.join(results_dir,"flames_out/{sample}/transcript_count.csv.gz")
+    resources:
+        cpus_per_task=32,
+        mem_mb=500000,
+        slurm_extra="--mail-type=END,FAIL --mail-user=you.yu@wehi.edu.au"
+    params:
+        minimap2 = config["software"]["minimap2"],
+        k8 = os.path.dirname(config["software"]["minimap2"]) + '/k8'
+    shell:
+        """
+        out_dir=$(dirname {input.fastq})
+
+        Rscript -e "
+            library(FLAMES)
+            config_file <- '{input.config_file}'
+            fastq_flames= '{input.fastq}'
+            outdir = '$out_dir'
+            GTF = '{input.gtf}'
+            genome = '{input.genome}'
+
+            sce <- sc_long_pipeline(fastq=fastq_flames, 
+                                    outdir=outdir, 
+                                    annot=GTF, 
+                                    genome_fa=genome, 
+                                    config_file=config_file,
+                                    barcodes_file='not used',
+                                    minimap2='{params.minimap2}',
+                                    k8='{params.k8}')
+            "
+        """
+
+
 rule flames:
     input:
-        expand(results_dir + "/.flag/flames_{sample}.done", sample=config["sample_id"])
+        expand(os.path.join(results_dir,"flames_out/{sample}/transcript_count.csv.gz"), sample=config["sample_id"])
     output:
         touch(results_dir + "/.flag/flames.done")

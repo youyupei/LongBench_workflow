@@ -2,3 +2,7 @@ conda/envs
 **/.snakemake/**
 **/.flag/**
 **/__pycache__/**
+**/rmarkdown/*
+
+# Do not ignore .Rmd files
+!**/rmarkdown/*.Rmd

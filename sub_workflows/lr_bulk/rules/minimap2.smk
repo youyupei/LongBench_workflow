@@ -28,7 +28,7 @@ rule lr_bulk_minimap2_transcript:
         minimap2_trans_options = lambda w: config["minimap2_trans_options"][w.sample]
     shell:
         """
-        {params.minimap2} {params.minimap2_trans_options} -t {resources.cpus_per_task} {input.ref}  - | samtools view -bS - > {output.bam}
+        {params.minimap2} {params.minimap2_trans_options} -t {resources.cpus_per_task} {input.ref}  {input.fastq}  | samtools view -bS - > {output.bam}
         """
 
 rule lr_bulk_minimap2_Genome:
@@ -37,7 +37,7 @@ rule lr_bulk_minimap2_Genome:
         fastq = lambda w: os.path.join(config['samples_fastq_dir'][w.sample], "{cell_line}.fastq"),
         ref = config['reference']['genome']
     output:
-        bam = results_dir + "/GenomeAlignment/{sample}_{cell_line}.bam"
+        bam = temp(results_dir + "/GenomeAlignment/{sample}_{cell_line}.bam")
     resources:
         cpus_per_task=16,
         mem_mb=64000
@@ -49,21 +49,21 @@ rule lr_bulk_minimap2_Genome:
         {params.minimap2} {params.minimap2_genome_options} -t {resources.cpus_per_task} {input.ref}  {input.fastq} | samtools view -bS - > {output.bam}
         """
 
-rule ont_bulk_cat_unsorted_bam:
-    input:
-        [results_dir + f"/TranscriptAlignment/ont_bulk_{pool}_" + "{cell_line}.bam" for pool  in ["pool", "pool2", "pool3"]]
-    output:
-        results_dir + "/TranscriptAlignment/ont_bulk_{cell_line}.bam"
-    wildcard_constraints:
-        cell_line='|'.join(cell_line_to_barcode.keys())
-    resources:
-        cpus_per_task=8,
-        mem_gb=64
-    shell:
-        """
-        # module load samtools
-        samtools cat -@ {resources.cpus_per_task} -o {output} {input}
-        """
+# rule ont_bulk_cat_unsorted_bam:
+#     input:
+#         [results_dir + f"/TranscriptAlignment/ont_bulk_{pool}_" + "{cell_line}.bam" for pool  in ["pool", "pool2", "pool3"]]
+#     output:
+#         results_dir + "/TranscriptAlignment/ont_bulk_{cell_line}.bam"
+#     wildcard_constraints:
+#         cell_line='|'.join(cell_line_to_barcode.keys())
+#     resources:
+#         cpus_per_task=8,
+#         mem_gb=64
+#     shell:
+#         """
+#         # module load samtools
+#         samtools cat -@ {resources.cpus_per_task} -o {output} {input}
+#         """
 
 rule ont_bulk_clean_up:
     input:

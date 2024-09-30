@@ -17,8 +17,12 @@ rule qc:
                 os.path.join(results_dir, "qc/coverage/{sample}.flame.coverage_plot.{flames_cov_plot_suffix}"),
                 os.path.join(results_dir, "qc/sqanti3/{sample}"),
                 os.path.join(results_dir, "qc/NanoPlot/{sample}"),
-                #os.path.join(results_dir, "qc/coverage/{sample}.RSeQC.geneBodyCoverage.pdf"),
-                os.path.join(results_dir, "qc/coverage/{sample}.picard.RNA_Metrics")
+                os.path.join(results_dir, "qc/RSeQC/{sample}.geneBodyCoverage.curves.pdf"),
+                os.path.join(results_dir, "qc/coverage/{sample}.picard.RNA_Metrics"),
+                os.path.join(results_dir, "qc/RSeQC/{sample}.junctionSaturation_plot.pdf"),
+                os.path.join(results_dir, "qc/RSeQC/{sample}.splice_events.pdf"),
+                os.path.join(results_dir, "qc/RSeQC/{sample}.splice_junction.pdf")
+
             ],
             sample=config["sample_id"],
             #read_length_source=["raw"],
@@ -74,6 +78,8 @@ rule _subsample_1M_reads:
         mkdir -p $(dirname {output})
         seqtk sample -s {params.n_reads} {input} {params.n_reads} > {output}
         """
+
+
 
 ######## Read length (subsampled fastq) ########
 # rule generate_read_length_statistics:
@@ -193,7 +199,6 @@ rule flame_coverage_plot:
         """
 
 ## SQANTI3
-
 rule sqanti3:
     input:
         reads=os.path.join(results_dir, "qc/subsample_fq/{sample}_matched_reads_subsampled.fastq"),
@@ -214,17 +219,34 @@ rule sqanti3:
         additional_arg = "--skipORF"
     shell:
         """
-        module unload R
         {params.sqanti3_qc_script} {input.reads} {input.gtf} {input.genome} {params.additional_arg} --fasta  --cpus {resources.cpus_per_task} --force_id_ignore -d {output} --report html
         """
 
 
+rule Subsample_bam_for_RSeQC:
+    input:
+        bam = os.path.join(results_dir,"flames_out/{sample}/align2genome.bam")
+    output:
+        bam = os.path.join(results_dir,"subsample_data/{sample}/genome_map_subsample_rate_{subsample_rate}.bam"),
+        bai = os.path.join(results_dir,"subsample_data/{sample}/genome_map_subsample_rate_{subsample_rate}.bam.bai")
+    resources:
+        cpus_per_task=1,
+        mem_mb=32000
+    params:
+        seed = config['random_seed'],
+    shell:
+        """
+        mkdir -p $(dirname {output.bam})
+        samtools view --subsample {wildcards.subsample_rate} --subsample-seed {params.seed} {input.bam} -h | samtools sort -o {output.bam}
+        samtools index {output.bam}
+        """
+
 rule RSeQC_gene_body_coverage:
     input:
-        bed=config['reference']['gtf'] + '.bed', # I have rules to convert gtf to bed
-        genome_bam = os.path.join(results_dir,"flames_out/{sample}/align2genome.bam")
+        bed=config['reference']['bed_housekeeping_genes'], 
+        genome_bam = os.path.join(results_dir,"subsample_data/{sample}/genome_map_subsample_rate_0.01.bam")
     output:
-        os.path.join(results_dir, "qc/coverage/{sample}.RSeQC.geneBodyCoverage.pdf")
+        report(os.path.join(results_dir, "qc/RSeQC/{sample}.geneBodyCoverage.curves.pdf"))
     resources:
         cpus_per_task=1,
         mem_mb=32000
@@ -233,12 +255,45 @@ rule RSeQC_gene_body_coverage:
     shell:
         """
         mkdir -p $(dirname {output})
-        geneBody_coverage.py -i {input.genome_bam} -r {input.bed} -o {output}
+        geneBody_coverage.py -i {input.genome_bam} -r {input.bed} -o $(dirname {output[0]})/{wildcards.sample}
         """
 
 
+rule RSeQC_junction_saturation:
+    input:
+        bed=config['reference']['gtf'] + '.bed', # I have rules to convert gtf to bed
+        genome_bam = os.path.join(results_dir,"flames_out/{sample}/align2genome.bam")
+    output:
+        report(os.path.join(results_dir, "qc/RSeQC/{sample}.junctionSaturation_plot.pdf"))
+    resources:
+        cpus_per_task=1,
+        mem_mb=64000
+    conda:
+        config['conda']['RSeQC']
+    shell:
+        """
+        mkdir -p $(dirname {output})
+        junction_saturation.py -i {input.genome_bam} -r {input.bed} -o $(dirname {output[0]})/{wildcards.sample}
+        """
 
 
+rule RSeQC_junction_annotation:
+    input:
+        bed=config['reference']['gtf'] + '.bed', # I have rules to convert gtf to bed
+        genome_bam = os.path.join(results_dir,"flames_out/{sample}/align2genome.bam")
+    output:
+        report(os.path.join(results_dir, "qc/RSeQC/{sample}.splice_events.pdf")),
+        report(os.path.join(results_dir, "qc/RSeQC/{sample}.splice_junction.pdf"))
+    resources:
+        cpus_per_task=1,
+        mem_mb=32000
+    conda:
+        config['conda']['RSeQC']
+    shell:
+        """
+        mkdir -p $(dirname {output[0]})
+        junction_annotation.py -i {input.genome_bam} -r {input.bed} -o $(dirname {output[0]})/{wildcards.sample}
+        """
 ## Read length related
 # rule generate_demux_read_length_statistics:
 #     input:

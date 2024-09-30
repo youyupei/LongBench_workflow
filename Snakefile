@@ -6,8 +6,16 @@ import config_parser
 
 
 EMAIL = config["email"]
+REPORT = config["main_wf_dir"] + "/reports/snakemake_report.html"
+RULEGRAPH = config["main_wf_dir"] + "/reports/rulegraph.pdf"
 onsuccess:
-    shell("mail -s 'DONE: Snakemake main workflow' {EMAIL} < {log}")
+    shell(
+        """
+        mail -s 'DONE: Snakemake main workflow' {EMAIL} < {log}
+        # snakemake --unlock
+        # snakemake --report {REPORT} all
+        # snakemake --rulegraph all | dot -Tpdf > {RULEGRAPH}
+        """)
 onerror:
     shell("mail -s 'ERROR: Snakemake main workflow' {EMAIL} < {log}")
 
@@ -50,6 +58,6 @@ rule all:
         rules.lr_bulk_all.input,
         rules.lr_sc_sn_all.input,
         rules.sr_sc_sn_all.input,
-        rules.lr_read_length_plot.output
+        rules.combined_qc_plot.output
 
 # Main workflow is mainly for combining the results from the sub-workflows and plotting

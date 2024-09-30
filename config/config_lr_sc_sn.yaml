@@ -1,5 +1,6 @@
 # result
 output_path: "/vast/projects/LongBench/analysis/lr_sc_sn/result"
+scratch_dir: "/vast/scratch/users/you.yu/LongBench/lr_sc_sn"
 
 # reference file
 reference:
@@ -8,6 +9,7 @@ reference:
   transcript: "/home/users/allstaff/you.yu/LongBench/reference_files/GRCh38/gencode.v44.transcripts.fa"
   cellline_mutations: '/home/users/allstaff/you.yu/LongBench/reference_files/celllines_mutation/mutations_subsetted_NAsdropped.csv'
   picard_reference: '/home/users/allstaff/you.yu/LongBench/reference_files/GRCh38/refFlat.txt'
+  bed_housekeeping_genes: '/home/users/allstaff/you.yu/LongBench/reference_files/GRCh38/hg38.HouseKeepingGenes.bed'
 
 # # This is current not used in the pipeline, as the data has been basecalled
 # samples_raw_dir: 
@@ -22,11 +24,18 @@ samples_fastq_dir:
   pb_sc: "/home/users/allstaff/you.yu/LongBench/sequencing_data/pb_sc/pb_sc.fastq"
   pb_sn: "/home/users/allstaff/you.yu/LongBench/sequencing_data/pb_sn/pb_sn.fastq"
 
-flames_config: /home/users/allstaff/you.yu/LongBench/analysis/workflow/sub_workflows/lr_sc_sn/config/flames.json
+
+# FLAMES were configured into multiple steps, each step can be configured separately
+flames_config: 
+  genome_mapping: /home/users/allstaff/you.yu/LongBench/analysis/workflow/sub_workflows/lr_sc_sn/config/flames_genome_map.json
+  gene_quantification: /home/users/allstaff/you.yu/LongBench/analysis/workflow/sub_workflows/lr_sc_sn/config/flames_gene_quant.json
+  flames_trans_map_and_quant: /home/users/allstaff/you.yu/LongBench/analysis/workflow/sub_workflows/lr_sc_sn/config/flames_trans_map_and_quant.json
+
+
 
 sample_id:
-  - 'ont_sn'
-  - 'ont_sc'
+  # - 'ont_sn'
+  # - 'ont_sc'
   - 'ont_sn_clean'
   - 'ont_sc_clean'
   - 'pb_sc'
@@ -44,7 +53,7 @@ expected_cells:
 count_thres: # Count threshold will override expected_cells
   ont_sn: 
   ont_sc: 
-  ont_sn_clean: 10000
+  ont_sn_clean:
   ont_sc_clean:
   pb_sc:
   pb_sn:
@@ -55,7 +64,7 @@ force_cells: # Count threshold will override expected_cells
   ont_sn_clean: 10000
   ont_sc_clean:
   pb_sc:
-  pb_sn:
+  pb_sn: 10000
 
 whitelist_10x:
   ont_sn: 

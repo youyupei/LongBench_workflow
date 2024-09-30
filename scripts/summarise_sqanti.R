@@ -5,20 +5,18 @@
 #********************** Taking arguments from python script
 
 # take multiple sqanti folders and input
-# dirs <- snakemake@input |> unlist()
-# sample_names <- snakemake@params$sample_names
-# utilities.path <- snakemake@params$utilities_path
-# output <- snakemake@output[[1]]
+dirs <- snakemake@input |> unlist()
+sample_names <- snakemake@params$sample_names
+utilities.path <- snakemake@params$utilities_path
+output <- snakemake@output[[1]]
 # test
-dirs <- c("/home/users/allstaff/you.yu/LongBench/analysis/lr_sc_sn/result/qc/sqanti3/ont_sn",
-            "/home/users/allstaff/you.yu/LongBench/analysis/lr_sc_sn/result/qc/sqanti3/ont_sc",
-            "/home/users/allstaff/you.yu/LongBench/analysis/lr_sc_sn/result/qc/sqanti3/ont_sn_clean",
-            "/home/users/allstaff/you.yu/LongBench/analysis/lr_sc_sn/result/qc/sqanti3/ont_sc_clean",
-            "/home/users/allstaff/you.yu/LongBench/analysis/lr_bulk/result/qc/sqanti3/ont_bulk_H146"
-            )
-sample_names <- c("ont_sn", "ont_sc", "ont_sn_clean", "ont_sc_clean", "ont_bulk_H146")
-utilities.path <- '/home/users/allstaff/you.yu/LongBench/software/SQANTI3/utilities'
-output <- '~/test.pdf'
+# dirs <- c("/home/users/allstaff/you.yu/LongBench/analysis/lr_sc_sn/result/qc/sqanti3/ont_sn",
+#             "/home/users/allstaff/you.yu/LongBench/analysis/lr_sc_sn/result/qc/sqanti3/ont_sc",
+#             "/home/users/allstaff/you.yu/LongBench/analysis/lr_bulk/result/qc/sqanti3/ont_bulk_H146"
+#             )
+# sample_names <- c("ont_sn", "ont_sc", "ont_bulk_H146")
+# utilities.path <- '/home/users/allstaff/you.yu/LongBench/software/SQANTI3/utilities'
+# output <- '~/test.pdf'
 
 parse_sqanti_ourdir <- function(dir){
   # get the classification file and junction file
@@ -90,6 +88,7 @@ long_df <- long_df %>% group_by(Sample) %>%
   mutate("Full splice match" = ifelse(Category == "FSM", "Yes", "No"), Proportion = Count / sum(Count))
 
 # Make FSM last to be on top and Yes to be on top of No
+long_df$Sample <- factor(long_df$Sample, levels = sample_names)
 long_df$Category <- factor(long_df$Category, levels = c("ISM", "NIC", "NNC", "Genic\nGenomic", "Antisense", "Fusion", "Intergenic", "Genic\nIntron", "FSM"))
 long_df$`Full splice match` <- factor(long_df$`Full splice match`, levels = c("No", "Yes"))
 # Define the fill colors to simulate hierarchy
@@ -97,7 +96,7 @@ fill_colors <- c("Yes" = "#FF9100", "No" = "#e2dbdb00")
 # Plot
 p <- ggplot(long_df, aes(x = Sample, y = Proportion)) +
   geom_bar(stat = "identity", position = "stack", aes(fill = Category)) +
-  geom_bar(stat = "identity", position = "stack", linewidth = 3, alpha = 0, aes(color = `Full splice match`)) +
+  geom_bar(stat = "identity", position = "stack", linewidth = 2, alpha = 0, aes(color = `Full splice match`)) +
   guides(fill = guide_legend(title = "Structural Category", 
                              title.position = "top", 
                              title.hjust = 0.5,
@@ -114,7 +113,8 @@ p <- ggplot(long_df, aes(x = Sample, y = Proportion)) +
   theme_minimal(base_size = 15) +
   labs(title = "Proportion of Structural Categories Across Samples",
        x = "Sample",
-       y = "Proportion")
+       y = "Proportion") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
 
 # Save the plot
-ggsave(output, plot = p, width = 10, height = 10, dpi = 300)
+ggsave(output, plot = p, width = 20, height = 10, dpi = 300)

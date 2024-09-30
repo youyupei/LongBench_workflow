@@ -17,15 +17,12 @@ rule get_empty_drop:
     * Assignment ED=0 for fast process. 
     """
     input:
-        flag = rules.blaze.output.flag,
         putative_bc_csv = config['output_path'] + '/flames_out/{sample}/putative_bc.csv'
     output:
         config['output_path'] + '/emptydrop/{sample}.empty_drops_list.csv'
     params:
         bc_rank = "20000-30000",
         minQ = 15
-    localrule:
-        True
     run:
         import io
         from tqdm import tqdm
@@ -68,13 +65,11 @@ rule filter_empty_list:
     Filter the empty drop list by excluding BC that are <4 ED a way from the whitelist
     """
     input:
-        flag = rules.blaze.output.flag,
+        flag = rules.blaze.output,
         emp_list = config['output_path'] + '/emptydrop/{sample}.empty_drops_list.csv',
         whitelist = config['output_path'] + '/flames_out/{sample}/whitelist.csv'
     output:
         config['output_path'] + '/emptydrop/{sample}.empty_drops_list.filtered.csv'
-    localrule:
-        True
     conda:
         main_conda
     shell:
@@ -120,18 +115,18 @@ read_assignment.assign_read(
     '
         """
 
-rule empty_drop_run_flames:
+rule empty_drop_run_flames_genome_mapping:
     input:
-        config_file = config['flames_config'],
+        config_file = config['flames_config']['genome_mapping'],
         fastq = config['output_path'] + '/emptydrop/{sample}.empty_drops.fastq',
         gtf = config['reference']['gtf'],
         genome = config['reference']['genome']
     output:
-        flag = touch(config['output_path'] + '/.flag/{sample}_flames/emptydrop_gene_quantification.done'),
-        dir = directory(config['output_path'] + '/emptydrop/{sample}_flames/')
+        bam = config['output_path'] + '/emptydrop/{sample}_flames/align2genome.bam',
+        bai = config['output_path'] + '/emptydrop/{sample}_flames/align2genome.bam.bai'
     resources:
         cpus_per_task=32,
-        mem_mb=500000,
+        mem_mb=200000,
         slurm_extra="--mail-type=END,FAIL --mail-user=you.yu@wehi.edu.au"
     params:
         minimap2 = config["software"]["minimap2"],
@@ -142,7 +137,53 @@ rule empty_drop_run_flames:
         # module unload R
         # module load R/4.4.0
 
-        out_dir={output.dir}
+        out_dir=$(dirname {output.bam})
+        mkdir -p $out_dir
+
+        Rscript -e "
+            library(FLAMES)
+            config_file <- '{input.config_file}'
+            fastq_flames= '{input.fastq}'
+            outdir = '$out_dir'
+            GTF = '{input.gtf}'
+            genome = '{input.genome}'
+
+            sce <- sc_long_pipeline(fastq=fastq_flames, 
+                                    outdir=outdir, 
+                                    annot=GTF, 
+                                    genome_fa=genome, 
+                                    config_file=config_file,
+                                    barcodes_file='not used',
+                                    minimap2='{params.minimap2}',
+                                    k8='{params.k8}')
+            "
+        """
+
+
+rule empty_drop_run_flames_gene_quantification:
+    input:
+        config_file = config['flames_config']['gene_quantification'],
+        fastq = config['output_path'] + '/emptydrop/{sample}.empty_drops.fastq',
+        bam = rules.empty_drop_run_flames_genome_mapping.output.bam,
+        gtf = config['reference']['gtf'],
+        genome = config['reference']['genome']
+    output:
+        flag = touch(config['output_path'] + '/.flag/{sample}_flames/emptydrop_gene_quantification.done'),
+        gene_count = config['output_path'] + '/emptydrop/{sample}_flames/gene_count.csv'
+    resources:
+        cpus_per_task=32,
+        mem_mb=200000,
+        slurm_extra="--mail-type=END,FAIL --mail-user=you.yu@wehi.edu.au"
+    params:
+        minimap2 = config["software"]["minimap2"],
+        k8 = os.path.dirname(config["software"]["minimap2"]) + '/k8'
+    shell:
+        """
+        # module load samtools
+        # module unload R
+        # module load R/4.4.0
+
+        out_dir=$(dirname {output.gene_count})
         mkdir -p $out_dir
 
         Rscript -e "

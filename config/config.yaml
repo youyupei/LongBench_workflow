@@ -1,5 +1,7 @@
 # workflow dir setup
 global_config_path: "/vast/projects/LongBench/analysis/workflow/config/config.yaml"
+tmp_dir: "/vast/scratch/users/you.yu/LongBench/tmp"
+scratch_dir: "/vast/scratch/users/you.yu/LongBench" #direct short-term intemediate output to vast scratch
 main_wf_dir: "/vast/projects/LongBench/analysis/workflow"
 
 # sub workflow dir setup, the abs path will be automatically generated and accessible as config['sub_wf_dir'] in 
@@ -15,9 +17,12 @@ git_repo_dir: "script/git_repo"
 
 conda_config: # the parser will convert it to absolute path will be accessible as config['conda_config'] or config['conda']
   main: "conda/config/main.yaml" # relative path to the main workflow directory (main_wf_dir)
-  LongReadSum: "conda/config/LongReadSum.yaml"
+  # LongReadSum: "conda/config/LongReadSum.yaml"
   NanoPlot: "conda/config/NanoPlot.yaml"
   RSeQC: "conda/config/RSeQC.yaml"
+  # sqanti3: "conda/config/SQANTI3.conda_env.yml"
+  oarfish: "conda/config/oarfish.yaml"
+
 
 conda:
   sqanti3: "SQANTI3" # prebuilt conda env name
@@ -41,6 +46,5 @@ software:
 random_seed: 2024
 
 email: "you.yu@wehi.edu.au"
-
 
 combined_output_path: "/vast/projects/LongBench/analysis/all_samples/result"

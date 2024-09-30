@@ -25,8 +25,8 @@ params:
 
 ```{r setup, include=FALSE}
 options(future.globals.maxSize = 5 * 1024 * 1024 * 1024)
-knitr::opts_chunk$set(echo = T)
-knitr::opts_chunk$set(cache = TRUE, cache.path = params$cache_dir)
+knitr::opts_chunk$set(echo = FALSE)
+knitr::opts_chunk$set(cache = FALSE, cache.path = params$cache_dir)
 library(dplyr)
 library(tidyverse)
 library(Seurat)
@@ -66,7 +66,7 @@ so <- load_flames_gene_quant(params$fn_flames_gene_quant, assay = "Gene_quant")
 ```{r}
 # Step 1: Remove Doublet
 so <- so %>% remove.doublet %>%  remove_outliers 
-so <- so %>% get_clusters(ndim=30,res=0.5,seed = 2024)
+so <- so %>% get_clusters(ndim=30,res=0.5,seed = params$random_seed)
 ## Check the ndim preserve most of the variance:
 ElbowPlot(so, ndims = 30, reduction = "pca.Gene_quant")
 ```
