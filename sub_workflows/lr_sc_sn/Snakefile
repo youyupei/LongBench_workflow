@@ -19,10 +19,10 @@ if config.get("subsample_read_n"):
     for sample in config['sample_id']:
         config['samples_fastq_dir'][sample] = \
             os.path.join(subsample_dir, 
-                            f"subsample_n_{subsample_read_n}/{sample}.subsampled.fastq")
-                            
+                            f"subsample_n_{subsample_read_n}/{sample}.subsampled.fastq")  
+    include: "rules/subsample.smk"
 
-include: "rules/subsample.smk"
+
 include: "rules/flames.smk"
 include: "rules/qc.smk"
 include: "rules/internal_priming.smk"

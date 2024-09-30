@@ -13,16 +13,16 @@ config = config_parser.sub_wf_config_parser(
 # subsample
 
 if config.get("subsample_read_n"):
-    # copy the raw fastq files
-    raw_fastq_dir = config['samples_fastq_dir'].copy()
-    subsample_read_n = config['subsample_read_n']
-    subsample_dir =  config['subsample_dir']
+   # copy the raw fastq files
+   raw_fastq_dir = config['samples_fastq_dir'].copy()
+   subsample_read_n = config['subsample_read_n']
+   subsample_dir =  config['subsample_dir']
     # modify the input path
-    for sample in config['sample_id']:
-        config['samples_fastq_dir'][sample] = \
-            os.path.join(subsample_dir, 
-                            f"subsample_n_{subsample_read_n}/{sample}")
-include: "rules/subsample.smk"
+   for sample in config['sample_id']:
+      config['samples_fastq_dir'][sample] = \
+         os.path.join(subsample_dir, 
+                           f"subsample_n_{subsample_read_n}/{sample}")
+   include: "rules/subsample.smk"
 
 # define the input fastq directories
 input_fastq_dirs = config["samples_fastq_dir"]

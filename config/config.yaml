@@ -50,5 +50,5 @@ combined_output_path: "/vast/projects/LongBench/analysis/all_samples/result"
 
 # Other config
 # The number subsampled reads
-subsample_read_n: 1000
-subsample_dir: "/vast/scratch/users/you.yu/LongBench/subsample_fq"
+#subsample_read_n: 1000
+#subsample_dir: "/vast/scratch/users/you.yu/LongBench/subsample_fq"
