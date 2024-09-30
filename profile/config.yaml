@@ -9,3 +9,4 @@ default-resources:
 conda-prefix: "/vast/projects/LongBench/analysis/workflow/conda/envs"
 singularity-prefix: "/vast/projects/LongBench/analysis/workflow/singularity"
 keep-going: true
+benchmark-extended: true
