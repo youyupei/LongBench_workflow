@@ -40,6 +40,8 @@ software:
   sqanti3_dir: "/home/users/allstaff/you.yu/LongBench/software/SQANTI3/"
   demuxlet: "/home/users/allstaff/you.yu/LongBench/software/demuxlet/demuxlet/bin/demuxlet"
   minimap2: "/home/users/allstaff/you.yu/LongBench/software/minimap2-2.28_x64-linux/minimap2" # require the exisitence of k8 in the same directory
+  kallisto: "/vast/projects/LongBench/software/kallisto/build/src/kallisto"
+  bustools: "/vast/projects/LongBench/software/bustools/build/src/bustools"
   
 # for all random process
 random_seed: 2024

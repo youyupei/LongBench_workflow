@@ -50,8 +50,8 @@ cell_lines:
   - HCC827
 
 output_path: 
-  #"/vast/projects/LongBench/analysis/lr_bulk/result"
-  "/vast/projects/LongBench/analysis/lr_bulk/result_subsample"
+  "/vast/projects/LongBench/analysis/lr_bulk/result"
+  # "/vast/projects/LongBench/analysis/lr_bulk/result_subsample"
 
 scratch_dir: "/vast/scratch/users/you.yu/LongBench/lr_bulk"
 

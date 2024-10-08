@@ -80,3 +80,42 @@ catchOarfish <- function(paths, verbose = TRUE, prefix=".") {
     list(counts = Counts, annotation = Quant1, overdispersion.prior = OverDispPrior, 
         resample.type = ResampleType)
 }
+
+
+
+catchMyKallisto <- function(paths) {
+    NSamples <- length(paths)
+    # read bus_quant_tcc.tsv from each sample
+    for (j in 1L:NSamples) {
+        QuantFile <- file.path(paths[j], "bus_quant_tcc.tsv")
+        if (!file.exists(QuantFile)) {
+            print(QuantFile)
+            stop("quant file not found at specified path")
+        }
+        if (j == 1L) {
+            Quant1 <- suppressWarnings(readr::read_tsv(QuantFile,
+                col_types = "cd", progress = FALSE
+            ))
+            NTx <- nrow(Quant1)
+            Counts <- matrix(0, NTx, NSamples)
+            DF <- rep_len(0L, NTx)
+            OverDisp <- rep_len(0, NTx)
+            Counts[, 1L] <- Quant1$bus_counts
+            Quant1 <- as.data.frame(Quant1, stringsAsFactors = FALSE)
+            # read length from file.path(paths[j], "transcript_lengths.txt")
+            Quant1$Length <- read.table(file.path(paths[j], "transcript_lengths.txt"))$V2
+        } else {
+            Quant <- suppressWarnings(readr::read_tsv(QuantFile,
+                col_types = "_d", progress = FALSE
+            ))
+            Counts[, j] <- Quant$bus_counts
+        }
+    }
+   
+    dimnames(Counts) <- list(Quant1$transcript_id, paths)
+    row.names(Quant1) <- Quant1$transcript_id
+    Quant1$transcript_id <- NULL
+    
+    list(counts = Counts, annotation = Quant1)
+    
+}
