@@ -1,4 +1,4 @@
-combined_result_dir = config["combined_output_path"]
+figures_output_path = config["figures_output_path"]
 
 lr_sc_sn_result_dir = sub_wf_config['lr_sc_sn']["output_path"]
 lr_bulk_result_dir = sub_wf_config['lr_bulk']["output_path"]
@@ -16,7 +16,7 @@ rule read_number_plot:
             sample = sub_wf_config['lr_sc_sn']["sample_id"]
         )
     output:
-        report(os.path.join(combined_result_dir, "qc/read_number_plot.pdf"), 
+        report(os.path.join(figures_output_path, "qc/read_number_plot.pdf"), 
                 category = "QC", subcategory = "Read number")
     params:
         bulk_sample_name = expand("{sample}_{cell_line}", 
@@ -42,7 +42,7 @@ rule lr_read_length_plot:
             sample = sub_wf_config['lr_sc_sn']["sample_id"]
         )
     output:
-        report(os.path.join(combined_result_dir, "qc/read_length_and_quality_plot.pdf"), 
+        report(os.path.join(figures_output_path, "qc/read_length_and_quality_plot.pdf"), 
                 category = "QC", subcategory = "Read length and quality")
     params:
         sample_id = expand("{sample}_{cell_line}", 
@@ -65,7 +65,7 @@ rule summarise_sqanti:
         expand(os.path.join(lr_sc_sn_result_dir, "qc/sqanti3/{sample}/"),
                 sample = sub_wf_config['lr_sc_sn']["sample_id"])
     output:
-        report(os.path.join(combined_result_dir, "qc/sqanti_summary.pdf"), 
+        report(os.path.join(figures_output_path, "qc/sqanti_summary.pdf"), 
                 category = "QC", subcategory = "SQANTI3")
     params:
         sample_names = expand("{sample}_{cell_line}", 
@@ -77,10 +77,12 @@ rule summarise_sqanti:
     script:
         os.path.join(config['main_wf_dir'], "scripts/summarise_sqanti.R")
 
-rule combined_qc_plot:
+
+
+rule main_qc_plot:
     input:
         rules.lr_read_length_plot.output,
         #rules.summarise_sqanti.output,
         rules.read_number_plot.output
     output:
-        touch(os.path.join(combined_result_dir, "qc/combined_qc_plot.done"))
+        touch(os.path.join(figures_output_path, "qc/.flag.qc_plot.done"))

@@ -28,27 +28,27 @@ rule qc:
 ###################################################################################
 
 # ######## Qscore filtering (chopper) ########
-# rule chopper_qscore_filtering:
-#     input:
-#         lambda wildcards:  os.path.join(input_fastq_dirs[wildcards.sample], "{cell_line}.fastq")
-#     output:
-#         os.path.join(scratch_dir, "Q{q_threshold}_filter_fastqs/{sample}_{cell_line}.fastq")
-#     resources:
-#         cpus_per_task=8,
-#         mem_mb=32000
-#     conda:
-#         config['conda']['NanoPlot']
-#     shell:
-#         """
-#         mkdir -p $(dirname {output})
-# 
-#         # if a is 0, make a soft link from input to output, else run chopper
-#         if [ {wildcards.q_threshold} -eq 0 ]; then
-#             ln -s {input} {output}
-#         else
-#             chopper -q {wildcards.q_threshold} -i {input} -o {output} --threads {resources.cpus_per_task}
-#         fi
-#         """
+rule chopper_qscore_filtering:
+    input:
+        lambda wildcards:  os.path.join(input_fastq_dirs[wildcards.sample], "{cell_line}.fastq")
+    output:
+        os.path.join(scratch_dir, "Q{q_threshold}_filter_fastqs/{sample}_{cell_line}.fastq")
+    resources:
+        cpus_per_task=8,
+        mem_mb=32000
+    conda:
+        config['conda']['NanoPlot']
+    shell:
+        """
+        mkdir -p $(dirname {output})
+
+        # if a is 0, make a soft link from input to output, else run chopper
+        if [ {wildcards.q_threshold} -eq 0 ]; then
+            ln -s {input} {output}
+        else
+            chopper -q {wildcards.q_threshold} -i {input} -o {output} --threads {resources.cpus_per_task}
+        fi
+        """
 
 ######## Subsample ########
 rule subsample_1M_reads:

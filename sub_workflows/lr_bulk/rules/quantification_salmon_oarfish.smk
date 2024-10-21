@@ -50,6 +50,7 @@ rule oarfish_no_cov:
     params:
         lib_type = "A", # auto
         gibbs_samples = 50
+    priority: 100
     shell:
         """
         mkdir -p {output.out_dir_nocov}
@@ -71,6 +72,7 @@ rule oarfish_cov:
     params:
         lib_type = "A", # auto
         gibbs_samples = 50
+    priority: 101
     shell:
         """
         mkdir -p {output.out_dir_cov}

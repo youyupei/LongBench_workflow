@@ -48,9 +48,11 @@ random_seed: 2024
 
 email: "you.yu@wehi.edu.au"
 
-combined_output_path: "/vast/projects/LongBench/analysis/all_samples/result"
+# This is the path to output the final figures (or any figure selected)
+figures_output_path: "/vast/projects/LongBench/analysis/figures"
 
 # Other config
 # The number subsampled reads
 #subsample_read_n: 1000
 #subsample_dir: "/vast/scratch/users/you.yu/LongBench/subsample_fq"
+min_qscore: 10

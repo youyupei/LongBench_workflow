@@ -21,7 +21,7 @@ rule blaze:
     conda:
         main_conda
     resources:
-        cpus_per_task=32,
+        cpus_per_task=48,
         mem_mb=100000,
         slurm_extra="--mail-type=FAIL --mail-user=you.yu@wehi.edu.au"
     shell:
@@ -69,9 +69,10 @@ rule flames_genome_mapping:
         minimap2 = config["software"]["minimap2"],
         k8 = os.path.dirname(config["software"]["minimap2"]) + '/k8'
     resources:
-        cpus_per_task=32,
+        cpus_per_task=48,
         mem_mb=500000,
         slurm_extra="--mail-type=FAIL --mail-user=you.yu@wehi.edu.au"
+    priority: 100
     shell:
         """
         out_dir=$(dirname {input.fastq})
@@ -106,9 +107,10 @@ rule flames_gene_quant:
         fastq = os.path.join(results_dir,"flames_out/{sample}/matched_reads_dedup.fastq"),
         csv = os.path.join(results_dir,"flames_out/{sample}/gene_count.csv")
     resources:
-        cpus_per_task=32,
+        cpus_per_task=16,
         mem_mb=500000,
         slurm_extra="--mail-type=FAIL --mail-user=you.yu@wehi.edu.au"
+    priority: 100
     params:
         minimap2 = config["software"]["minimap2"],
         k8 = os.path.dirname(config["software"]["minimap2"]) + '/k8'
@@ -147,8 +149,9 @@ rule flames_trans_map_and_quant:
         #bai = os.path.join(results_dir,"flames_out/{sample}/realign2transcript.bam.bai"),
         #trans_quant = os.path.join(results_dir,"flames_out/{sample}/transcript_count.csv.gz"),
         flag = touch(results_dir + "/.flag/flames_{sample}.done")
+    priority: 100
     resources:
-        cpus_per_task=32,
+        cpus_per_task=48,
         mem_mb=500000,
         slurm_extra="--mail-type=FAIL --mail-user=you.yu@wehi.edu.au"
     params:

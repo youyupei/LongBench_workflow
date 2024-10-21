@@ -129,7 +129,7 @@ get_dge_from_oarfish <- function(dir, sample_prefix_regex) {
 ill_bulk.dge <- get_dge_from_salmon(params$ill_bulk_salmon_dir, ".*_S")
 ont_bulk.dge <- get_dge_from_oarfish(params$ont_bulk_oarfish_dir, ".*/")
 pb_bulk.dge <- get_dge_from_oarfish(params$pb_bulk_oarfish_dir, ".*/")
-ont_drna.deg <- get_dge_from_oarfish(params$ont_drnd_oarfish_dir, ".*/")
+ont_drna.dge <- get_dge_from_oarfish(params$ont_drnd_oarfish_dir, ".*/")
 # ont_sc.dge <- get_dge_from_salmon(params$ont_sc_salmon_dir, ".*/")
 # ont_sn.dge <- get_dge_from_salmon(params$ont_sn_salmon_dir, ".*/")
 # ont_sc.dge <- get_dge_from_salmon(params$ont_sc_salmon_dir, ".*/")
@@ -154,7 +154,7 @@ plot_raw_count <- function(filter_func, title, legend = TRUE) {
   plot_df <- data.frame(
     "Illumina" = ill_bulk.dge[filter_func(ill_bulk.dge), ]$counts %>% sum(),
     "ONT cDNA" = ont_bulk.dge[filter_func(ont_bulk.dge), ]$counts %>% sum(),
-    "ONT dRNA" = ont_drna.deg[filter_func(ont_drna.deg), ]$counts %>% sum(),
+    "ONT dRNA" = ont_drna.dge[filter_func(ont_drna.dge), ]$counts %>% sum(),
     "PacBio" = pb_bulk.dge[filter_func(pb_bulk.dge), ]$counts %>% sum(),
     check.names = FALSE
   ) %>% pivot_longer(everything(), names_to = "Dataset", values_to = "Total Count")
@@ -172,7 +172,7 @@ plot_raw_count <- function(filter_func, title, legend = TRUE) {
     #   ill_bulk = ill_bulk.dge[is.sequins(ill_bulk.dge), ]$counts %>% sum / ill_bulk.dge$counts %>% sum,
     #   ont_bulk = ont_bulk.dge[is.sequins(ont_bulk.dge), ]$counts %>% sum / ont_bulk.dge$counts %>% sum,
     #   pb_bulk = pb_bulk.dge[is.sequins(pb_bulk.dge), ]$counts %>% sum / pb_bulk.dge$counts %>% sum,
-    #   ont_drna = ont_drna.deg[is.sequins(ont_drna.deg), ]$counts %>% sum / ont_drna.deg$counts %>% sum
+    #   ont_drna = ont_drna.dge[is.sequins(ont_drna.dge), ]$counts %>% sum / ont_drna.dge$counts %>% sum
     #   # ont_sc = ont_sc.dge[is.sequins(ont_sc.dge), ]$counts %>% sum / ont_sc.dge$counts %>% sum,
     #   # ont_sn = ont_sn.dge[is.sequins(ont_sn.dge), ]$counts %>% sum / ont_sn.dge$counts %>% sum,
     #   # ont_sn = ont_sn.dge[is.sequins(ont_sn.dge), ]$counts %>% sum / ont_sn.dge$counts %>% sum,
@@ -245,7 +245,7 @@ overdisp_boxplot <- function(filter_func, title, breaks= c(0,1,5,10,20,40, Inf),
   ill_bulk.dge.filtered <-  ill_bulk.dge[filter_func(ill_bulk.dge),]
   ont_bulk.dge.filtered <- ont_bulk.dge[filter_func(ont_bulk.dge),]
   pb_bulk.dge.filtered <- pb_bulk.dge[filter_func(pb_bulk.dge), ]
-  ont_drna.deg.filtered <- ont_drna.deg[filter_func(ont_drna.deg),]
+  ont_drna.dge.filtered <- ont_drna.dge[filter_func(ont_drna.dge),]
   # ont_sc.dge.filtered <- ont_sc.dge[filter_func(ont_sc.dge),]
   # ont_sn.dge.filtered <- ont_sn.dge[filter_func(ont_sn.dge),]
 
@@ -255,7 +255,7 @@ overdisp_boxplot <- function(filter_func, title, breaks= c(0,1,5,10,20,40, Inf),
     "ONT cDNA" = ont_bulk.dge.filtered$genes$Overdispersion,
     Illumina = ill_bulk.dge.filtered$genes$Overdispersion[match(rownames(ont_bulk.dge.filtered), rownames(ill_bulk.dge.filtered))],
     PacBio = pb_bulk.dge.filtered$genes$Overdispersion[match(rownames(ont_bulk.dge.filtered), rownames(pb_bulk.dge.filtered))],
-    "ONT dRNA" = ont_drna.deg.filtered$genes$Overdispersion[match(rownames(ont_bulk.dge.filtered), rownames(ont_drna.deg.filtered$genes))],
+    "ONT dRNA" = ont_drna.dge.filtered$genes$Overdispersion[match(rownames(ont_bulk.dge.filtered), rownames(ont_drna.dge.filtered$genes))],
     tx_count = tx_map_d$tx_count[match(rownames(ont_bulk.dge.filtered) %>% sub("\\|.*", "", .), tx_map_d$tx_name)],
     check.names = FALSE
   )
@@ -459,7 +459,7 @@ get_sequins_scatter_plot <- function(dge, figure_name, tx_len_norm = TRUE) {
 
 cor.ont_bulk <- get_sequins_scatter_plot(ont_bulk.dge, figure_name = "ONT BULK Sequins", tx_len_norm = FALSE)
 cor.pb_bulk <- get_sequins_scatter_plot(pb_bulk.dge, figure_name = "Pacbio BULK Sequins", tx_len_norm = FALSE)
-cor.ont_drna <- get_sequins_scatter_plot(ont_drna.deg, figure_name = "ONT dRNA Sequins", tx_len_norm = FALSE)
+cor.ont_drna <- get_sequins_scatter_plot(ont_drna.dge, figure_name = "ONT dRNA Sequins", tx_len_norm = FALSE)
 cor.ill_bulk <- get_sequins_scatter_plot(ill_bulk.dge, figure_name = "Illumina BULK Sequins", tx_len_norm = TRUE)
 
 grid.arrange(
@@ -599,7 +599,7 @@ get_sequin_quartiled_states <- function(dge, sample_name, tx_len_norm = TRUE) {
 
 cor.ont_bulk <- get_sequin_quartiled_states(ont_bulk.dge, sample_name="ONT cDNA" ,tx_len_norm = FALSE)
 cor.pb_bulk <- get_sequin_quartiled_states(pb_bulk.dge, sample_name = "Pacbio", tx_len_norm = FALSE)
-cor.ont_drna <- get_sequin_quartiled_states(ont_drna.deg, sample_name = "ONT dRNA", tx_len_norm = FALSE)
+cor.ont_drna <- get_sequin_quartiled_states(ont_drna.dge, sample_name = "ONT dRNA", tx_len_norm = FALSE)
 cor.ill_bulk <- get_sequin_quartiled_states(ill_bulk.dge, sample_name = "Illumina", tx_len_norm = TRUE)
 
 plot_df <- rbind(cor.ont_bulk, cor.pb_bulk, cor.ont_drna, cor.ill_bulk)
@@ -609,7 +609,7 @@ plot_df <- rbind(cor.ont_bulk, cor.pb_bulk, cor.ont_drna, cor.ill_bulk)
 dge_list <- list(
   'ONT cDNA' = ont_bulk.dge,
   Pacbio = pb_bulk.dge,
-  "ONT dRNA" = ont_drna.deg,
+  "ONT dRNA" = ont_drna.dge,
   Illumina = ill_bulk.dge
 ) %>%  lapply(function(x) {
   x[is.sequins(x), ]
@@ -768,7 +768,7 @@ get_ercc_scatter_plot <- function(dge, figure_name, tx_len_norm = TRUE) {
 
 cor.ont_bulk <- get_ercc_scatter_plot(ont_bulk.dge, figure_name = "ONT BULK ERCC", tx_len_norm = FALSE)
 cor.pb_bulk <- get_ercc_scatter_plot(pb_bulk.dge, figure_name = "Pacbio BULK ERCC", tx_len_norm = FALSE)
-cor.ont_drna <- get_ercc_scatter_plot(ont_drna.deg, figure_name = "ONT dRNA ERCC", tx_len_norm = FALSE)
+cor.ont_drna <- get_ercc_scatter_plot(ont_drna.dge, figure_name = "ONT dRNA ERCC", tx_len_norm = FALSE)
 cor.ill_bulk <- get_ercc_scatter_plot(ill_bulk.dge, figure_name = "Illumina BULK ERCC", tx_len_norm = TRUE)
 
 
@@ -888,7 +888,7 @@ get_ercc_quartiled_states <- function(dge, sample_name, tx_len_norm = TRUE) {
 
 cor.ont_bulk <- get_ercc_quartiled_states(ont_bulk.dge, sample_name="ONT cDNA" ,tx_len_norm = FALSE)
 cor.pb_bulk <- get_ercc_quartiled_states(pb_bulk.dge, sample_name = "Pacbio", tx_len_norm = FALSE)
-cor.ont_drna <- get_ercc_quartiled_states(ont_drna.deg, sample_name = "ONT dRNA", tx_len_norm = FALSE)
+cor.ont_drna <- get_ercc_quartiled_states(ont_drna.dge, sample_name = "ONT dRNA", tx_len_norm = FALSE)
 cor.ill_bulk <- get_ercc_quartiled_states(ill_bulk.dge, sample_name = "Illumina", tx_len_norm = TRUE)
 
 plot_df <- rbind(cor.ont_bulk, cor.pb_bulk, cor.ont_drna, cor.ill_bulk)
@@ -898,7 +898,7 @@ plot_df <- rbind(cor.ont_bulk, cor.pb_bulk, cor.ont_drna, cor.ill_bulk)
 dge_list <- list(
   'ONT cDNA' = ont_bulk.dge,
   Pacbio = pb_bulk.dge,
-  "ONT dRNA" = ont_drna.deg,
+  "ONT dRNA" = ont_drna.dge,
   Illumina = ill_bulk.dge
 ) %>%  lapply(function(x) {
   x[is.sirv_or_ercc(x) & !is.sirv_all(x), ]
@@ -1065,7 +1065,7 @@ get_sirv_scatter_plot <- function(dge, figure_name, tx_len_norm = TRUE, filter_f
 cor.ont_bulk <- get_sirv_scatter_plot(ont_bulk.dge, figure_name = "ONT BULK sirv", tx_len_norm = FALSE)
 cor.pb_bulk <- get_sirv_scatter_plot(pb_bulk.dge, figure_name = "Pacbio BULK sirv", tx_len_norm = FALSE)
 cor.ill_bulk <- get_sirv_scatter_plot(ill_bulk.dge, figure_name = "Illumina BULK sirv", tx_len_norm = TRUE)
-cor.ont_drna <- get_sirv_scatter_plot(ont_drna.deg, figure_name = "ONT dRNA sirv", tx_len_norm = FALSE)
+cor.ont_drna <- get_sirv_scatter_plot(ont_drna.dge, figure_name = "ONT dRNA sirv", tx_len_norm = FALSE)
 
 
 plot_df <- cor.ont_bulk$table %>% dplyr::rename(`ONT Bulk`=sample_sd) %>% 
@@ -1111,7 +1111,7 @@ grid.arrange(
 cor.ont_bulk <- get_sirv_scatter_plot(ont_bulk.dge, figure_name = "ONT BULK sirv", tx_len_norm = FALSE, filter_func = is.sirv_E0)
 cor.pb_bulk <- get_sirv_scatter_plot(pb_bulk.dge, figure_name = "Pacbio BULK sirv", tx_len_norm = FALSE, filter_func = is.sirv_E0)
 cor.ill_bulk <- get_sirv_scatter_plot(ill_bulk.dge, figure_name = "Illumina BULK sirv", tx_len_norm = TRUE, filter_func = is.sirv_E0)
-cor.ont_drna <- get_sirv_scatter_plot(ont_drna.deg, figure_name = "ONT dRNA sirv", tx_len_norm = FALSE, filter_func = is.sirv_E0)
+cor.ont_drna <- get_sirv_scatter_plot(ont_drna.dge, figure_name = "ONT dRNA sirv", tx_len_norm = FALSE, filter_func = is.sirv_E0)
 
 
 plot_df <- cor.ont_bulk$table %>% dplyr::rename(`ONT Bulk`=sample_sd) %>% 
@@ -1154,7 +1154,7 @@ grid.arrange(
 cor.ont_bulk <- get_sirv_scatter_plot(ont_bulk.dge, figure_name = "ONT BULK sirv", tx_len_norm = FALSE, filter_func = is.long_sirv)
 cor.pb_bulk <- get_sirv_scatter_plot(pb_bulk.dge, figure_name = "Pacbio BULK sirv", tx_len_norm = FALSE, filter_func = is.long_sirv)
 cor.ill_bulk <- get_sirv_scatter_plot(ill_bulk.dge, figure_name = "Illumina BULK sirv", tx_len_norm = TRUE, filter_func = is.long_sirv)
-cor.ont_drna <- get_sirv_scatter_plot(ont_drna.deg, figure_name = "ONT dRNA sirv", tx_len_norm = FALSE, filter_func = is.long_sirv)
+cor.ont_drna <- get_sirv_scatter_plot(ont_drna.dge, figure_name = "ONT dRNA sirv", tx_len_norm = FALSE, filter_func = is.long_sirv)
 
 
 plot_df <- cor.ont_bulk$table %>% dplyr::rename(`ONT Bulk`=sample_sd) %>% 
@@ -1221,7 +1221,7 @@ get_tx_discovery_rate <- function(dge_list, dataset_list, figure_name="Transcrip
 
 p1 <- get_tx_discovery_rate(
   list(ont_bulk.dge[is.sequins(ont_bulk.dge),], 
-      ont_drna.deg[is.sequins(ont_drna.deg),],
+      ont_drna.dge[is.sequins(ont_drna.dge),],
       ill_bulk.dge[is.sequins(ill_bulk.dge),], 
       pb_bulk.dge[is.sequins(pb_bulk.dge),]),
   list("ONT BULK", "ONT dRNA", "Illumina BULK", "PacBio BULK"),
@@ -1230,7 +1230,7 @@ p1 <- get_tx_discovery_rate(
 
 p2 <- get_tx_discovery_rate(
   list(ont_bulk.dge[is.sirv_or_ercc(ont_bulk.dge),], 
-        ont_drna.deg[is.sirv_or_ercc(ont_drna.deg),],
+        ont_drna.dge[is.sirv_or_ercc(ont_drna.dge),],
         ill_bulk.dge[is.sirv_or_ercc(ill_bulk.dge),], 
         pb_bulk.dge[is.sirv_or_ercc(pb_bulk.dge),]),
   list("ONT BULK", "ONT dRNA", "Illumina BULK", "PacBio BULK"),
@@ -1239,7 +1239,7 @@ p2 <- get_tx_discovery_rate(
 
 p3 <- get_tx_discovery_rate(
   list(ont_bulk.dge[is.human(ont_bulk.dge),], 
-      ont_drna.deg[is.human(ont_drna.deg),],
+      ont_drna.dge[is.human(ont_drna.dge),],
        ill_bulk.dge[is.human(ill_bulk.dge),], 
       #  ont_sc.dge[is.human(ont_sc.dge),], 
       #  ont_sn.dge[is.human(ont_sn.dge),], 
@@ -1311,16 +1311,16 @@ norm_and_mds(ont_bulk.dge[is.sirv_or_ercc(ont_bulk.dge),],
             norm.method = NULL)
 
 
-norm_and_mds(ont_drna.deg[is.human(ont_drna.deg),], 
+norm_and_mds(ont_drna.dge[is.human(ont_drna.dge),], 
             dataset='ont dRNA human (colored by sample groups)',
-            col = ont_drna.deg$samples$group)
-norm_and_mds(ont_drna.deg[is.sequins(ont_drna.deg),], 
+            col = ont_drna.dge$samples$group)
+norm_and_mds(ont_drna.dge[is.sequins(ont_drna.dge),], 
             dataset='ont dRNA sequins (colored by sequins mix A or B)',
-            col = ont_drna.deg$samples$sequins,
+            col = ont_drna.dge$samples$sequins,
             norm.method = NULL)
-norm_and_mds(ont_drna.deg[is.sirv_or_ercc(ont_drna.deg),],
+norm_and_mds(ont_drna.dge[is.sirv_or_ercc(ont_drna.dge),],
             dataset='ont dRNA SIRV (colored by sample groups)',
-            col = ont_drna.deg$samples$group,
+            col = ont_drna.dge$samples$group,
             norm.method = NULL)
 
 
@@ -1525,7 +1525,7 @@ DGE.edgeR_sequins <- function(dge, norm.method = "TMM") {
 
 ill_bulk.dge_human.list <- DGE.edgeR_human(txi_ill_bulk.dge[is.human(txi_ill_bulk.dge),])
 ont_bulk.dge_human.list <- DGE.edgeR_human(txi_ont_bulk.dge[is.human(txi_ont_bulk.dge),])
-ont_drna.deg_human.list <- DGE.edgeR_human(txi_ont_drna.deg[is.human(txi_ont_drna.deg),])
+ont_drna.dge_human.list <- DGE.edgeR_human(txi_ont_drna.dge[is.human(txi_ont_drna.dge),])
 pb_bulk.dge_human.list <- DGE.edgeR_human(txi_pb_bulk.dge[is.human(txi_pb_bulk.dge),])
 # ont_sc.dge_human.list <- DGE.edgeR_human(txi_ont_sc.dge[is.human(txi_ont_sc.dge),])
 # ont_sn.dge_human.list <- DGE.edgeR_human(txi_ont_sn.dge[is.human(txi_ont_sn.dge),])
@@ -1534,12 +1534,12 @@ pb_bulk.dge_human.list <- DGE.edgeR_human(txi_pb_bulk.dge[is.human(txi_pb_bulk.d
 
 ill_bulk.dge_sequins.list <- DGE.edgeR_sequins(txi_ill_bulk.dge[is.sequins(txi_ill_bulk.dge),])
 ont_bulk.dge_sequins.list <- DGE.edgeR_sequins(txi_ont_bulk.dge[is.sequins(txi_ont_bulk.dge),])
-ont_bulk.dge_sequins.list <- DGE.edgeR_sequins(txi_ont_drna.deg[is.sequins(txi_ont_drna.deg),])
+ont_bulk.dge_sequins.list <- DGE.edgeR_sequins(txi_ont_drna.dge[is.sequins(txi_ont_drna.dge),])
 pb_bulk.dge_sequins.list <- DGE.edgeR_sequins(txi_pb_bulk.dge[is.sequins(txi_pb_bulk.dge),])
 
 ill_bulk.dge_sirv.list <- DGE.edgeR_sirv(txi_ill_bulk.dge[is.sirv_or_ercc(txi_ill_bulk.dge),])
 ont_bulk.dge_sirv.list <- DGE.edgeR_sirv(txi_ont_bulk.dge[is.sirv_or_ercc(txi_ont_bulk.dge),])
-ont_bulk.dge_sirv.list <- DGE.edgeR_sirv(txi_ont_drna.deg[is.sirv_or_ercc(txi_ont_drna.deg),])
+ont_bulk.dge_sirv.list <- DGE.edgeR_sirv(txi_ont_drna.dge[is.sirv_or_ercc(txi_ont_drna.dge),])
 pb_bulk.dge_sirv.list <- DGE.edgeR_sirv(txi_pb_bulk.dge[is.sirv_or_ercc(txi_pb_bulk.dge),])
 
 
@@ -1611,7 +1611,7 @@ DTE.edgeR_sequins <- function(dge, norm.method = "TMM") {
 
 ill_bulk.dte_human.list <- DTE.edgeR_human(ill_bulk.dge[is.human(ill_bulk.dge),])
 ont_bulk.dte_human.list <- DTE.edgeR_human(ont_bulk.dge[is.human(ont_bulk.dge),])
-ont_drna.dte_human.list <- DTE.edgeR_human(ont_drna.deg[is.human(ont_drna.deg),])
+ont_drna.dte_human.list <- DTE.edgeR_human(ont_drna.dge[is.human(ont_drna.dge),])
 pb_bulk.dte_human.list <- DTE.edgeR_human(pb_bulk.dge[is.human(pb_bulk.dge),])
 
 # ont_sc.dte_human.list <- DTE.edgeR_human(ont_sc.dge[is.human(ont_sc.dge),])
@@ -1621,14 +1621,14 @@ pb_bulk.dte_human.list <- DTE.edgeR_human(pb_bulk.dge[is.human(pb_bulk.dge),])
 
 ill_bulk.dte_sequins.list <- DTE.edgeR_sequins(ill_bulk.dge[is.sequins(ill_bulk.dge),])
 ont_bulk.dte_sequins.list <- DTE.edgeR_sequins(ont_bulk.dge[is.sequins(ont_bulk.dge),])
-ont_drna.dte_sequins.list <- DTE.edgeR_sequins(ont_drna.deg[is.sequins(ont_drna.deg),])
+ont_drna.dte_sequins.list <- DTE.edgeR_sequins(ont_drna.dge[is.sequins(ont_drna.dge),])
 pb_bulk.dte_sequins.list <- DTE.edgeR_sequins(pb_bulk.dge[is.sequins(pb_bulk.dge),])
 
 
 # This is still using the seuqins function to do A vs B DE.
 ill_bulk.dte_sirv.list <- DTE.edgeR_sequins(ill_bulk.dge[is.sirv_or_ercc(ill_bulk.dge),])
 ont_bulk.dte_sirv.list <- DTE.edgeR_sequins(ont_bulk.dge[is.sirv_or_ercc(ont_bulk.dge),])
-ont_drna.dte_sirv.list <- DTE.edgeR_sequins(ont_drna.deg[is.sirv_or_ercc(ont_drna.deg),])
+ont_drna.dte_sirv.list <- DTE.edgeR_sequins(ont_drna.dge[is.sirv_or_ercc(ont_drna.dge),])
 pb_bulk.dte_sirv.list <- DTE.edgeR_sequins(pb_bulk.dge[is.sirv_or_ercc(pb_bulk.dge),])
 ```
 
@@ -1681,7 +1681,7 @@ pb_bulk.dte_sirv.list <- DTE.edgeR_sequins(pb_bulk.dge[is.sirv_or_ercc(pb_bulk.d
 ill_bulk.scale_dge <- ill_bulk.dge
 ont_bulk.scale_dge <- ont_bulk.dge
 pb_bulk.scale_dge <- pb_bulk.dge
-ont_drna.scale_dge <- ont_drna.deg
+ont_drna.scale_dge <- ont_drna.dge
 
 ill_bulk.scale_dge$counts  <- ill_bulk.scale_dge$counts / ill_bulk.scale_dge$genes$Overdispersion
 ont_bulk.scale_dge$counts  <- ont_bulk.scale_dge$counts / ont_bulk.scale_dge$genes$Overdispersion
