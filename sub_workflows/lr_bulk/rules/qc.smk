@@ -1,3 +1,5 @@
+import glob
+
 cell_line_to_barcode = {cl: bc for d in barcode_list for bc, cl in d.items()}
 
 ###################### Run QC pipelines ###############################
@@ -13,10 +15,12 @@ rule qc:
                 os.path.join(results_dir, "qc/RSeQC/{sample}_{cell_line}.junctionSaturation_plot.pdf"),
                 os.path.join(results_dir, "qc/RSeQC/{sample}_{cell_line}.splice_events.pdf"),
                 os.path.join(results_dir, "qc/RSeQC/{sample}_{cell_line}.splice_junction.pdf"),
+                os.path.join(results_dir, "qc/aligment_summary/{alignment_type}/{sample}_{cell_line}.picard_AlignmentSummaryMetrics.txt"),
             ],
             sample=config["sample_id"],
             flames_cov_plot_suffix = ['png'],
-            cell_line = cell_line_to_barcode.keys()
+            cell_line = cell_line_to_barcode.keys(),
+            alignment_type = ['GenomeAlignment', 'TranscriptAlignment']
         )
     output:
         os.path.join(results_dir, "qc/.flag/qc.done")
@@ -28,39 +32,40 @@ rule qc:
 ###################################################################################
 
 # ######## Qscore filtering (chopper) ########
-rule chopper_qscore_filtering:
-    input:
-        lambda wildcards:  os.path.join(input_fastq_dirs[wildcards.sample], "{cell_line}.fastq")
-    output:
-        os.path.join(scratch_dir, "Q{q_threshold}_filter_fastqs/{sample}_{cell_line}.fastq")
-    resources:
-        cpus_per_task=8,
-        mem_mb=32000
-    conda:
-        config['conda']['NanoPlot']
-    shell:
-        """
-        mkdir -p $(dirname {output})
+# rule chopper_qscore_filtering:
+#     input:
+#         lambda wildcards:  os.path.join(input_fastq_dirs[wildcards.sample], "{cell_line}.fastq")
+#     output:
+#         os.path.join(scratch_dir, "Q{q_threshold}_filter_fastqs/{sample}_{cell_line}.fastq")
+#     resources:
+#         cpus_per_task=8,
+#         mem_mb=32000
+#     conda:
+#         config['conda']['NanoPlot']
+#     shell:
+#         """
+#         mkdir -p $(dirname {output})
+# 
+#         # if a is 0, make a soft link from input to output, else run chopper
+#         if [ {wildcards.q_threshold} -eq 0 ]; then
+#             ln -s {input} {output}
+#         else
+#             chopper -q {wildcards.q_threshold} -i {input} -o {output} --threads {resources.cpus_per_task}
+#         fi
+#         """
 
-        # if a is 0, make a soft link from input to output, else run chopper
-        if [ {wildcards.q_threshold} -eq 0 ]; then
-            ln -s {input} {output}
-        else
-            chopper -q {wildcards.q_threshold} -i {input} -o {output} --threads {resources.cpus_per_task}
-        fi
-        """
 
 ######## Subsample ########
-rule subsample_1M_reads:
+rule subsample_2M_reads:
     input:
-        lambda wildcards:  os.path.join(input_fastq_dirs[wildcards.sample], "{cell_line}.fastq")
+        lambda wildcards:  glob.glob(os.path.join(input_fastq_dirs[wildcards.sample], f"{wildcards.cell_line}.fastq*"))[0]
     output:
-        os.path.join(scratch_dir, "subsample_fq/raw/{sample}_{cell_line}_subsampled1M.fastq")
+        os.path.join(scratch_dir, "subsample_fq/raw/{sample}_{cell_line}_subsampled2M.fastq")
     resources:
         cpus_per_task=1,
         mem_mb=32000
     params:
-        n_reads = 1000000,
+        n_reads = 2000000,
         seed = config['random_seed']
     shell:
         """
@@ -71,7 +76,7 @@ rule subsample_1M_reads:
 ######## Count reads ########
 rule count_reads_in_fastq:
     input:
-        lambda wildcards:  os.path.join(input_fastq_dirs[wildcards.sample], "{cell_line}.fastq")
+        lambda wildcards:  glob.glob(os.path.join(input_fastq_dirs[wildcards.sample], f"{wildcards.cell_line}.fastq*"))[0]
     output:
         os.path.join(results_dir, "qc/read_counts/{sample}_{cell_line}.count")
     resources:
@@ -86,7 +91,7 @@ rule count_reads_in_fastq:
 ######## NanoPlot ########
 rule NanoPlot:
     input:
-        reads=rules.subsample_1M_reads.output
+        reads=rules.subsample_2M_reads.output
     output:
         os.path.join(results_dir, "qc/NanoPlot/{sample}_{cell_line}/NanoPlot-data.tsv.gz")
     conda:
@@ -127,11 +132,11 @@ rule picard_coverage_data:
 # BamIndexStats
 rule picard_CollectAlignmentSummaryMetrics:
     input:
-        bam = os.path.join(results_dir,"flames_out/{sample}/{bam}"),
+        bam = os.path.join(results_dir,"{alignment_type}/{sample}_{cell_line}.sorted.bam"),
         picard_dir = "/home/users/allstaff/you.yu/project/software/picard.jar",
-        ref = config['reference']['genome']
+        ref = lambda w: config['reference']['genome' if w.alignment_type == 'GenomeAlignment' else 'transcript']
     output:
-        os.path.join(results_dir, "qc/{sample}_{bam}.picard_AlignmentSummaryMetrics.txt")
+        os.path.join(results_dir, "qc/aligment_summary/{alignment_type}/{sample}_{cell_line}.picard_AlignmentSummaryMetrics.txt")
     resources:
         cpus_per_task=16,
         mem_mb=32000,

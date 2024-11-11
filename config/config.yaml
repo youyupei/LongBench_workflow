@@ -10,7 +10,7 @@ sub_wf_dir:
   lr_sc_sn: sub_workflows/lr_sc_sn
   lr_bulk: sub_workflows/lr_bulk
   sr_sc_sn: sub_workflows/sr_sc_sn
-  sr_bulk:
+  sr_bulk: sub_workflows/sr_bulk
 
 # they will NOT be converted to absolute path in the config parser
 git_repo_dir: "script/git_repo"
@@ -22,6 +22,7 @@ conda_config: # the parser will convert it to absolute path will be accessible a
   RSeQC: "conda/config/RSeQC.yaml"
   sqanti3: "conda/config/SQANTI3.conda_env.yml"
   oarfish: "conda/config/oarfish.yaml"
+  fastp: "conda/config/fastp.yaml"
 
 conda:
   sqanti3: "SQANTI3" # prebuilt conda env name

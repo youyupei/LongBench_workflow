@@ -24,9 +24,9 @@ samples_raw_bam_dir:
   ont_bulk: "/home/users/allstaff/you.yu/LongBench/sequencing_data/ONT_bulk/"
   
 samples_fastq_dir: 
-  ont_bulk: "/home/users/allstaff/you.yu/LongBench/sequencing_data/ONT_bulk/fastqs/"
+  ont_bulk: "/home/users/allstaff/you.yu/LongBench/sequencing_data/ONT_bulk/fastq_q10_filter"
   pb_bulk: "/home/users/allstaff/you.yu/LongBench/sequencing_data/pb_bulk"
-  dRNA_bulk: "/home/users/allstaff/you.yu/LongBench/sequencing_data/ONT_dRNA/fastqs"
+  dRNA_bulk: "/home/users/allstaff/you.yu/LongBench/sequencing_data/ONT_dRNA/fastq_q10_filter"
   #dRNA_bulk_q10: "/vast/scratch/users/you.yu/LongBench/dRNA/fastq_q10_filter"
 
 barcode_list:

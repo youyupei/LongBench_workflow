@@ -17,10 +17,11 @@ params:
   sirv_ercc_gtf: '/vast/projects/LongBench/reference_files/SIRV_Set4_Norm_Sequences_20210507/SIRV_ERCC_longSIRV_multi-fasta_20210507.gtf'
   sequins_gtf: '/vast/projects/LongBench/reference_files/Sequin_resources/v2.4/rnasequin_annotation_2.4.gtf'
   sequins_tsv: '/vast/projects/LongBench/reference_files/Sequin_resources/v2.4/rnasequin_isoforms_2.4.tsv'
-  sirv_csv: '/home/users/allstaff/you.yu/LongBench/reference_files/SIRV_Set4_Norm_Sequences_20210507/SIRV_set4_concentration.csv'
   human_gtf: '/vast/projects/LongBench/reference_files/GRCh38/gencode.v44.annotation.gtf'
-  ont_bulk_kallisto_dir: "/vast/projects/LongBench/analysis/lr_bulk/result/kallisto_output_bc/ont_bulk"
-  pb_bulk_kallisto_dir: "/vast/projects/LongBench/analysis/lr_bulk/result/kallisto_output_bc/pb_bulk"
+  ont_bulk_kallisto_dir: "/vast/projects/LongBench/analysis/lr_bulk/result/kallisto_output/ont_bulk"
+  pb_bulk_kallisto_dir: "/vast/projects/LongBench/analysis/lr_bulk/result/kallisto_output/pb_bulk"
+  ont_drnd_kallisto_dir: "/vast/projects/LongBench/analysis/lr_bulk/result/kallisto_output/dRNA_bulk"
+  sirv_csv: '/home/users/allstaff/you.yu/LongBench/reference_files/SIRV_Set4_Norm_Sequences_20210507/SIRV_set4_concentration.csv'
   ont_bulk_oarfish_dir: "/vast/projects/LongBench/analysis/lr_bulk/result/oarfish_cov_output/ont_bulk"
   pb_bulk_oarfish_dir: "/vast/projects/LongBench/analysis/lr_bulk/result/oarfish_cov_output/pb_bulk"
   ont_drnd_oarfish_dir: "/vast/projects/LongBench/analysis/lr_bulk/result/oarfish_cov_output/dRNA_bulk"
@@ -56,26 +57,6 @@ library(aplot)
 source("/home/users/allstaff/you.yu/LongBench/analysis/workflow/scripts/Rfunctions.R")
 ```
 
-```{r color code}
-color_palette <- c(
-  PacBio = "#df1995",
-  ONT = "#00789b",
-  ONT_1 = "#04476c",
-  ONT_2 = "#24cdcd",
-  Illumina = "#e88b20"
-)
-```
-
-```{r function for splitting the transcript origin}
-is.sequins <- function(dge) {grepl("^R", rownames(dge))}
-is.human <- function(dge) {grepl("^ENS", rownames(dge))}
-is.sirv_or_ercc <- function(dge) {!is.human(dge) & !is.sequins(dge)} # thie is the whole SIRV set4 (ERCC + SIRV E0 + Long SIRV)
-is.sirv_E0 <- function(dge) {grepl("^SIRV\\d{3}$", rownames(dge))} 
-is.sirv_all <- function(dge) {grepl("^SIRV", rownames(dge))} # including all SIRV E0 and Long SIRV
-is.long_sirv <- function(dge) {grepl("^SIRV\\d{4}", rownames(dge))}
-is.ercc <- function(dge) {!is.human(dge) & !is.sequins(dge) & !is.sirv_all(dge)}
-```
-
 ```{r Input filename setup, include=FALSE, eval=F}
 params <- list(
   random_seed = 2024,
@@ -94,6 +75,26 @@ params <- list(
   ill_bulk_salmon_dir = "/vast/projects/LongBench/analysis/illumina_bulk/tx_de_analysis/salmon_bs",
   bulk_meta = '/vast/projects/LongBench/sequencing_data/illumina_bulk/metadata.txt'
 )
+```
+
+```{r color code}
+color_palette <- c(
+  PacBio = "#df1995",
+  ONT = "#00789b",
+  ONT_1 = "#04476c",
+  ONT_2 = "#24cdcd",
+  Illumina = "#e88b20"
+)
+```
+
+```{r function for splitting the transcript origin}
+is.sequins <- function(dge) {grepl("^R", rownames(dge))}
+is.human <- function(dge) {grepl("^ENS", rownames(dge))}
+is.sirv_or_ercc <- function(dge) {!is.human(dge) & !is.sequins(dge)} # thie is the whole SIRV set4 (ERCC + SIRV E0 + Long SIRV)
+is.sirv_E0 <- function(dge) {grepl("^SIRV\\d{3}$", rownames(dge))} 
+is.sirv_all <- function(dge) {grepl("^SIRV", rownames(dge))} # including all SIRV E0 and Long SIRV
+is.long_sirv <- function(dge) {grepl("^SIRV\\d{4}", rownames(dge))}
+is.ercc <- function(dge) {!is.human(dge) & !is.sequins(dge) & !is.sirv_all(dge)}
 ```
 
 ```{r Create DGE from input}
@@ -163,8 +164,7 @@ ill_bulk.dge$samples <- ill_bulk.dge$samples[match(colnames(ill_bulk.dge$counts)
 ```
 
 # Raw count distribution
-
-```{r, fig.width=10, fig.height=5}
+```{r Raw count distribution oarfish, fig.width=10, fig.height=5}
 plot_raw_count <- function(filter_func, title, legend = TRUE) {
   plot_df <- data.frame(
     "Illumina" = ill_bulk.dge[filter_func(ill_bulk.dge), ]$counts %>% sum(),
@@ -202,7 +202,7 @@ p4 <- plot_raw_count(is.ercc, "ERCC transcript quantification", legend = FALSE)
   ) & theme(legend.position = "bottom")
 
 ```
-```{r, fig.width=10, fig.height=5}
+```{r Raw count distribution oarfish and Kallisto, fig.width=10, fig.height=5}
 plot_raw_count_both <- function(filter_func, title, legend = TRUE) {
   plot_df <- data.frame(
     "Illumina" = ill_bulk.dge[filter_func(ill_bulk.dge), ]$counts %>% sum(),
@@ -237,33 +237,6 @@ plot_raw_count_both <- function(filter_func, title, legend = TRUE) {
   p
 }
 
-plot_raw_count_both <- function(filter_func, title, legend = TRUE) {
-  plot_df <- data.frame(
-    "Illumina" = ill_bulk.dge[filter_func(ill_bulk.dge), ]$counts %>% sum(),
-    "ONT cDNA" = ont_bulk.dge.oarfish[filter_func(ont_bulk.dge.oarfish), ]$counts %>% sum(),
-    "ONT dRNA" = ont_drna.dge.oarfish[filter_func(ont_drna.dge.oarfish), ]$counts %>% sum(),
-    "PacBio" = pb_bulk.dge.oarfish[filter_func(pb_bulk.dge.oarfish), ]$counts %>% sum(),
-    check.names = FALSE
-  ) %>% pivot_longer(everything(), names_to = "Dataset", values_to = "Total Count")
-
-  p <- ggplot(plot_df, aes(x = Dataset, y = `Total Count`/1000000, fill = Method)) +
-    geom_bar(stat = "identity", position = position_dodge()) +
-    theme_minimal() +
-    labs(title = title, x = "Datasets", y = "Total Count (Million)") +
-    theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
-    # change fill color scheme
-    scale_fill_viridis_d()
-
-  if (legend) {
-    p <- p + theme(legend.position = "bottom")
-  } else {
-    p <- p + theme(legend.position = "none")
-  }
-  p
-}
-
-
-
 # Kallisto vs Oarfish
 p1 <- plot_raw_count_both(is.human, "Human transcript quantification", legend=FALSE)
 p2 <- plot_raw_count_both(is.sequins, "Sequins transcript quantification", legend=TRUE)
@@ -276,8 +249,6 @@ p4 <- plot_raw_count_both(is.ercc, "ERCC transcript quantification", legend = FA
   ) & theme(legend.position = "bottom")
 
 ```
-
-
 
 # Comparison of Overdispesion
 ```{r, get number of transcripts gen from gtf}
@@ -314,7 +285,8 @@ rm(human_tx)
 human.G.Tx.map$tx_count <- human.G.Tx.map %>% calcTxNum
 ```
 
-# Sequins (Scatter)
+# Spike in quantification
+## Sequins (Scatter)
 ```{r}
 # sequins transcript length
 sequins.gt <- read_tsv(params$sequins_tsv)
@@ -695,7 +667,7 @@ p1 / (p2 + theme(legend.position = "none")) / p3 +
   ) & theme(plot.margin = unit(c(0, 1, 0, 1), "cm"))
 ```
 
-# ERCC
+## ERCC
 ```{r, fig.width=20}
 get_ercc_scatter_plot <- function(dge, figure_name, tx_len_norm = TRUE) {
     dge.ercc <- dge[is.sirv_or_ercc(dge) & !is.sirv_all(dge),]
@@ -799,11 +771,11 @@ grid.arrange(
             cor.ill_bulk$plot2, 
             bx_plot, ncol=2)
 
- (cor.ont_bulk$plot2 | cor.ont_drna$plot2) /
-   (cor.pb_bulk$plot2 | cor.ill_bulk$plot2) +
-   patchwork::plot_layout(
-     guides = "collect"
-   ) 
+#  (cor.ont_bulk$plot2 | cor.ont_drna$plot2) /
+#    (cor.pb_bulk$plot2 | cor.ill_bulk$plot2) +
+#    patchwork::plot_layout(
+#      guides = "collect"
+#    ) 
 
 # Kalisto vs Oarfish
 cor.ont_bulk.kallisto <- get_ercc_scatter_plot(ont_bulk.dge.kallisto, figure_name = "ONT BULK ERCC", tx_len_norm = FALSE)
@@ -1022,9 +994,7 @@ p1 / (p2 + theme(legend.position = "none")) / p3 +
 
 ```
 
-# SIRV (Scatter)
-
-## All sirv
+## SIRV
 ```{r, fig.width=20, echo=FALSE}
 get_sirv_scatter_plot <- function(dge, figure_name, tx_len_norm = TRUE, filter_func = function(x) {is.sirv_E0(dge) | is.long_sirv(dge)}) {
 
@@ -1483,7 +1453,6 @@ norm_and_mds(ill_bulk.dge[is.sirv_or_ercc(ill_bulk.dge),],
 
 # Differential gene expression
 ## Aggregate counts (tximport)
-
 ```{r}
 library(tximport) # install latest version from github
 
@@ -1634,6 +1603,37 @@ norm_and_mds(txi_ill_bulk.dge[is.sirv_or_ercc(txi_ill_bulk.dge),],
 ## DGE edgeR
 ```{r}
 
+# DGE.edgeR_human_v0 <- function(dge, norm.method = "TMM") {
+#   # QC and normalization
+#   filter <- filterByExpr(dge, group = dge$samples$sample)
+#   dge <- dge[filter, , keep.lib.sizes = FALSE]
+#   
+#   if (!is.null(norm.method)) {
+#     dge <- calcNormFactors(dge, method = norm.method)
+#   }
+#   
+#   design <- model.matrix(~0 + group, data = dge$samples)
+#   dge <- estimateDisp(dge, design)
+#   qlfit <- glmQLFit(dge, design)
+#   
+#   contrasts <- makeContrasts(
+#     AvsL = groupsclc_a - groupluad,
+#     PvsL = groupsclc_p - groupluad,
+#     AvsP = groupsclc_a - groupsclc_p,
+#     levels = design
+#   )
+#   
+#   AvsL.QLF.test <- glmQLFTest(qlfit, contrast = contrasts[, "AvsL"]) %>% decideTests
+#   PvsL.QLF.test <- glmQLFTest(qlfit, contrast = contrasts[, "PvsL"]) %>% decideTests
+#   AvsP.QLF.test <- glmQLFTest(qlfit, contrast = contrasts[, "AvsP"]) %>% decideTests
+#   
+#   list(
+#     AvsL.DE = rownames(AvsL.QLF.test)[AvsL.QLF.test != 0],
+#     PvsL.DE = rownames(PvsL.QLF.test)[PvsL.QLF.test != 0],
+#     AvsP.DE = rownames(AvsP.QLF.test)[AvsP.QLF.test != 0]
+#   )
+# }
+
 DGE.edgeR_human <- function(dge, norm.method = "TMM") {
   # QC and normalization
   filter <- filterByExpr(dge, group = dge$samples$sample)
@@ -1654,42 +1654,67 @@ DGE.edgeR_human <- function(dge, norm.method = "TMM") {
     levels = design
   )
   
-  AvsL.QLF.test <- glmQLFTest(qlfit, contrast = contrasts[, "AvsL"]) %>% decideTests
-  PvsL.QLF.test <- glmQLFTest(qlfit, contrast = contrasts[, "PvsL"]) %>% decideTests
-  AvsP.QLF.test <- glmQLFTest(qlfit, contrast = contrasts[, "AvsP"]) %>% decideTests
+  AvsL.QLF.test <- glmQLFTest(qlfit, contrast = contrasts[, "AvsL"])
+  PvsL.QLF.test <- glmQLFTest(qlfit, contrast = contrasts[, "PvsL"])
+  AvsP.QLF.test <- glmQLFTest(qlfit, contrast = contrasts[, "AvsP"])
   
   list(
-    AvsL.DE = rownames(AvsL.QLF.test)[AvsL.QLF.test != 0],
-    PvsL.DE = rownames(PvsL.QLF.test)[PvsL.QLF.test != 0],
-    AvsP.DE = rownames(AvsP.QLF.test)[AvsP.QLF.test != 0]
+    AvsL.DE = AvsL.QLF.test,
+    PvsL.DE = PvsL.QLF.test,
+    AvsP.DE = AvsP.QLF.test 
   )
 }
+
+
+# DGE.edgeR_sequins_v0 <- function(dge, norm.method = "TMM") {
+#   # QC and normalization
+#   filter <- filterByExpr(dge, group = dge$samples$sample)
+#   dge <- dge[filter, , keep.lib.sizes = FALSE]
+# 
+#   if (!is.null(norm.method)) {
+#     dge <- calcNormFactors(dge, method = norm.method)
+#   }
+# 
+#   design <- model.matrix(~ 0 + sequins, data = dge$samples)
+#   dge <- estimateDisp(dge, design)
+#   qlfit <- glmQLFit(dge, design)
+# 
+#   contrasts <- makeContrasts(
+#     AvsB = sequinsA - sequinsB,
+#     levels = design
+#   )
+# 
+#   AvsB.QLF.test <- glmQLFTest(qlfit, contrast = contrasts[, "AvsB"]) %>% decideTests()
+# 
+#   list(
+#     AvsB.DE = rownames(AvsB.QLF.test)[AvsB.QLF.test != 0]
+#   )
+# }
 
 DGE.edgeR_sequins <- function(dge, norm.method = "TMM") {
   # QC and normalization
   filter <- filterByExpr(dge, group = dge$samples$sample)
   dge <- dge[filter, , keep.lib.sizes = FALSE]
-  
+
   if (!is.null(norm.method)) {
     dge <- calcNormFactors(dge, method = norm.method)
   }
-  
-  design <- model.matrix(~0 + sequins, data = dge$samples)
+
+  design <- model.matrix(~ 0 + sequins, data = dge$samples)
   dge <- estimateDisp(dge, design)
   qlfit <- glmQLFit(dge, design)
-  
+
   contrasts <- makeContrasts(
     AvsB = sequinsA - sequinsB,
     levels = design
   )
-  
-  AvsB.QLF.test <- glmQLFTest(qlfit, contrast = contrasts[, "AvsB"]) %>% decideTests
-  
+
+  AvsB.QLF.test <- glmQLFTest(qlfit, contrast = contrasts[, "AvsB"])
+
   list(
-    AvsB.DE = rownames(AvsB.QLF.test)[AvsB.QLF.test != 0]
+    AvsB.DE = AvsB.QLF.test
   )
 }
-
 
 ill_bulk.dge_human.list <- DGE.edgeR_human(txi_ill_bulk.dge[is.human(txi_ill_bulk.dge),])
 ont_bulk.dge_human.list <- DGE.edgeR_human(txi_ont_bulk.dge[is.human(txi_ont_bulk.dge),])
@@ -1713,75 +1738,129 @@ pb_bulk.dge_sirv.list <- DGE.edgeR_sequins(txi_pb_bulk.dge[is.sirv_or_ercc(txi_p
 
 
 ```
+## Cross-platform comparison (upset)
+### DGE human 
+```{r upset plot function}
+complex_upset_plot <- function(lst) {
+  # apply decideTests to each list element
+  DEGs <- lapply(lst, function(x) {
+    x <- x %>% decideTests()
+    x <- rownames(x)[x != 0]
+    return(x)
+  })
 
+
+  long_df <- stack(DEGs)
+
+  # Make the binary membership matrix
+  binary_matrix <- long_df %>%
+    mutate(present = 1) %>%
+    pivot_wider(names_from = ind, values_from = present, values_fill = 0)
+
+  ComplexUpset::upset(
+    binary_matrix %>% select(-values) %>% as.data.frame(),
+    intersect = names(lst),
+    wrap = TRUE
+  )
+}
+
+
+```
+
+
+```{r plot PB specific gene on MA plot}
+
+# highly.gene.on.MA <- function(gene_vec, glmQLFTest_rst, fig.title) {
+#   de_genes <- glmQLFTest_rst %>%
+#     topTags(n = glmQLFTest_rst %>% nrow()) %>%
+#     .[gene_vec, ]
+# 
+#   plot_d <- glmQLFTest_rst %>%
+#     topTags(n = glmQLFTest_rst %>% nrow())
+# 
+#   plot_d$highlight <- rownames(plot_d) %in% gene_vec
+#   print(table(plot_d$highlight))
+# 
+#   ggplot(plot_d, aes(x = logCPM, y = logFC, color = highlight)) +
+#     geom_point() +
+#     scale_color_manual(values = c("grey", "red")) +
+#     theme_minimal() +
+#     labs(title = fig.title, x = "logCPM", y = "logFC")
+# }
+# # get the gene list for PacBio cDNA but not for the rest
+# 
+# pb_specific_gene_list <- binary_matrix %>%
+#   filter(PacBio_cDNA == 1, Illumina == 0, ONT_cDNA == 0, ONT_dRNA == 0) %>%
+#   pull(values)
+# 
+# highly.gene.on.MA(pb_specific_gene_list, pb_bulk.dge_human.list$AvsL.DE, 
+# "PacBio specific DE genes" )
+```
+
+```{r upset plot dge human, fig.width=8, fig.height=6}
+# Upset plot
+lst <- list(
+  "Illumina" = ill_bulk.dge_human.list$PvsL.DE,
+  "ONT cDNA" = ont_bulk.dge_human.list$PvsL.DE,
+  "PacBio" = pb_bulk.dge_human.list$PvsL.DE,
+  "ONT dRNA" = drna_bulk.deg_human.list$PvsL.DE
+)
+p1 <- complex_upset_plot(lst) + ggtitle("SCLC_A vs LUCA") + theme(plot.title = element_text(size =20))
+
+
+lst <- list(
+  "Illumina" = ill_bulk.dge_human.list$PvsL.DE,
+  "ONT cDNA" = ont_bulk.dge_human.list$PvsL.DE,
+  "PacBio" = pb_bulk.dge_human.list$PvsL.DE,
+  "ONT dRNA" = drna_bulk.deg_human.list$PvsL.DE
+)
+p2 <- complex_upset_plot(lst) + ggtitle("SCLC_P vs LUCA") + theme(plot.title = element_text(size = 20))
+
+
+lst <- list(
+  "Illumina" = ill_bulk.dge_human.list$AvsP.DE,
+  "ONT cDNA" = ont_bulk.dge_human.list$AvsP.DE,
+  "PacBio" = pb_bulk.dge_human.list$AvsP.DE,
+  "ONT dRNA" = drna_bulk.deg_human.list$AvsP.DE
+)
+
+p3 <- complex_upset_plot(lst) + ggtitle("SCLC_A vs SCLC_P") + theme(plot.title = element_text(size = 20))
+
+(p1 / p2 / p3) + patchwork::plot_annotation(
+  title = "DGE Human",
+  theme = theme(plot.title = element_text(size =25))
+)
+
+
+```
+
+
+### DGE sequins 
+
+```{r upset plot dge sequins, fig.width=8, fig.height=6}
+# Upset plot
+## A vs B (AvsB)
+lst <- list(
+  "Illumina" = ill_bulk.dge_sequins.list$AvsB.DE,
+  "ONT cDNA" = ont_bulk.dge_sequins.list$AvsB.DE,
+  "PacBio" = pb_bulk.dge_sequins.list$AvsB.DE,
+  "ONT dRNA" = drna_bulk.dge_sequins.list$AvsB.DE
+)
+
+complex_upset_plot(lst) + ggtitle("Sequins MixA vs MixB") + theme(plot.title = element_text(size = 20))
+```
 
 # Differential transcript expression
 ## DTE edgeR 
-```{r get_dte, message=FALSE}
+```{r get_dte no scaling, message=FALSE}
 
-DTE.edgeR_human <- function(dge, norm.method="TMM") {
-  # QC and normalisation:
-  filter <- filterByExpr(dge, group=dge$samples$sample)
-  dge <- dge[filter, , keep.lib.sizes = FALSE]
-
-  if (!is.null(norm.method)) {
-     dge <- calcNormFactors(dge, method = norm.method)
-  }
-
-  design <- model.matrix(~0+group, data = dge$samples)
-  dge <- estimateDisp(dge, design)
-  qlfit <- glmQLFit(dge, design)
-  contrasts <- makeContrasts(AvsL=groupsclc_a-groupluad, PvsL=groupsclc_p-groupluad, AvsP = groupsclc_a-groupsclc_p, levels=design)
-  # SCLC_A vs LUCA
-  AvsL.QLF.test <- glmQLFTest(qlfit, contrast=contrasts[,"AvsL"]) %>% decideTests
-  # SCLC_P vs LUCA
-  PvsL.QLF.test <- glmQLFTest(qlfit, contrast=contrasts[,"PvsL"]) %>% decideTests
-  # SCLC_A vs SCLC_P
-  AvsP.QLF.test <- glmQLFTest(qlfit, contrast=contrasts[,"AvsP"]) %>% decideTests
-
- list(
-    AvsL.test_rst = AvsL.QLF.test,
-    PvsL.test_rst = PvsL.QLF.test,
-    AvsP.test_rst = AvsP.QLF.test,
-    AvsL.DE = rownames(AvsL.QLF.test)[AvsL.QLF.test!=0],
-    PvsL.DE = rownames(PvsL.QLF.test)[PvsL.QLF.test!=0],
-    AvsP.DE = rownames(AvsP.QLF.test)[AvsP.QLF.test!=0]
-  )
-}
-
-DTE.edgeR_sequins <- function(dge, norm.method = "TMM") {
-  # QC and normalization
-  filter <- filterByExpr(dge, group = dge$samples$sample)
-  dge <- dge[filter, , keep.lib.sizes = FALSE]
-  
-  if (!is.null(norm.method)) {
-    dge <- calcNormFactors(dge, method = norm.method)
-  }
-  
-  design <- model.matrix(~0 + sequins, data = dge$samples)
-  dge <- estimateDisp(dge, design)
-  qlfit <- glmQLFit(dge, design)
-  
-  contrasts <- makeContrasts(
-    AvsB = sequinsA - sequinsB,
-    levels = design
-  )
-  
-  AvsB.QLF.test <- glmQLFTest(qlfit, contrast = contrasts[, "AvsB"]) 
-  d <-  AvsB.QLF.test %>% decideTests
-  
-  list(
-    test_rst = AvsB.QLF.test,
-    AvsB.DE = rownames(d)[d != 0]
-  )
-}
-
-
+DTE.edgeR_human <- DGE.edgeR_human
+DTE.edgeR_sequins <- DGE.edgeR_sequins
 
 ill_bulk.dte_human.list <- DTE.edgeR_human(ill_bulk.dge[is.human(ill_bulk.dge),])
-ont_bulk.dte_human.list <- DTE.edgeR_human(ont_bulk.dge[is.human(ont_bulk.dge),])
-drna_bulk.dte_human.list <- DTE.edgeR_human(ont_drna.deg[is.human(ont_drna.deg),])
-pb_bulk.dte_human.list <- DTE.edgeR_human(pb_bulk.dge[is.human(pb_bulk.dge),])
+ont_bulk.dte_human.list <- DTE.edgeR_human(ont_bulk.dge.oarfish[is.human(ont_bulk.dge.oarfish),])
+drna_bulk.dte_human.list <- DTE.edgeR_human(ont_drna.dge.oarfish[is.human(ont_drna.dge.oarfish),])
+pb_bulk.dte_human.list <- DTE.edgeR_human(pb_bulk.dge.oarfish[is.human(pb_bulk.dge.oarfish),])
 
 # ont_sc.dte_human.list <- DTE.edgeR_human(ont_sc.dge[is.human(ont_sc.dge),])
 # ont_sn.dte_human.list <- DTE.edgeR_human(ont_sn.dge[is.human(ont_sn.dge),])
@@ -1789,36 +1868,84 @@ pb_bulk.dte_human.list <- DTE.edgeR_human(pb_bulk.dge[is.human(pb_bulk.dge),])
 # ont_sc.dte_human.list <- DTE.edgeR_human(ont_sc.dge[is.human(ont_sc.dge),])
 
 ill_bulk.dte_sequins.list <- DTE.edgeR_sequins(ill_bulk.dge[is.sequins(ill_bulk.dge),])
-ont_bulk.dte_sequins.list <- DTE.edgeR_sequins(ont_bulk.dge[is.sequins(ont_bulk.dge),])
-drna_bulk.dte_sequins.list <- DTE.edgeR_sequins(ont_drna.deg[is.sequins(ont_drna.deg),])
-pb_bulk.dte_sequins.list <- DTE.edgeR_sequins(pb_bulk.dge[is.sequins(pb_bulk.dge),])
+ont_bulk.dte_sequins.list <- DTE.edgeR_sequins(ont_bulk.dge.oarfish[is.sequins(ont_bulk.dge.oarfish),])
+drna_bulk.dte_sequins.list <- DTE.edgeR_sequins(ont_drna.dge.oarfish[is.sequins(ont_drna.dge.oarfish),])
+pb_bulk.dte_sequins.list <- DTE.edgeR_sequins(pb_bulk.dge.oarfish[is.sequins(pb_bulk.dge.oarfish),])
 
 
 # This is still using the sequins function to do A vs B DE.
 ill_bulk.dte_sirv.list <- DTE.edgeR_sequins(ill_bulk.dge[is.sirv_or_ercc(ill_bulk.dge),])
-ont_bulk.dte_sirv.list <- DTE.edgeR_sequins(ont_bulk.dge[is.sirv_or_ercc(ont_bulk.dge),])
-drna_bulk.dte_sirv.list <- DTE.edgeR_sequins(ont_drna.deg[is.sirv_or_ercc(ont_drna.deg),])
-pb_bulk.dte_sirv.list <- DTE.edgeR_sequins(pb_bulk.dge[is.sirv_or_ercc(pb_bulk.dge),])
+ont_bulk.dte_sirv.list <- DTE.edgeR_sequins(ont_bulk.dge.oarfish[is.sirv_or_ercc(ont_bulk.dge.oarfish),])
+drna_bulk.dte_sirv.list <- DTE.edgeR_sequins(ont_drna.dge.oarfish[is.sirv_or_ercc(ont_drna.dge.oarfish),])
+pb_bulk.dte_sirv.list <- DTE.edgeR_sequins(pb_bulk.dge.oarfish[is.sirv_or_ercc(pb_bulk.dge.oarfish),])
 ```
 
-## DTE edgeR+scaling
+### DTE Upset plot (human transcript)
+```{r upset plot dte human edgeR, fig.width=8, fig.height=6}
 
-```{r}
+# Upset plot
+## SCLC_A vs LUCA (AvsL)
+lst <- list(
+  "Illumina" = ill_bulk.dte_human.list$AvsL.DE,
+  "ONT cDNA" = ont_bulk.dte_human.list$AvsL.DE,
+  "PacBio" = pb_bulk.dte_human.list$AvsL.DE,
+  "ONT dRNA" = drna_bulk.dte_human.list$AvsL.DE
+)
+p1 <- complex_upset_plot(lst) + ggtitle("SCLC_A vs LUCA") + theme(plot.title = element_text(size = 20))
+
+
+lst <- list(
+  "Illumina" = ill_bulk.dte_human.list$PvsL.DE,
+  "ONT cDNA" = ont_bulk.dte_human.list$PvsL.DE,
+  "PacBio" = pb_bulk.dte_human.list$PvsL.DE,
+  "ONT dRNA" = drna_bulk.dte_human.list$PvsL.DE
+)
+p2 <- complex_upset_plot(lst) + ggtitle("SCLC_P vs LUCA") + theme(plot.title = element_text(size = 20))
+
+
+lst <- list(
+  "Illumina" = ill_bulk.dte_human.list$AvsP.DE,
+  "ONT cDNA" = ont_bulk.dte_human.list$AvsP.DE,
+  "PacBio" = pb_bulk.dte_human.list$AvsP.DE,
+  "ONT dRNA" = drna_bulk.dte_human.list$AvsP.DE
+)
+
+p3 <- complex_upset_plot(lst) + ggtitle("SCLC_A vs SCLC_P") + theme(plot.title = element_text(size = 20))
+
+p1 / p2 / p3 + patchwork::plot_annotation(
+  title = "DTE Human (without scaling)",
+  theme = theme(plot.title = element_text(size =25))
+)
+```
+
+### DTE Upset plot (sequins transcript)
+```{r upset plot dte sequins edgeR, fig.width=8, fig.height=6}
+# Upset plot
+## A vs B (AvsB)
+lst <- list(
+  "Illumina" = ill_bulk.dte_sequins.list$AvsB.DE,
+  "ONT cDNA" = ont_bulk.dte_sequins.list$AvsB.DE,
+  "PacBio" = pb_bulk.dte_sequins.list$AvsB.DE,
+  "ONT dRNA" = drna_bulk.dte_sequins.list$AvsB.DE
+)
+complex_upset_plot(lst) + ggtitle("DTE Sequins MIX_A vs MIX_B (no scaling)") + theme(plot.title = element_text(size = 20))
+```
+
+
+## DTE edgeR+scaling
+```{r get dte scaling}
 # scale
 ill_bulk.scale_dge <- ill_bulk.dge
-ont_bulk.scale_dge <- ont_bulk.dge
-pb_bulk.scale_dge <- pb_bulk.dge
-ont_drna.scale_dge <- ont_drna.deg
+ont_bulk.scale_dge <- ont_bulk.dge.oarfish
+pb_bulk.scale_dge <- pb_bulk.dge.oarfish
+ont_drna.scale_dge <- ont_drna.dge.oarfish
 
 ill_bulk.scale_dge$counts  <- ill_bulk.scale_dge$counts / ill_bulk.scale_dge$genes$Overdispersion
 ont_bulk.scale_dge$counts  <- ont_bulk.scale_dge$counts / ont_bulk.scale_dge$genes$Overdispersion
 pb_bulk.scale_dge$counts  <- pb_bulk.scale_dge$counts / pb_bulk.scale_dge$genes$Overdispersion
 ont_drna.scale_dge$counts  <- ont_drna.scale_dge$counts / ont_drna.scale_dge$genes$Overdispersion
 
-```
-
-
-```{r}
+# get human list
 ill_bulk.scl_dte_human.list <- DTE.edgeR_human(ill_bulk.scale_dge[is.human(ill_bulk.scale_dge),])
 ont_bulk.scl_dte_human.list <- DTE.edgeR_human(ont_bulk.scale_dge[is.human(ont_bulk.scale_dge),])
 pb_bulk.scl_dte_human.list <- DTE.edgeR_human(pb_bulk.scale_dge[is.human(pb_bulk.scale_dge),])
@@ -1828,11 +1955,14 @@ drna_bulk.scl_dte_human.list <- DTE.edgeR_human(ont_drna.scale_dge[is.human(ont_
 # ont_sn.scl_dte_human.list <- DTE.edgeR_human(ont_sn.scale_dge[is.human(ont_sn.scale_dge),])
 # ont_sc.scl_dte_human.list <- DTE.edgeR_human(ont_sc.scale_dge[is.human(ont_sc.scale_dge),])
 
+
+# get sequins list
 ill_bulk.scl_dte_sequins.list <- DTE.edgeR_sequins(ill_bulk.scale_dge[is.sequins(ill_bulk.scale_dge),])
 ont_bulk.scl_dte_sequins.list <- DTE.edgeR_sequins(ont_bulk.scale_dge[is.sequins(ont_bulk.scale_dge),])
 pb_bulk.scl_dte_sequins.list <- DTE.edgeR_sequins(pb_bulk.scale_dge[is.sequins(pb_bulk.scale_dge),])
 drna_bulk.scl_dte_sequins.list <- DTE.edgeR_sequins(ont_drna.scale_dge[is.sequins(ont_drna.scale_dge),])
 
+# get sirv list 
 # This is still using the seuqins function to do A vs B DE.
 ill_bulk.scl_dte_sirv.list <- DTE.edgeR_sequins(ill_bulk.scale_dge[is.sirv_or_ercc(ill_bulk.scale_dge),])
 ont_bulk.scl_dte_sirv.list <- DTE.edgeR_sequins(ont_bulk.scale_dge[is.sirv_or_ercc(ont_bulk.scale_dge),])
@@ -1841,373 +1971,59 @@ drna_bulk.scl_dte_sirv.list <- DTE.edgeR_sequins(ont_drna.scale_dge[is.sirv_or_e
 
 ```
 
-
-# Summary DE
-## DGE human
-```{r upset plot dge human, fig.width=8, fig.height=6}
-
-# Upset plot
-## SCLC_A vs LUCA (AvsL)
-all_elements <- unique(c(
-  ILL_BULK = ill_bulk.dge_human.list$AvsL.DE,
-  ONT_BULK = ont_bulk.dge_human.list$AvsL.DE,
-  PB_BULK = pb_bulk.dge_human.list$AvsL.DE,
-  dRNA_BULK = drna_bulk.deg_human.list$AvsL.DE
-  #ONT_SC = ont_sc.dge_human.list$AvsL.DE,
-  #ONT_SN = ont_sn.dge_human.list$AvsL.DE,
-  #ONT_SN_CLEAN = ont_sn.dge_human.list$AvsL.DE,
-  #ONT_SC_CLEAN = ont_sc.dge_human.list$AvsL.DE
-))
-
-plot_d_AvsL.DE <- data.frame(
-  Element = all_elements,
-  ill_bulk= as.integer(all_elements %in% ill_bulk.dge_human.list$AvsL.DE),
-  ont_bulk= as.integer(all_elements %in% ont_bulk.dge_human.list$AvsL.DE),
-  pb_bulk = as.integer(all_elements %in% pb_bulk.dge_human.list$AvsL.DE),
-  drna_bulk = as.integer(all_elements %in% drna_bulk.deg_human.list$AvsL.DE)
-  #ont_sc= as.integer(all_elements %in% ont_sc.dge_human.list$AvsL.DE),
-  #ont_sn= as.integer(all_elements %in% ont_sn.dge_human.list$AvsL.DE),
-  #ont_sn= as.integer(all_elements %in% ont_sn.dge_human.list$AvsL.DE),
-  #ont_sc= as.integer(all_elements %in% ont_sc.dge_human.list$AvsL.DE)
-)
-plt1 <- upset(plot_d_AvsL.DE,  order.by = "freq", nsets = 8) 
-
-
-## SCLC_P vs LUCA (PvsL)
-all_elements <- unique(c(
- ILL_BULK = ill_bulk.dge_human.list$PvsL.DE,
- ONT_BULK = ont_bulk.dge_human.list$PvsL.DE,
- PB_BULK = pb_bulk.dge_human.list$PvsL.DE,
- dRNA_BULK = drna_bulk.deg_human.list$PvsL.DE
- #ONT_SC = ont_sc.dge_human.list$PvsL.DE,
- #ONT_SN = ont_sn.dge_human.list$PvsL.DE,
-  #ONT_SN_CLEAN = ont_sn.dge_human.list$PvsL.DE,
-  #ONT_SC_CLEAN = ont_sc.dge_human.list$PvsL.DE
-))
-
-plot_d_PvsL.DE <- data.frame(
-  Element = all_elements,
-  ill_bulk= as.integer(all_elements %in% ill_bulk.dge_human.list$PvsL.DE),
-  ont_bulk= as.integer(all_elements %in% ont_bulk.dge_human.list$PvsL.DE),
-  pb_bulk = as.integer(all_elements %in% pb_bulk.dge_human.list$PvsL.DE),
-  drna_bulk = as.integer(all_elements %in% drna_bulk.deg_human.list$PvsL.DE)
-  #ont_sc= as.integer(all_elements %in% ont_sc.dge_human.list$PvsL.DE),
-  #ont_sn= as.integer(all_elements %in% ont_sn.dge_human.list$PvsL.DE),
-  #ont_sn= as.integer(all_elements %in% ont_sn.dge_human.list$PvsL.DE),
-  #ont_sc= as.integer(all_elements %in% ont_sc.dge_human.list$PvsL.DE)
-)
-plt2 <- upset(plot_d_PvsL.DE,  order.by = "freq", nsets = 8) 
-
-
-## SCLC_A vs SCLC_P (AvsP)
-all_elements <- unique(c(
- ILL_BULK = ill_bulk.dge_human.list$AvsP.DE,
- ONT_BULK = ont_bulk.dge_human.list$AvsP.DE,
- PB_BULK = pb_bulk.dge_human.list$AvsP.DE,
- dRNA_BULK = drna_bulk.deg_human.list$AvsP.DE
- #ONT_SC = ont_sc.dge_human.list$AvsP.DE,
- #ONT_SN = ont_sn.dge_human.list$AvsP.DE,
-  #ONT_SN_CLEAN = ont_sn.dge_human.list$AvsP.DE,
-  #ONT_SC_CLEAN = ont_sc.dge_human.list$AvsP.DE
-))
-
-plot_d_AvsP.DE <- data.frame(
-  Element = all_elements,
-  ill_bulk= as.integer(all_elements %in% ill_bulk.dge_human.list$AvsP.DE),
-  ont_bulk= as.integer(all_elements %in% ont_bulk.dge_human.list$AvsP.DE),
-  pb_bulk = as.integer(all_elements %in% pb_bulk.dge_human.list$AvsP.DE),
-  drna_bulk = as.integer(all_elements %in% drna_bulk.deg_human.list$AvsP.DE)
-  #ont_sc= as.integer(all_elements %in% ont_sc.dge_human.list$AvsP.DE),
-  #ont_sn= as.integer(all_elements %in% ont_sn.dge_human.list$AvsP.DE),
-  #ont_sn= as.integer(all_elements %in% ont_sn.dge_human.list$AvsP.DE),
-  #ont_sc= as.integer(all_elements %in% ont_sc.dge_human.list$AvsP.DE)
-)
-plt3 <- upset(plot_d_AvsP.DE,  order.by = "freq", nsets = 8) 
-
-plt1
-grid::grid.text("DGE SCLC_A vs LUAD (EdgeR)", x = 0.5, y = 0.95)
-
-plt2
-grid::grid.text("DGE SCLC_P vs LUAD (EdgeR)", x = 0.5, y = 0.95)
-
-plt3
-grid::grid.text("DGE SCLC_P vs SCLC_A (EdgeR)", x = 0.5, y = 0.95)
-
-```
-
-
-## DGE sequins 
-
-```{r upset plot dge sequins, fig.width=8, fig.height=6}
-
-# Upset plot
-## A vs B (AvsB)
-all_elements <- unique(c(
-  ILL_BULK = ill_bulk.dge_sequins.list$AvsB.DE,
-  ONT_BULK = ont_bulk.dge_sequins.list$AvsB.DE,
-  PB_BULK = pb_bulk.dge_sequins.list$AvsB.DE,
-  dRNA_BULK = drna_bulk.dge_sequins.list$AvsB.DE
-))
-
-plot_d_AvsB.DE <- data.frame(
-  Element = all_elements,
-  ill_bulk= as.integer(all_elements %in% ill_bulk.dge_sequins.list$AvsB.DE),
-  ont_bulk= as.integer(all_elements %in% ont_bulk.dge_sequins.list$AvsB.DE),
-  pb_bulk = as.integer(all_elements %in% pb_bulk.dge_sequins.list$AvsB.DE),
-  drna_bulk = as.integer(all_elements %in% drna_bulk.dge_sequins.list$AvsB.DE)
-)
-plt4 <- upset(plot_d_AvsB.DE,  order.by = "freq", nsets = 8) 
-
-
-plt4
-grid::grid.text("DGE SequinsA vs SequinsB (EdgeR)", x = 0.5, y = 0.95)
-
-```
-
-
-
-## DTE human(edgeR)
-```{r upset plot dte human edgeR, fig.width=8, fig.height=6}
+### Upset plot
+### DTE Upset plot (human transcript)
+```{r upset plot dte human edgeR with scaling, fig.width=8, fig.height=6}
 
 # Upset plot
 ## SCLC_A vs LUCA (AvsL)
-all_elements <- unique(c(
-  ILL_BULK = ill_bulk.dte_human.list$AvsL.DE,
-  ONT_BULK = ont_bulk.dte_human.list$AvsL.DE,
-  PB_BULK = pb_bulk.dte_human.list$AvsL.DE,
-  dRNA_BULK = drna_bulk.dte_human.list$AvsL.DE
-  # ONT_SC = ont_sc.dte_human.list$AvsL.DE,
-  # ONT_SN = ont_sn.dte_human.list$AvsL.DE,
-  # ONT_SN_CLEAN = ont_sn.dte_human.list$AvsL.DE,
-  # ONT_SC_CLEAN = ont_sc.dte_human.list$AvsL.DE
-))
-
-plot_d_AvsL.DE <- data.frame(
-  Element = all_elements,
-  ill_bulk= as.integer(all_elements %in% ill_bulk.dte_human.list$AvsL.DE),
-  ont_bulk= as.integer(all_elements %in% ont_bulk.dte_human.list$AvsL.DE),
-  pb_bulk = as.integer(all_elements %in% pb_bulk.dte_human.list$AvsL.DE),
-  drna_bulk = as.integer(all_elements %in% drna_bulk.dte_human.list$AvsL.DE)
-  # ont_sc= as.integer(all_elements %in% ont_sc.dte_human.list$AvsL.DE),
-  # ont_sn= as.integer(all_elements %in% ont_sn.dte_human.list$AvsL.DE),
-  # ont_sn= as.integer(all_elements %in% ont_sn.dte_human.list$AvsL.DE),
-  # ont_sc= as.integer(all_elements %in% ont_sc.dte_human.list$AvsL.DE)
+lst <- list(
+  "Illumina" = ill_bulk.scl_dte_human.list$AvsL.DE,
+  "ONT cDNA" = ont_bulk.scl_dte_human.list$AvsL.DE,
+  "PacBio" = pb_bulk.scl_dte_human.list$AvsL.DE,
+  "ONT dRNA" = drna_bulk.scl_dte_human.list$AvsL.DE
 )
-p1 <- upset(plot_d_AvsL.DE,  order.by = "freq", nsets = 8) 
+p1 <- complex_upset_plot(lst) + ggtitle("SCLC_A vs LUCA") + theme(plot.title = element_text(size = 20))
 
-## SCLC_P vs LUCA (PvsL)
-all_elements <- unique(c(
- ILL_BULK = ill_bulk.dte_human.list$PvsL.DE,
- ONT_BULK = ont_bulk.dte_human.list$PvsL.DE,
- PB_BULK = pb_bulk.dte_human.list$PvsL.DE,
- dRNA_BULK = drna_bulk.dte_human.list$PvsL.DE
- #  ONT_SC = ont_sc.dte_human.list$PvsL.DE,
-#  ONT_SN = ont_sn.dte_human.list$PvsL.DE,
-#   ONT_SN_CLEAN = ont_sn.dte_human.list$PvsL.DE,
-#   ONT_SC_CLEAN = ont_sc.dte_human.list$PvsL.DE
-))
 
-plot_d_PvsL.DE <- data.frame(
-  Element = all_elements,
-  ill_bulk= as.integer(all_elements %in% ill_bulk.dte_human.list$PvsL.DE),
-  ont_bulk= as.integer(all_elements %in% ont_bulk.dte_human.list$PvsL.DE),
-  pb_bulk = as.integer(all_elements %in% pb_bulk.dte_human.list$PvsL.DE),
-  drna_bulk = as.integer(all_elements %in% drna_bulk.dte_human.list$PvsL.DE)
-  # ont_sc= as.integer(all_elements %in% ont_sc.dte_human.list$PvsL.DE),
-  # ont_sn= as.integer(all_elements %in% ont_sn.dte_human.list$PvsL.DE),
-  # ont_sn= as.integer(all_elements %in% ont_sn.dte_human.list$PvsL.DE),
-  # ont_sc= as.integer(all_elements %in% ont_sc.dte_human.list$PvsL.DE)
+lst <- list(
+  "Illumina" = ill_bulk.scl_dte_human.list$PvsL.DE,
+  "ONT cDNA" = ont_bulk.scl_dte_human.list$PvsL.DE,
+  "PacBio" = pb_bulk.scl_dte_human.list$PvsL.DE,
+  "ONT dRNA" = drna_bulk.scl_dte_human.list$PvsL.DE
 )
-p2 <- upset(plot_d_PvsL.DE,  order.by = "freq", nsets = 8) 
+p2 <- complex_upset_plot(lst) + ggtitle("SCLC_P vs LUCA") + theme(plot.title = element_text(size = 20))
 
 
-## SCLC_A vs SCLC_P (AvsP)
-all_elements <- unique(c(
- ILL_BULK = ill_bulk.dte_human.list$AvsP.DE,
- ONT_BULK = ont_bulk.dte_human.list$AvsP.DE,
- PB_BULK = pb_bulk.dte_human.list$AvsP.DE,
- dRNA_BULK = drna_bulk.dte_human.list$AvsP.DE
-#  ONT_SC = ont_sc.dte_human.list$AvsP.DE,
-#  ONT_SN = ont_sn.dte_human.list$AvsP.DE,
-#   ONT_SN_CLEAN = ont_sn.dte_human.list$AvsP.DE,
-#   ONT_SC_CLEAN = ont_sc.dte_human.list$AvsP.DE
-))
-
-plot_d_AvsP.DE <- data.frame(
-  Element = all_elements,
-  ill_bulk= as.integer(all_elements %in% ill_bulk.dte_human.list$AvsP.DE),
-  ont_bulk= as.integer(all_elements %in% ont_bulk.dte_human.list$AvsP.DE),
-  pb_bulk = as.integer(all_elements %in% pb_bulk.dte_human.list$AvsP.DE),
-  drna_bulk = as.integer(all_elements %in% drna_bulk.dte_human.list$AvsP.DE)
-  # ont_sc= as.integer(all_elements %in% ont_sc.dte_human.list$AvsP.DE),
-  # ont_sn= as.integer(all_elements %in% ont_sn.dte_human.list$AvsP.DE),
-  # ont_sn= as.integer(all_elements %in% ont_sn.dte_human.list$AvsP.DE),
-  # ont_sc= as.integer(all_elements %in% ont_sc.dte_human.list$AvsP.DE)
+lst <- list(
+  "Illumina" = ill_bulk.scl_dte_human.list$AvsP.DE,
+  "ONT cDNA" = ont_bulk.scl_dte_human.list$AvsP.DE,
+  "PacBio" = pb_bulk.scl_dte_human.list$AvsP.DE,
+  "ONT dRNA" = drna_bulk.scl_dte_human.list$AvsP.DE
 )
-p3 <- upset(plot_d_AvsP.DE,  order.by = "freq", nsets = 8) 
 
-p1
-grid::grid.text("DTE SCLC_A vs LUAD (EdgeR)", x = 0.5, y = 0.95)
+p3 <- complex_upset_plot(lst) + ggtitle("SCLC_A vs SCLC_P") + theme(plot.title = element_text(size = 20))
 
-p2
-grid::grid.text("DTE SCLC_P vs LUAD (EdgeR)", x = 0.5, y = 0.95)
-
-p3
-grid::grid.text("DTE SCLC_P vs SCLC_A (EdgeR)", x = 0.5, y = 0.95)
+p1 / p2 / p3 + patchwork::plot_annotation(
+  title = "DTE Human (with scaling)",
+  theme = theme(plot.title = element_text(size =25))
+)
 ```
 
-## DTE sequins(edgeR) 
-```{r upset plot dte sequins edgeR, fig.width=8, fig.height=6}
-
+### DTE Upset plot (sequins transcript)
+```{r upset plot dte sequins edgeR scaling, fig.width=8, fig.height=6}
 # Upset plot
 ## A vs B (AvsB)
-all_elements <- unique(c(
-  ILL_BULK = ill_bulk.dte_sequins.list$AvsB.DE,
-  ONT_BULK = ont_bulk.dte_sequins.list$AvsB.DE,
-  PB_BULK = pb_bulk.dte_sequins.list$AvsB.DE,
-  dRNA_bulk = drna_bulk.dte_sequins.list$AvsB.DE
-))
-
-plot_d_AvsB.DE <- data.frame(
-  Element = all_elements,
-  ill_bulk= as.integer(all_elements %in% ill_bulk.dte_sequins.list$AvsB.DE),
-  ont_bulk= as.integer(all_elements %in% ont_bulk.dte_sequins.list$AvsB.DE),
-  pb_bulk = as.integer(all_elements %in% pb_bulk.dte_sequins.list$AvsB.DE),
-  drna_bulk = as.integer(all_elements %in% drna_bulk.dte_sequins.list$AvsB.DE)
+lst <- list(
+  "Illumina" = ill_bulk.scl_dte_sequins.list$AvsB.DE,
+  "ONT cDNA" = ont_bulk.scl_dte_sequins.list$AvsB.DE,
+  "PacBio" = pb_bulk.scl_dte_sequins.list$AvsB.DE,
+  "ONT dRNA" = drna_bulk.scl_dte_sequins.list$AvsB.DE
 )
-p4 <- upset(plot_d_AvsB.DE,  order.by = "freq", nsets = 8) 
-
-
-p4
-grid::grid.text("DTE SequinsA vs SequinsB", x = 0.5, y = 0.95)
-
-
+complex_upset_plot(lst) + ggtitle("DTE Sequins MIX_A vs MIX_B (with scaling)") + theme(plot.title = element_text(size = 20))
 ```
 
-## DTE human(edgeR + scaling)
-```{r upset plot dte human edgeR + scaling, fig.width=8, fig.height=6}
-
-# Upset plot
-## SCLC_A vs LUCA (AvsL)
-all_elements <- unique(c(
-  ILL_BULK = ill_bulk.scl_dte_human.list$AvsL.DE,
-  ONT_BULK = ont_bulk.scl_dte_human.list$AvsL.DE,
-  PB_BULK = pb_bulk.scl_dte_human.list$AvsL.DE,
-  dRNA_BULK = drna_bulk.scl_dte_human.list$AvsL.DE
-  #ONT_SC = ont_sc.scl_dte_human.list$AvsL.DE,
-  #ONT_SN = ont_sn.scl_dte_human.list$AvsL.DE,
-  #ONT_SN_CLEAN = ont_sn.scl_dte_human.list$AvsL.DE,
-  #ONT_SC_CLEAN = ont_sc.scl_dte_human.list$AvsL.DE
-))
-
-plot_d_AvsL.DE <- data.frame(
-  Element = all_elements,
-  ill_bulk= as.integer(all_elements %in% ill_bulk.scl_dte_human.list$AvsL.DE),
-  ont_bulk= as.integer(all_elements %in% ont_bulk.scl_dte_human.list$AvsL.DE),
-  pb_bulk = as.integer(all_elements %in% pb_bulk.scl_dte_human.list$AvsL.DE),
-  drna_bulk = as.integer(all_elements %in% drna_bulk.scl_dte_human.list$AvsL.DE)
-  #ont_sc= as.integer(all_elements %in% ont_sc.scl_dte_human.list$AvsL.DE),
-  #ont_sn= as.integer(all_elements %in% ont_sn.scl_dte_human.list$AvsL.DE),
-  #ont_sn= as.integer(all_elements %in% ont_sn.scl_dte_human.list$AvsL.DE),
-  #ont_sc= as.integer(all_elements %in% ont_sc.scl_dte_human.list$AvsL.DE)
-)
-pp1 <- upset(plot_d_AvsL.DE,  order.by = "freq", nsets = 8) 
-
-
-## SCLC_P vs LUCA (PvsL)
-all_elements <- unique(c(
- ILL_BULK = ill_bulk.scl_dte_human.list$PvsL.DE,
- ONT_BULK = ont_bulk.scl_dte_human.list$PvsL.DE,
- PB_BULK = pb_bulk.scl_dte_human.list$PvsL.DE,
- dRNA_BULK = drna_bulk.scl_dte_human.list$PvsL.DE
- #ONT_SC = ont_sc.scl_dte_human.list$PvsL.DE,
- #ONT_SN = ont_sn.scl_dte_human.list$PvsL.DE,
-  #ONT_SN_CLEAN = ont_sn.scl_dte_human.list$PvsL.DE,
-  #ONT_SC_CLEAN = ont_sc.scl_dte_human.list$PvsL.DE
-))
-
-plot_d_PvsL.DE <- data.frame(
-  Element = all_elements,
-  ill_bulk= as.integer(all_elements %in% ill_bulk.scl_dte_human.list$PvsL.DE),
-  ont_bulk= as.integer(all_elements %in% ont_bulk.scl_dte_human.list$PvsL.DE),
-  pb_bulk = as.integer(all_elements %in% pb_bulk.scl_dte_human.list$PvsL.DE),
-  drna_bulk = as.integer(all_elements %in% drna_bulk.scl_dte_human.list$PvsL.DE)
-  #ont_sc= as.integer(all_elements %in% ont_sc.scl_dte_human.list$PvsL.DE),
-  #ont_sn= as.integer(all_elements %in% ont_sn.scl_dte_human.list$PvsL.DE),
-  #ont_sn= as.integer(all_elements %in% ont_sn.scl_dte_human.list$PvsL.DE),
-  #ont_sc= as.integer(all_elements %in% ont_sc.scl_dte_human.list$PvsL.DE)
-)
-pp2 <- upset(plot_d_PvsL.DE,  order.by = "freq", nsets = 8) 
-
-
-## SCLC_A vs SCLC_P (AvsP)
-all_elements <- unique(c(
- ILL_BULK = ill_bulk.scl_dte_human.list$AvsP.DE,
- ONT_BULK = ont_bulk.scl_dte_human.list$AvsP.DE,
- PB_BULK = pb_bulk.scl_dte_human.list$AvsP.DE,
- dRNA_BULK = drna_bulk.scl_dte_human.list$AvsP.DE
- #ONT_SC = ont_sc.scl_dte_human.list$AvsP.DE,
- #ONT_SN = ont_sn.scl_dte_human.list$AvsP.DE,
-  #ONT_SN_CLEAN = ont_sn.scl_dte_human.list$AvsP.DE,
-  #ONT_SC_CLEAN = ont_sc.scl_dte_human.list$AvsP.DE
-))
-
-plot_d_AvsP.DE <- data.frame(
-  Element = all_elements,
-  ill_bulk= as.integer(all_elements %in% ill_bulk.scl_dte_human.list$AvsP.DE),
-  ont_bulk= as.integer(all_elements %in% ont_bulk.scl_dte_human.list$AvsP.DE),
-  pb_bulk = as.integer(all_elements %in% pb_bulk.scl_dte_human.list$AvsP.DE),
-  drna_bulk = as.integer(all_elements %in% drna_bulk.scl_dte_human.list$AvsP.DE)
-  #ont_sc= as.integer(all_elements %in% ont_sc.scl_dte_human.list$AvsP.DE),
-  #ont_sn= as.integer(all_elements %in% ont_sn.scl_dte_human.list$AvsP.DE),
-  #ont_sn= as.integer(all_elements %in% ont_sn.scl_dte_human.list$AvsP.DE),
-  #ont_sc= as.integer(all_elements %in% ont_sc.scl_dte_human.list$AvsP.DE)
-)
-pp3 <- upset(plot_d_AvsP.DE,  order.by = "freq", nsets = 8) 
-
-pp1
-grid::grid.text("DTE SCLC_A vs LUAD (EdgeR + scale)", x = 0.5, y = 0.95)
-
-pp2
-grid::grid.text("DTE SCLC_P vs LUAD (EdgeR + scale)", x = 0.5, y = 0.95)
-
-pp3
-grid::grid.text("DTE SCLC_P vs SCLC_A (EdgeR + scale)", x = 0.5, y = 0.95)
-```
-
-## DTE sequins(edgeR + scaling)
-```{r upset plot dte sequins edgeR+scaling, fig.width=8, fig.height=6}
-
-# Upset plot
-## A vs B (AvsB)
-all_elements <- unique(c(
-  ILL_BULK = ill_bulk.scl_dte_sequins.list$AvsB.DE,
-  ONT_BULK = ont_bulk.scl_dte_sequins.list$AvsB.DE,
-  PB_BULK = pb_bulk.scl_dte_sequins.list$AvsB.DE,
-  dRNA_BULK = drna_bulk.scl_dte_sequins.list$AvsB.DE
-))
-
-plot_d_AvsB.DE <- data.frame(
-  Element = all_elements,
-  ill_bulk= as.integer(all_elements %in% ill_bulk.scl_dte_sequins.list$AvsB.DE),
-  ont_bulk= as.integer(all_elements %in% ont_bulk.scl_dte_sequins.list$AvsB.DE),
-  pb_bulk = as.integer(all_elements %in% pb_bulk.scl_dte_sequins.list$AvsB.DE),
-  drna_bulk = as.integer(all_elements %in% drna_bulk.scl_dte_sequins.list$AvsB.DE)
-)
-pp4 <- upset(plot_d_AvsB.DE,  order.by = "freq", nsets = 8) 
-
-
-pp4
-grid::grid.text("DTE SequinsA vs SequinsB (EdgeR + scale)", x = 0.5, y = 0.95)
-
-
-```
-
-
-
-
-
-## Spice in DE 
+# Spike in fold change analysis
 ```{r spice in de, fig.width=8, fig.height=6}
 
 compare_sequins_logFC <- function(glm.test.rst, fig.title){

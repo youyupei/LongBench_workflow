@@ -1,1 +1,30 @@
-output_path: "/vast/projects/LongBench/analysis/.sr_bulk/result"
+
+reference:
+  # have to exist
+  genome: "/home/users/allstaff/you.yu/LongBench/reference_files/GRCh38.add.spikein/GRCh38.primary_assembly.genome.add.spikein.fa"
+  gtf: "/home/users/allstaff/you.yu/LongBench/reference_files/GRCh38.add.spikein/gencode.v44.transcripts.add.spikein.gtf"
+  bed_human: "/home/users/allstaff/you.yu/LongBench/reference_files/GRCh38/gencode.v44.annotation.gtf.bed"
+  transcript: "/home/users/allstaff/you.yu/LongBench/reference_files/GRCh38.add.spikein/gencode.v44.transcripts.add.spikein.fa"
+  picard_reference: '/home/users/allstaff/you.yu/LongBench/reference_files/GRCh38/refFlat.txt'
+  bed_housekeeping_genes: '/home/users/allstaff/you.yu/LongBench/reference_files/GRCh38/hg38.HouseKeepingGenes.bed'
+
+# only include the sample id that you want to process
+sample_id: 
+  - 'ill_bulk'
+samples_bam_dir: # Ashley's analysis has the bam files in the same directory as the fastq files
+  ill_bulk: "/home/users/allstaff/you.yu/LongBench/sequencing_data/ONT_bulk/"
+samples_fastq_dir: 
+  ill_bulk: "/vast/projects/LongBench/sequencing_data/illumina_bulk/softlinks"
+
+cell_lines:
+  - H146
+  - H69
+  - H526
+  - H211
+  - SHP77
+  - H1975
+  - H2228
+  - HCC827
+
+output_path: "/vast/projects/LongBench/analysis/sr_bulk/result"
+scratch_dir: "/vast/scratch/users/you.yu/LongBench/sr_bulk"

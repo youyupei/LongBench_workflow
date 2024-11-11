@@ -1,0 +1,36 @@
+configfile: "config/config.yaml"
+envvars:
+    "GITHUB_TOKEN"
+
+sys.path.insert(0, config['main_wf_dir'] + "/config/")
+import config_parser
+
+# Load the configuration
+config = config_parser.sub_wf_config_parser(
+   main_cfg_fn = config['global_config_path'], 
+   sub_wf_name = "sr_bulk")
+
+# define the input fastq directories
+input_fastq_dirs = config["samples_fastq_dir"]
+results_dir = config["output_path"]
+scratch_dir = config["scratch_dir"]
+sub_wf_dir = config['sub_wf_dir']
+
+include: "rules/qc.smk"
+include: "rules/salmon.smk"
+#include: config['main_wf_dir'] + "/modules/utilities.smk"
+
+# make sure the results_dir exists
+shell("mkdir -p {results_dir}")
+
+# These wildcards names are reserved for special meanings
+wildcard_constraints:
+   cell_line='|'.join(config['cell_lines']),
+   sample='|'.join(config['sample_id'])
+
+# Main rule
+rule all:
+   input:
+      rules.salmon.output,
+   output:
+      touch(os.path.join(results_dir, ".flag/all.done"))

@@ -278,7 +278,7 @@ overdisp_boxplot <- function(filter_func, title, breaks= c(0,1,5,10,20,40, Inf),
     all_data = p
   )
 
-  overdisp_d <- pivot_longer(overdisp.human, 
+  overdisp_d <- pivot_longer(overdisp_d, 
                             cols = c("ONT cDNA", PacBio, "ONT dRNA"), 
                             names_to = "Method", values_to = "Overdispersion")
 
@@ -348,7 +348,8 @@ p3 <- ggplot(overdisp.sirv_pivot, aes(x = tx_count_bin, y = Overdispersion, fill
 grid.arrange(p1, p2, p3+ylim(1,2),  ncol=2)
 ```
 
-# Sequins (Scatter)
+
+# Tx length distribution of Spikeins
 ```{r}
 # sequins transcript length
 sequins.gt <- read_tsv(params$sequins_tsv)
@@ -387,6 +388,7 @@ p3 <- p3 + xlim(0, 10000)
 p1 / p2 / p3
 ```
 
+# Sequins (Scatter)
 
 ```{r, fig.width=20}
 get_sequins_scatter_plot <- function(dge, figure_name, tx_len_norm = TRUE) {
@@ -414,7 +416,7 @@ get_sequins_scatter_plot <- function(dge, figure_name, tx_len_norm = TRUE) {
     } else {
         dge.sequins.norm <- dge.sequins$counts %>% as_tibble(rownames="NAME")  %>% mutate(across(where(is.numeric), get_lcpm))
     }
-    dge.sequins.norm  <- dge.sequins.norm %>% left_join(dge.sequins$gene %>% as_tibble(rownames="NAME") %>% select(NAME, Overdispersion))
+    dge.sequins.norm  <- dge.sequins.norm %>% left_join(dge.sequins$gene %>% as_tibble(rownames="NAME") %>% select(NAME))
 
     # Merge the ground truth and observed data
     mixA_df <-dge.sequins.norm %>% select(-dge.sequins$samples$sample[dge.sequins$samples$sequins=='B']) %>% left_join(sequins.gt.norm)  %>% 
@@ -436,20 +438,9 @@ get_sequins_scatter_plot <- function(dge, figure_name, tx_len_norm = TRUE) {
     combined_df$Sample <- factor(combined_df$Sample)
     combined_df$MIX <- factor(combined_df$MIX)
     correlation <- cor(combined_df$GT, combined_df$`Observed log-CPM`)
+    mean_sq_error <- mean((combined_df$GT - combined_df$`Observed log-CPM`)^2)
+    mean_abs_error <- mean(abs(combined_df$GT - combined_df$`Observed log-CPM`))
     
-    # p1 <- ggplot(combined_df[rownames(combined_df) %>% sample(nrow(combined_df), replace = F),], aes(y = GT, x = `Observed log-CPM`, color = Sample, shape = MIX)) +
-    #   geom_point() +
-    #   geom_abline(slope = 1, intercept = 0, linetype = "dotted") +  # Add a dotted line of x=y
-    #   theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
-    #   theme_classic() + 
-    #   # scale_y_log10(labels = label_number()) + 
-    #   labs(title = figure_name, y = "Expected abundance log2(TPM+1)", x = "Observed log2(TPM+1)") +
-    #   annotate("text", x = min(combined_df$`Observed log-CPM`), y = max(combined_df$GT), 
-    #            label = paste("Correlation: ", round(correlation, 2)), 
-    #            hjust = 0, vjust = 1, 
-    #            color = "black", size = 4, 
-    #            fontface = "italic")
-    # 
     combined_df <- combined_df %>% mutate(N_transcript_per_gene = N_transcript_per_gene %>% as.factor(), `Transcript length` = LENGTH)
     # color by the quantile of the transcript length
     combined_df$`Transcript length` <- cut(combined_df$`Transcript length`, 
@@ -465,10 +456,12 @@ get_sequins_scatter_plot <- function(dge, figure_name, tx_len_norm = TRUE) {
       theme_classic() + 
       # scale_y_log10(labels = label_number()) + 
       labs(title = figure_name, y = "Expected abundance log2(TPM+1)", x = "Observed log2(TPM+1)") +
-      annotate("text", x = min(combined_df$`Observed log-CPM`), y = max(combined_df$GT), 
-               label = paste("Correlation: ", round(correlation, 2)), 
+      annotate("text", x = 10, y = 5, 
+               label = paste("Correlation: ", round(correlation, 2),'\n'
+                             ,"Mean Squared Error: ", round(mean_sq_error, 2),'\n'
+                             ,"Mean Absolute Error: ", round(mean_abs_error, 2)),
                hjust = 0, vjust = 1, 
-               color = "black", size = 4, 
+               color = "black", size =3, 
                fontface = "italic") +
       scale_color_viridis_d() +
       scale_size_continuous(limits = c(0, 5))
@@ -480,6 +473,7 @@ get_sequins_scatter_plot <- function(dge, figure_name, tx_len_norm = TRUE) {
     )
     return(list(plot1 = p1,  plot2 = p2, table = t))
 }
+
 
 cor.ont_bulk <- get_sequins_scatter_plot(ont_bulk.dge, figure_name = "ONT BULK Sequins", tx_len_norm = FALSE)
 cor.pb_bulk <- get_sequins_scatter_plot(pb_bulk.dge, figure_name = "Pacbio BULK Sequins", tx_len_norm = FALSE)
@@ -497,28 +491,28 @@ grid.arrange(
             ncol=2)
 
 
-plot_df <- cor.ont_bulk$table %>% dplyr::rename(`ONT cDNA`=sample_correlation) %>% 
-            left_join(cor.ill_bulk$table %>% dplyr::rename(`Illumina`=sample_correlation), by = 'sample') %>% 
-            left_join(cor.pb_bulk$table %>% dplyr::rename(`PacBio`=sample_correlation), by = 'sample') %>% 
-            left_join(cor.ont_drna$table %>% dplyr::rename(`ONT dRNA`=sample_correlation), by = 'sample') %>%
-            select(`ONT Bulk`, `ONT dRNA`, `PacBio Bulk`, `Illumina Bulk`) %>% 
-            pivot_longer(col=c(`Illumina`, `ONT cDNA`, `ONT dRNA`, `PacBio`, ), values_to = "correlation", names_to = "Sample")
-
-bx_plot <- ggplot(plot_df, aes(x = Sample, y = correlation, fill = Sample)) +
-  geom_boxplot(position = position_dodge(width = 0.75)) +
-  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
-  labs(title = "Sequins transcript: per sample correlation with true abundance") +
-  theme_minimal() +
-  scale_fill_manual(values = color_palette[c("Illumina", "ONT_1", "ONT_2", "PacBio", )] %>% unname())
-
-bx_plot
+# plot_df <- cor.ont_bulk$table %>% dplyr::rename(`ONT cDNA`=sample_correlation) %>% 
+#             left_join(cor.ill_bulk$table %>% dplyr::rename(`Illumina`=sample_correlation), by = 'sample') %>% 
+#             left_join(cor.pb_bulk$table %>% dplyr::rename(`PacBio`=sample_correlation), by = 'sample') %>% 
+#             left_join(cor.ont_drna$table %>% dplyr::rename(`ONT dRNA`=sample_correlation), by = 'sample') %>%
+#             select(`ONT Bulk`, `ONT dRNA`, `PacBio Bulk`, `Illumina Bulk`) %>% 
+#             pivot_longer(col=c(`Illumina`, `ONT cDNA`, `ONT dRNA`, `PacBio`, ), values_to = "correlation", names_to = "Sample")
+# 
+# bx_plot <- ggplot(plot_df, aes(x = Sample, y = correlation, fill = Sample)) +
+#   geom_boxplot(position = position_dodge(width = 0.75)) +
+#   theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+#   labs(title = "Sequins transcript: per sample correlation with true abundance") +
+#   theme_minimal() +
+#   scale_fill_manual(values = color_palette[c("Illumina", "ONT_1", "ONT_2", "PacBio", )] %>% unname())
+# 
+# bx_plot
 ```
 
 
 ```{r}
 get_sequin_quartiled_states <- function(dge, sample_name, tx_len_norm = TRUE) {
   # tx_len_norm <- TRUE
-  # dge <- ont_bulk.dge
+  # dge <- ont_bulk.dge.oarfish
   # sample_name <- "ONT BULK Sequins"
 
   dge <- dge[is.sequins(dge), ]
@@ -551,7 +545,7 @@ get_sequin_quartiled_states <- function(dge, sample_name, tx_len_norm = TRUE) {
       as_tibble(rownames = "NAME") %>%
       mutate(across(where(is.numeric), get_lcpm))
   }
-  dge.sequins.norm <- dge.sequins.norm %>% left_join(dge.sequins$gene %>% as_tibble(rownames = "NAME") %>% select(NAME, Overdispersion))
+  dge.sequins.norm <- dge.sequins.norm %>% left_join(dge.sequins$gene %>% as_tibble(rownames = "NAME") %>% select(NAME))
 
   # Merge the ground truth and observed data
   mixA_df <- dge.sequins.norm %>%
@@ -572,11 +566,16 @@ get_sequin_quartiled_states <- function(dge, sample_name, tx_len_norm = TRUE) {
   per_sample_cor <- sapply(dge$samples$sample, function(x) {
     cor(combined_df[combined_df$Sample == x, ]$GT, combined_df[combined_df$Sample == x, ]$`Observed log-CPM`) %>% unlist()
   })
+  per_sample_mse <- sapply(dge$samples$sample, function(x) {
+    mean((combined_df[combined_df$Sample == x, ]$GT - combined_df[combined_df$Sample == x, ]$`Observed log-CPM`)^2) %>% unlist()
+  })
 
   # Calculate the correlation
   combined_df$Sample <- factor(combined_df$Sample)
   combined_df$MIX <- factor(combined_df$MIX)
-  correlation <- cor(combined_df$GT, combined_df$`Observed log-CPM`)
+  # correlation <- cor(combined_df$GT, combined_df$`Observed log-CPM`)
+  # mean_sq_error <- mean((combined_df$GT - combined_df$`Observed log-CPM`)^2)
+  # mean_abs_error <- mean(abs(combined_df$GT - combined_df$`Observed log-CPM`))
 
   combined_df <- combined_df %>% mutate(N_transcript_per_gene = N_transcript_per_gene %>% as.factor(), `Transcript length` = LENGTH)
   # color by the quantile of the transcript length
@@ -597,24 +596,36 @@ get_sequin_quartiled_states <- function(dge, sample_name, tx_len_norm = TRUE) {
     ) %>%
     ungroup()
   
+  per_quartile_mse <- combined_df %>%
+    group_by(Sample, `Transcript length`) %>%
+    summarise(mean_sq_error = mean((GT - `Observed log-CPM`)^2)) %>%
+    rename(
+      Sample = "cell_line"
+    ) %>%
+    ungroup()
 
   # merge the overall correlation with the per quartile correlation
   per_sample_cor <- tibble(
     cell_line = names(per_sample_cor),
     new_correlation = as.numeric(per_sample_cor)
   )
+  per_sample_mse <- tibble(
+    cell_line = names(per_sample_mse),
+    new_mean_sq_error = as.numeric(per_sample_mse)
+  )
+
   # Combine the two tibbles
   combined_data <- per_quartile_cor %>%
-    left_join(per_sample_cor, by = "cell_line") %>%
-    mutate(correlation = ifelse(`Transcript length` == "All transcript", new_correlation, correlation))
-
+    left_join(per_quartile_mse, by = c("cell_line", "Transcript length")) %>%
+    rename(mean_sq_error = "mean square error")
   # Add "All transcript" row with the new correlations
   all_transcripts <- per_sample_cor %>%
-    mutate(`Transcript length` = "All transcript", correlation = new_correlation) %>%
-    select(cell_line, `Transcript length`, correlation)
+    left_join(per_sample_mse, by = "cell_line") %>%
+    mutate(`Transcript length` = "All transcript") %>%
+    rename(new_correlation = "correlation",   new_mean_sq_error = "mean square error")
 
   # Combine with the original data
-  combined_data <- bind_rows(combined_data, all_transcripts) %>% select(-new_correlation)
+  combined_data <- bind_rows(combined_data, all_transcripts)
   combined_data$sample <- sample_name
   combined_data
 }
@@ -700,10 +711,10 @@ p2 <- plot_df %>%
   scale_fill_manual(values = color_palette[c("Illumina", "ONT_1", "ONT_2", "PacBio")] %>% unname()) +
   labs(y="Transcripts discovery rate")
 p3 <- plot_df %>%
-  ggplot(aes(x = cell_line_sample, y = `Transcript length`, color = correlation, size = correlation)) +
+  ggplot(aes(x = cell_line_sample, y = `Transcript length`, color = correlation, size = `mean square error` )) +
   geom_point() +
   # better color scheme
-  scale_color_viridis_c(option = "C") +
+  scale_color_gradient(low = "#d2cccc", high = "black")  +
   # minimal theme
   theme_minimal() +
   # rotate the x axis labels
@@ -744,7 +755,7 @@ get_ercc_scatter_plot <- function(dge, figure_name, tx_len_norm = TRUE) {
     } else {
         dge.ercc.norm <- dge.ercc$counts %>% as_tibble(rownames="NAME")  %>% mutate(across(where(is.numeric), get_lcpm))
     }
-    dge.ercc.norm  <- dge.ercc.norm %>% left_join(dge.ercc$gene %>% as_tibble(rownames="NAME") %>% select(NAME, Overdispersion))
+    dge.ercc.norm  <- dge.ercc.norm %>% left_join(dge.ercc$gene %>% as_tibble(rownames="NAME") %>% select(NAME))
 
     # Merge the ground truth and observed data
     df <-dge.ercc.norm %>% left_join(ercc.gt.norm)
@@ -752,12 +763,15 @@ get_ercc_scatter_plot <- function(dge, figure_name, tx_len_norm = TRUE) {
     combined_df <- df %>% pivot_longer(cols = dge.ercc$samples$sample, names_to = "Sample", values_to = "Observed log-CPM")
     
     per_sample_cor <- sapply(dge$samples$sample, function(x) {
-      cor(combined_df[combined_df$Sample == x,]$GT, combined_df[combined_df$Sample == x,]$`Observed log-CPM`) %>% unlist
+      cor(combined_df[combined_df$Sample == x, ]$GT, combined_df[combined_df$Sample == x, ]$`Observed log-CPM`) %>% unlist()
     })
-    
+
+
     # Calculate the correlation
     combined_df$Sample <- factor(combined_df$Sample)
     correlation <- cor(combined_df$GT, combined_df$`Observed log-CPM`)
+    mean_sq_error <- mean((combined_df$GT - combined_df$`Observed log-CPM`)^2)
+    mean_abs_error <- mean(abs(combined_df$GT - combined_df$`Observed log-CPM`))
     
     combined_df <- combined_df %>% rename(Length = "Transcript length")
 
@@ -776,10 +790,12 @@ get_ercc_scatter_plot <- function(dge, figure_name, tx_len_norm = TRUE) {
       theme_classic() + 
       # scale_y_log10(labels = label_number()) + 
       labs(title = figure_name, y = "Expected abundance log2(TPM+1)", x = "Observed log2(TPM+1)") +
-      annotate("text", x = min(combined_df$`Observed log-CPM`), y = max(combined_df$GT), 
-               label = paste("Correlation: ", round(correlation, 2)), 
+      annotate("text", x = 12, y = 5, 
+               label = paste("Correlation: ", round(correlation, 2), '\n'
+                             ,"Mean Squared Error: ", round(mean_sq_error, 2), '\n'
+                             ,"Mean Absolute Error: ", round(mean_abs_error, 2)),
                hjust = 0, vjust = 1, 
-               color = "black", size = 4, 
+               color = "black", size = 3, 
                fontface = "italic") +
       scale_color_viridis_d() +
       scale_size_continuous(limits = c(0, 5))
@@ -791,7 +807,6 @@ get_ercc_scatter_plot <- function(dge, figure_name, tx_len_norm = TRUE) {
     )
     return(list(plot1 = p1,  plot2 = p2, table = t))
 }
-
 cor.ont_bulk <- get_ercc_scatter_plot(ont_bulk.dge, figure_name = "ONT BULK ERCC", tx_len_norm = FALSE)
 cor.pb_bulk <- get_ercc_scatter_plot(pb_bulk.dge, figure_name = "Pacbio BULK ERCC", tx_len_norm = FALSE)
 cor.ont_drna <- get_ercc_scatter_plot(ont_drna.deg, figure_name = "ONT dRNA ERCC", tx_len_norm = FALSE)
@@ -910,7 +925,6 @@ get_ercc_quartiled_states <- function(dge, sample_name, tx_len_norm = TRUE) {
   combined_data
 }
 
-
 cor.ont_bulk <- get_ercc_quartiled_states(ont_bulk.dge, sample_name="ONT cDNA" ,tx_len_norm = FALSE)
 cor.pb_bulk <- get_ercc_quartiled_states(pb_bulk.dge, sample_name = "Pacbio", tx_len_norm = FALSE)
 cor.ont_drna <- get_ercc_quartiled_states(ont_drna.deg, sample_name = "ONT dRNA", tx_len_norm = FALSE)
@@ -989,11 +1003,12 @@ p2 <- plot_df %>%
   ) +
   scale_fill_manual(values = color_palette[c("Illumina", "ONT_1", "ONT_2", "PacBio")] %>% unname()) +
   labs(y="Transcripts discovery rate")
+
 p3 <- plot_df %>%
-  ggplot(aes(x = cell_line_sample, y = `Transcript length`, color = correlation, size = correlation)) +
+  ggplot(aes(x = cell_line_sample, y = `Transcript length`, color = correlation, size = `mean square error` )) +
   geom_point() +
   # better color scheme
-  scale_color_viridis_c(option = "C") +
+  scale_color_gradient(low = "#d2cccc", high = "black")  +
   # minimal theme
   theme_minimal() +
   # rotate the x axis labels
@@ -1002,9 +1017,9 @@ p3 <- plot_df %>%
   
 p1 / (p2 + theme(legend.position = "none")) / p3 +
   patchwork::plot_layout(
-    heights = c(2, 2, 1), 
     guides = "collect"
   ) & theme(plot.margin = unit(c(0, 1, 0, 1), "cm"))
+
 
 
 

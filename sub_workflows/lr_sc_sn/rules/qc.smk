@@ -16,7 +16,7 @@ rule qc:
             [
                 os.path.join(results_dir, "qc/coverage/{sample}.flame.coverage_plot.{flames_cov_plot_suffix}"),
                 #os.path.join(results_dir, "qc/sqanti3/{sample}"),
-                os.path.join(results_dir, "qc/NanoPlot/{sample}"),
+                os.path.join(results_dir, "qc/NanoPlot/{sample}/NanoPlot-data.tsv.gz"),
                 os.path.join(results_dir, "qc/RSeQC/{sample}.geneBodyCoverage.curves.pdf"),
                 os.path.join(results_dir, "qc/coverage/{sample}.picard.RNA_Metrics"),
                 os.path.join(results_dir, "qc/RSeQC/{sample}.junctionSaturation_plot.pdf"),
@@ -62,16 +62,16 @@ rule Demultiplexing_plot:
 
 
 ######## Subsample ########
-rule _subsample_1M_reads:
+rule subsample_2M_reads:
     input:
-        os.path.join(results_dir, "flames_out/{sample}/matched_reads.fastq")
+        lambda wildcards: config["samples_fastq_dir"][wildcards.sample]
     output:
         os.path.join(results_dir, "qc/subsample_fq/{sample}_matched_reads_subsampled.fastq")
     resources:
         cpus_per_task=1,
         mem_mb=32000
     params:
-        n_reads = 1000000,
+        n_reads = 2000000,
         seed = config['random_seed']
     shell:
         """
@@ -115,7 +115,7 @@ rule NanoPlot:
     input:
         reads=os.path.join(results_dir, "qc/subsample_fq/{sample}_matched_reads_subsampled.fastq")
     output:
-        directory(os.path.join(results_dir, "qc/NanoPlot/{sample}/"))
+        os.path.join(results_dir, "qc/NanoPlot/{sample}/NanoPlot-data.tsv.gz")
     conda:
         config['conda']['NanoPlot']
     resources:
@@ -123,7 +123,7 @@ rule NanoPlot:
         mem_mb=32000
     shell:
         """
-        output_dir={output}
+        output_dir=$(dirname {output})
         mkdir -p $output_dir
         NanoPlot --fastq {input.reads} --outdir $output_dir -t {resources.cpus_per_task} --raw  --tsv_stats
         """

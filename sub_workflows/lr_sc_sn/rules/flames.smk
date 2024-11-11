@@ -76,7 +76,7 @@ rule flames_genome_mapping:
     shell:
         """
         out_dir=$(dirname {input.fastq})
-
+        module load ImageMagick
         Rscript -e "
             library(FLAMES)
             config_file <- '{input.config_file}'
@@ -117,7 +117,7 @@ rule flames_gene_quant:
     shell:
         """
         out_dir=$(dirname {input.fastq})
-
+        module load ImageMagick
         Rscript -e "
             library(FLAMES)
             config_file <- '{input.config_file}'
@@ -160,7 +160,7 @@ rule flames_trans_map_and_quant:
     shell:
         """
         out_dir=$(dirname {input.fastq})
-
+        module load ImageMagick
         Rscript -e "
             library(FLAMES)
             config_file <- '{input.config_file}'

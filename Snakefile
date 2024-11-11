@@ -44,14 +44,17 @@ module sr_sc_sn:
     config:config
 use rule * from sr_sc_sn as sr_sc_sn_*
 
+module sr_bulk:
+    snakefile: f'sub_workflows/sr_bulk/Snakefile'
+    config:config
+use rule * from sr_bulk as sr_bulk_*
 
 # get sub-workflow config:
 sub_wf_config = {}
-for sub_wf in ['lr_sc_sn', 'lr_bulk']:
+for sub_wf in ['lr_sc_sn', 'lr_bulk', 'sr_bulk']:
     sub_wf_config[sub_wf] = config_parser.sub_wf_config_parser(
         main_cfg_fn = config['global_config_path'], 
         sub_wf_name = sub_wf)
-
 
 include: "rules/qc_plot.smk"
     

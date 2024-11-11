@@ -1,0 +1,3 @@
+# must have this to access config outside the subworkflow if the sub workflow was executed by itself
+global_config_path: "/vast/projects/LongBench/analysis/workflow/config/config.yaml"
+main_wf_dir: "/vast/projects/LongBench/analysis/workflow"
