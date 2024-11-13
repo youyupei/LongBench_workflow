@@ -64,17 +64,3 @@ rule all:
         rules.lr_sc_sn_all.input,
         rules.sr_sc_sn_all.input,
         rules.main_qc_plot.output
-
-# Main workflow is mainly for combining the results from the sub-workflows and plotting
-# 
-# 
-# rule all_figures:
-#     input:
-#         # list the figures that need to be generated
-#         pass
-#     output:
-#         directory(config['figures_output_path'])
-#     shells:
-#         """
-#         mkdir -p {output}
-#         """

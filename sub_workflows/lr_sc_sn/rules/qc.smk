@@ -120,7 +120,7 @@ rule NanoPlot:
         config['conda']['NanoPlot']
     resources:
         cpus_per_task=16,
-        mem_mb=32000
+        mem_mb=16000
     shell:
         """
         output_dir=$(dirname {output})
@@ -139,7 +139,7 @@ rule picard_coverage_data:
         os.path.join(results_dir, "qc/coverage/{sample}.picard.RNA_Metrics")
     resources:
         cpus_per_task=16,
-        mem_mb=32000
+        mem_mb=16000
         #slurm_extra="--mail-type=FAIL --mail-user=you.yu@wehi.edu.au"
     shell:
         """
@@ -162,7 +162,7 @@ rule picard_CollectAlignmentSummaryMetrics:
         os.path.join(results_dir, "qc/{sample}_{bam}.picard_AlignmentSummaryMetrics.txt")
     resources:
         cpus_per_task=16,
-        mem_mb=32000
+        mem_mb=16000
         #slurm_extra="--mail-type=FAIL --mail-user=you.yu@wehi.edu.au"
     shell:
         """
@@ -227,11 +227,11 @@ rule Subsample_bam_for_RSeQC:
     input:
         bam = os.path.join(results_dir,"flames_out/{sample}/align2genome.bam")
     output:
-        bam = os.path.join(results_dir,"subsample_data/{sample}/genome_map_subsample_rate_{subsample_rate}.bam"),
-        bai = os.path.join(results_dir,"subsample_data/{sample}/genome_map_subsample_rate_{subsample_rate}.bam.bai")
+        bam = temp(os.path.join(results_dir,"subsample_data/{sample}/genome_map_subsample_rate_{subsample_rate}.bam")),
+        bai = temp(os.path.join(results_dir,"subsample_data/{sample}/genome_map_subsample_rate_{subsample_rate}.bam.bai"))
     resources:
         cpus_per_task=1,
-        mem_mb=32000
+        mem_mb=8000
     params:
         seed = config['random_seed'],
     shell:
@@ -244,12 +244,13 @@ rule Subsample_bam_for_RSeQC:
 rule RSeQC_gene_body_coverage:
     input:
         bed=config['reference']['bed_housekeeping_genes'], 
-        genome_bam = os.path.join(results_dir,"subsample_data/{sample}/genome_map_subsample_rate_0.01.bam")
+        genome_bam = os.path.join(results_dir,"subsample_data/{sample}/genome_map_subsample_rate_0.01.bam"),
+        genome_bai = os.path.join(results_dir,"subsample_data/{sample}/genome_map_subsample_rate_0.01.bam.bai")
     output:
         report(os.path.join(results_dir, "qc/RSeQC/{sample}.geneBodyCoverage.curves.pdf"))
     resources:
         cpus_per_task=1,
-        mem_mb=32000
+        mem_mb=16000
     conda:
         config['conda']['RSeQC']
     shell:
@@ -267,7 +268,7 @@ rule RSeQC_junction_saturation:
         report(os.path.join(results_dir, "qc/RSeQC/{sample}.junctionSaturation_plot.pdf"))
     resources:
         cpus_per_task=1,
-        mem_mb=64000
+        mem_mb=8000
     conda:
         config['conda']['RSeQC']
     shell:
@@ -286,7 +287,7 @@ rule RSeQC_junction_annotation:
         report(os.path.join(results_dir, "qc/RSeQC/{sample}.splice_junction.pdf"))
     resources:
         cpus_per_task=1,
-        mem_mb=32000
+        mem_mb=8000
     conda:
         config['conda']['RSeQC']
     shell:

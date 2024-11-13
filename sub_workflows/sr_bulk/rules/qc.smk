@@ -1,25 +1,129 @@
 from os.path import join
 
-# Step 1: Trim reads using fastp
-rule fastp:
+# Read length and quality distribution
+######## Subsample ########
+rule subsample_1M_from_R1_R2:
     input:
-        R1 = join(input_fastq_dirs['ill_bulk'], "{cell_line}_R1.fastq.gz"),
-        R2 = join(input_fastq_dirs['ill_bulk'], "{cell_line}_R2.fastq.gz")
+        R1 = rules.fastp.output.R1,
+        R2 = rules.fastp.output.R2
     output:
-        R1=os.path.join(scratch_dir, "trimmed_fq/{cell_line}_R1.fastq.gz"),
-        R2=os.path.join(scratch_dir, "trimmed_fq/{cell_line}_R2.fastq.gz"),
-        html=join(results_dir, "qc/fastp/{cell_line}.html"),
-        json=join(results_dir, "qc/fastp/{cell_line}.json")
+        temp(join(scratch_dir, "qc/subsample_fq/{cell_line}_subsampled1M.fastq"))
+    resources:
+        cpus_per_task=1,
+        mem_mb=8000
+    params:
+        n_reads = 1000000,
+        seed = config['random_seed']
+    shell:
+        """
+        mkdir -p $(dirname {output})
+        seqtk sample -s {params.seed} {input.R1} {params.n_reads} > {output}
+        seqtk sample -s {params.seed} {input.R2} {params.n_reads} >> {output}
+        """
+
+######## NanoPlot ########
+rule NanoPlot:
+    input:
+        reads=rules.subsample_1M_from_R1_R2.output
+    output:
+        join(results_dir, "qc/NanoPlot/{cell_line}/NanoPlot-data.tsv.gz")
     conda:
-        config['conda']['fastp']
+        config['conda']['NanoPlot']
     resources:
         cpus_per_task=16,
-        mem_mb=32000
+        mem_mb=16000
+    shell:
+        """
+        output_dir=$(dirname {output})
+        mkdir -p $output_dir
+        NanoPlot --fastq {input.reads} --outdir $output_dir -t {resources.cpus_per_task} --raw  --tsv_stats
+        """
+
+######## RSeQC ########
+rule subsample_bam_for_RSeQC_coverage:
+    input:
+        bam = rules.sort_and_index_bam.output.sorted_bam
+    output:
+        bam = temp(join(scratch_dir,"subsample_data/{cell_line}/genome_map_subsample_rate_{subsample_rate}.bam")),
+        bai = temp(join(scratch_dir,"subsample_data/{cell_line}/genome_map_subsample_rate_{subsample_rate}.bam.bai"))
+    resources:
+        cpus_per_task=4,
+        mem_mb=8000
+    params:
+        seed = config['random_seed'],
+    shell:
+        """
+        mkdir -p $(dirname {output.bam})
+        samtools view --subsample {wildcards.subsample_rate} --subsample-seed {params.seed} {input.bam} -h | samtools sort -o {output.bam}
+        samtools index {output.bam}
+        """
+
+rule RSeQC_gene_body_coverage:
+    input:
+        bed=config['reference']['bed_housekeeping_genes'], 
+        genome_bam =join(scratch_dir,"subsample_data/{cell_line}/genome_map_subsample_rate_0.1.bam"),
+        genome_bai = join(scratch_dir,"subsample_data/{cell_line}/genome_map_subsample_rate_0.1.bam.bai")
+    output:
+        report(os.path.join(results_dir, "qc/RSeQC/{cell_line}.geneBodyCoverage.curves.pdf"))
+    resources:
+        cpus_per_task=4,
+        mem_mb=16000
+    conda:
+        config['conda']['RSeQC']
+    shell:
+        """
+        mkdir -p $(dirname {output})
+        geneBody_coverage.py -i {input.genome_bam} -r {input.bed} -o $(dirname {output[0]})/{wildcards.cell_line}
+        """
+
+rule RSeQC_junction_saturation:
+    input:
+        bed=config['reference']['bed_human'], 
+        genome_bam = rules.sort_and_index_bam.output.sorted_bam
+    output:
+        report(join(results_dir, "qc/RSeQC/{cell_line}.junctionSaturation_plot.pdf"))
+    resources:
+        cpus_per_task=1,
+        mem_mb=8000
+    conda:
+        config['conda']['RSeQC']
+    shell:
+        """
+        mkdir -p $(dirname {output})
+        junction_saturation.py -i {input.genome_bam} -r {input.bed} -o $(dirname {output[0]})/{wildcards.cell_line}
+        """
+
+rule RSeQC_junction_annotation:
+    input:
+        bed=config['reference']['bed_human'], # I have rules to convert gtf to bed
+        genome_bam = rules.sort_and_index_bam.output.sorted_bam
+    output:
+        report(join(results_dir, "qc/RSeQC/{cell_line}.splice_events.pdf")),
+        report(join(results_dir, "qc/RSeQC/{cell_line}.splice_junction.pdf"))
+    resources:
+        cpus_per_task=1,
+        mem_mb=8000
+    conda:
+        config['conda']['RSeQC']
     shell:
         """
         mkdir -p $(dirname {output[0]})
-        fastp -i {input.R1} -I {input.R2} -o {output.R1} -O {output.R2}  --thread {resources.cpus_per_task} -j {output.json} -h {output.html}
+        junction_annotation.py -i {input.genome_bam} -r {input.bed} -o $(dirname {output[0]})/{wildcards.cell_line}
         """
+
+# RSeQC head 
+rule RSeQC:
+    input:
+        expand(
+            [
+                rules.RSeQC_junction_annotation.output[0],
+                rules.RSeQC_junction_saturation.output[0],
+                rules.RSeQC_gene_body_coverage.output[0]
+            ],
+            cell_line = config['cell_lines']
+        )
+    output:
+        touch(join(results_dir, "qc/.flag/RSeQC.done"))
 
 
 # Entire qc worflow head
@@ -28,92 +132,20 @@ rule qc:
         expand(
             [
                 rules.fastp.output.R1,
-                rules.fastp.output.R2
+                rules.fastp.output.R2,
+                rules.NanoPlot.output[0]
             ],
             cell_line = config['cell_lines']
-        )
+        ),
+
+        rules.RSeQC.output
     output:
         touch(join(results_dir, "qc/.flag/qc.done"))
 
-###################### Run QC pipelines ###############################
-# rule qc:
-#     input:
-#         expand(
-#             [
-#                 os.path.join(results_dir, "qc/coverage/{sample}_{cell_line}.flame.coverage_plot.{flames_cov_plot_suffix}"),
-#                 # os.path.join(results_dir, "qc/sqanti3/{sample}_{cell_line}/"),
-#                 os.path.join(results_dir, "qc/NanoPlot/{sample}_{cell_line}/NanoPlot-data.tsv.gz"),
-#                 os.path.join(results_dir, "qc/coverage/{sample}_{cell_line}.picard.RNA_Metrics"),
-#                 os.path.join(results_dir, "qc/RSeQC/{sample}_{cell_line}.geneBodyCoverage.curves.pdf"),
-#                 os.path.join(results_dir, "qc/RSeQC/{sample}_{cell_line}.junctionSaturation_plot.pdf"),
-#                 os.path.join(results_dir, "qc/RSeQC/{sample}_{cell_line}.splice_events.pdf"),
-#                 os.path.join(results_dir, "qc/RSeQC/{sample}_{cell_line}.splice_junction.pdf"),
-#                 os.path.join(results_dir, "qc/aligment_summary/{alignment_type}/{sample}_{cell_line}.picard_AlignmentSummaryMetrics.txt"),
-#             ],
-#             sample=config["sample_id"],
-#             flames_cov_plot_suffix = ['png'],
-#             cell_line = cell_line_to_barcode.keys(),
-#             alignment_type = ['GenomeAlignment', 'TranscriptAlignment']
-#         )
-#     output:
-#         os.path.join(results_dir, "qc/.flag/qc.done")
-#     shell:
-#         """
-#         mkdir -p $(dirname {output})
-#         touch {output}
-#         """
-###################################################################################
 
-######## Subsample ########
-# rule subsample_2M_reads:
-#     input:
-#         lambda wildcards:  glob.glob(os.path.join(input_fastq_dirs[wildcards.sample], f"{wildcards.cell_line}.fastq*"))[0]
-#     output:
-#         os.path.join(scratch_dir, "subsample_fq/raw/{sample}_{cell_line}_subsampled2M.fastq")
-#     resources:
-#         cpus_per_task=1,
-#         mem_mb=32000
-#     params:
-#         n_reads = 2000000,
-#         seed = config['random_seed']
-#     shell:
-#         """
-#         mkdir -p $(dirname {output})
-#         seqtk sample -s {params.seed} {input} {params.n_reads} > {output}
-#         """
 
-# ######## Count reads ########
-# rule count_reads_in_fastq:
-#     input:
-#         lambda wildcards:  glob.glob(os.path.join(input_fastq_dirs[wildcards.sample], f"{wildcards.cell_line}.fastq*"))[0]
-#     output:
-#         os.path.join(results_dir, "qc/read_counts/{sample}_{cell_line}.count")
-#     resources:
-#         cpus_per_task=1,
-#         mem_mb=32000
-#     shell:
-#         """
-#         mkdir -p $(dirname {output})
-#         wc -l {input} | awk '{{print $1/4}}' > {output}
-#         """
-# 
-# ######## NanoPlot ########
-# rule NanoPlot:
-#     input:
-#         reads=rules.subsample_2M_reads.output
-#     output:
-#         os.path.join(results_dir, "qc/NanoPlot/{sample}_{cell_line}/NanoPlot-data.tsv.gz")
-#     conda:
-#         config['conda']['NanoPlot']
-#     resources:
-#         cpus_per_task=16,
-#         mem_mb=32000
-#     shell:
-#         """
-#         output_dir=$(dirname {output})
-#         mkdir -p $output_dir
-#         NanoPlot --fastq {input.reads} --outdir $output_dir -t {resources.cpus_per_task} --raw  --tsv_stats
-#         """
+
+
 # 
 # # Coverage
 # rule picard_coverage_data:
