@@ -223,11 +223,12 @@ rule Subsample_bam_for_RSeQC:
 
 rule RSeQC_gene_body_coverage:
     input:
-        bed=config['reference']['bed_housekeeping_genes'], 
-        genome_bam = os.path.join(results_dir,"subsample_data/{sample}_{cell_line}/genome_map_subsample_rate_0.01.bam"),
-        genome_bai = os.path.join(results_dir,"subsample_data/{sample}_{cell_line}/genome_map_subsample_rate_0.01.bam.bai")
+        bed=config['reference']['bed_human'], 
+        genome_bam = os.path.join(results_dir,"subsample_data/{sample}_{cell_line}/genome_map_subsample_rate_0.1.bam"),
+        genome_bai = os.path.join(results_dir,"subsample_data/{sample}_{cell_line}/genome_map_subsample_rate_0.1.bam.bai")
     output:
-        report(os.path.join(results_dir, "qc/RSeQC/{sample}_{cell_line}.geneBodyCoverage.curves.pdf"))
+        report(os.path.join(results_dir, "qc/RSeQC/{sample}_{cell_line}.geneBodyCoverage.curves.pdf")),
+        os.path.join(results_dir, "qc/RSeQC/{sample}_{cell_line}.geneBodyCoverage.r")
     resources:
         cpus_per_task=4,
         mem_mb=16000
