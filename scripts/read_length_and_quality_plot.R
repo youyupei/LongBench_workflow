@@ -4,6 +4,7 @@ library(scales)
 # library(viridis)
 library(gghalves)
 library(patchwork)
+library(dplyr)
 
 # setup input and output directories
 # List of file paths and corresponding sample names
@@ -87,4 +88,15 @@ rst <- p1 / (p2 + theme(legend.position = "none")) +
 ggsave(output_fig, rst, width = 25, height = 13, units = "in", dpi = 150)
 
 
+# save a summary table
+summary_table <- all_data %>%
+  group_by(sample, datatype) %>%
+  summarise(
+    mean_qual = mean(quals),
+    median_qual = median(quals),
+    mean_length = mean(lengths),
+    median_length = median(lengths)
+  ) %>%
+  arrange(datatype, sample)
 
+write.table(summary_table, snakemake@output[[2]], sep = "\t", quote = FALSE, row.names = FALSE)

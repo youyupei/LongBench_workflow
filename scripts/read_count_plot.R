@@ -90,3 +90,7 @@ p <- ggplot(df, aes(x = sample, y = read_count, fill = datatype)) +
   scale_fill_manual(values = color_palette[c("Illumina", "PacBio", "ONT", "ONT_1")] %>% unname)
 # Save the plot
 ggsave(output_fig, p, width = 10, height = 6, units = "in", dpi = 300)
+
+
+# save a summary table
+write.table(df, snakemake@output[[2]], sep = "\t", quote = FALSE, row.names = FALSE)

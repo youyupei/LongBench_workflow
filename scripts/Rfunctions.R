@@ -119,3 +119,41 @@ catchMyKallisto <- function(paths) {
     list(counts = Counts, annotation = Quant1)
     
 }
+
+# Load dge from output directory of salmon, oarfish or kallisto
+get_dge_from_salmon <- function(dir, sample_prefix_regex) {
+  salmon.dirs <- file.path(dir, 
+                               list.dirs(dir, full.names = FALSE, recursive = FALSE))
+  catched.salmon <- edgeR::catchSalmon(salmon.dirs, verbose = TRUE)
+  rst.dge <- DGEList(counts=catched.salmon$counts, gene=catched.salmon$annotation)
+  rownames(rst.dge$samples) <- rownames(rst.dge$samples) %>% sub(sample_prefix_regex, '', .)
+  colnames(rst.dge$counts) <- colnames(rst.dge$counts) %>% sub(sample_prefix_regex, '', .)
+  rst.dge$samples <- merge(rst.dge$samples %>% select(-group), bulk.meta, by = "row.names", all.x = TRUE) %>% select(-Row.names)
+  rst.dge$samples <- rst.dge$samples[match(colnames(rst.dge$counts), rst.dge$samples$sample),]
+  return(rst.dge)
+}
+
+get_dge_from_oarfish <- function(dir, sample_prefix_regex) {
+  salmon.dirs <- file.path(dir, 
+                               list.dirs(dir, full.names = FALSE, recursive = FALSE))
+  catched.oarfish <- catchOarfish(salmon.dirs, verbose = TRUE)
+  rst.dge <- DGEList(counts=catched.oarfish$counts, gene=catched.oarfish$annotation)
+  rownames(rst.dge$samples) <- rownames(rst.dge$samples) %>% sub(sample_prefix_regex, '', .)
+  colnames(rst.dge$counts) <- colnames(rst.dge$counts) %>% sub(sample_prefix_regex, '', .)
+  rst.dge$samples <- merge(rst.dge$samples %>% select(-group), bulk.meta, by = "row.names", all.x = TRUE) %>% select(-Row.names)
+  rst.dge$samples <- rst.dge$samples[match(colnames(rst.dge$counts), rst.dge$samples$sample),]
+  return(rst.dge)
+}
+
+get_dge_from_kallisto <- function(dir, sample_prefix_regex) {
+  dirs <- file.path(dir, list.dirs(dir, full.names = FALSE, recursive = FALSE))
+  catched.kallisto <- catchMyKallisto(dirs)
+  catched.kallisto
+  rst.dge <- DGEList(counts=catched.kallisto$counts, gene=catched.kallisto$annotation)
+  rownames(rst.dge$samples) <- rownames(rst.dge$samples) %>% sub(sample_prefix_regex, '', .)
+  colnames(rst.dge$counts) <- colnames(rst.dge$counts) %>% sub(sample_prefix_regex, '', .)
+  rst.dge$samples <- merge(rst.dge$samples %>% select(-group), bulk.meta, by = "row.names", all.x = TRUE) %>% select(-Row.names)
+  rst.dge$samples <- rst.dge$samples[match(colnames(rst.dge$counts), rst.dge$samples$sample),]
+  return(rst.dge)
+}
+

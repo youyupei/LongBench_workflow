@@ -24,7 +24,8 @@ rule read_number_plot:
         )
     output:
         report(join(figures_output_path, "qc/read_number_plot.pdf"), 
-                category = "QC", subcategory = "Read number")
+                category = "QC", subcategory = "Read number"),
+        join(figures_output_path, "qc/read_number_table.txt")
     params:
         bulk_sample_name = expand("{sample}_{cell_line}", 
                             sample = sub_wf_config['lr_bulk']["sample_id"],
@@ -58,7 +59,8 @@ rule lr_read_length_plot:
         # )
     output:
         report(join(figures_output_path, "qc/read_length_and_quality_plot.pdf"), 
-                category = "QC", subcategory = "Read length and quality")
+                category = "QC", subcategory = "Read length and quality"),
+        join(figures_output_path, "qc/read_length_and_qual_table.txt")
     params:
         sample_id = expand("{sample}_{cell_line}", 
                             sample = sub_wf_config['lr_bulk']["sample_id"],
@@ -66,7 +68,7 @@ rule lr_read_length_plot:
                          sub_wf_config['lr_sc_sn']["sample_id"]
     resources:
         cpus_per_task=1,
-        mem_mb=1000
+        mem_mb=32000
 
     script:
         join(config['main_wf_dir'], "scripts/read_length_and_quality_plot.R")
@@ -102,6 +104,7 @@ rule RSeQC_gene_body_coverage_plot:
 
 rule RSeQC_junction_saturation_plot_known:
     input:
+        # junction saturation
         lr_bulk = \
             expand(
                 join(lr_bulk_result_dir, "qc/RSeQC/{sample}_{cell_line}.junctionSaturation_plot.r"),
@@ -112,7 +115,10 @@ rule RSeQC_junction_saturation_plot_known:
             expand(
                 join(sr_bulk_result_dir, "qc/RSeQC/{cell_line}.junctionSaturation_plot.r"),
                 cell_line = sub_wf_config['sr_bulk']["cell_lines"]
-            )
+            ),
+        # read count
+        read_length_table = join(figures_output_path, "qc/read_length_and_qual_table.txt"),
+        read_number_table = join(figures_output_path, "qc/read_number_table.txt")
     output:
         report(join(figures_output_path, "qc/KnownJunctionSaturation_plot.pdf"), 
                 category = "QC", subcategory = "Gene body coverage")
