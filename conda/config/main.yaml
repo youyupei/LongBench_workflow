@@ -7,6 +7,10 @@ dependencies:
   - python=3.11
   - pip
   - salmon=1.10.2
+  - cellsnp-lite
   - pip:
     - blaze2==2.5.0
     - fast-edit-distance==1.2.2
+    - gffutils==0.10.1
+    - vireoSNP==0.5.8
+    - threadpoolctl==3.5.0

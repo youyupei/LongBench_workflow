@@ -1,7 +1,7 @@
 ---
 title: "Processing of ONT single cell/nuclei data"
 author: "Yupei"
-date: '2024-06-07'
+date: '2024-11-20'
 output:
   html_document:
     code_folding: hide
@@ -16,13 +16,24 @@ params:
   random_seed: 2024
   cache_dir: NULL
   sc_long_preprocessing_script: NULL
-  demuxlet_out: NULL
+  vireo_out: NULL
   out_annotated_so_rds: NULL
   fn_flames_gene_quant: NULL
+  output_figures: NULL
 
     
 ---
-
+```{r, include=F, eval=F, echo=F}
+params <- list(
+  random_seed = 2024,
+  cache_dir = NULL,
+  sc_long_preprocessing_script =  '/home/users/allstaff/you.yu/LongBench/analysis/workflow/sub_workflows/lr_sc_sn/rmarkdown/sc_long_preprocessing.R',
+  vireo_out =  '/home/users/allstaff/you.yu/LongBench/analysis/lr_sc_sn/result/vireo/ont_sn_vireo',
+  out_annotated_so_rds =  NULL,
+  fn_flames_gene_quant =  "/vast/projects/LongBench/analysis/lr_sc_sn/result/flames_out/ont_sn/gene_count.csv",
+  output_figures = "/home/users/allstaff/you.yu/LongBench/analysis/lr_sc_sn/result/figures/test_clustering_annotation.pdf"
+)
+```
 ```{r setup, include=FALSE}
 options(future.globals.maxSize = 5 * 1024 * 1024 * 1024)
 knitr::opts_chunk$set(echo = FALSE)
@@ -45,20 +56,21 @@ library(kableExtra)
 ```{r, all input files}
 # other setting:
 seed <- params$random_seed
-# output directory
-params$out_annotated_so_rds
 
 # make sure the output directory exists
 dir.create(dirname(params$out_annotated_so_rds), showWarnings = F, recursive = T)
 source(params$sc_long_preprocessing_script)
 ```
 
-
-
 # sing-cell QC and clustring
 ```{r input file, echo=T, cache=TRUE, warning=F, eval=T}
 # input file
 so <- load_flames_gene_quant(params$fn_flames_gene_quant, assay = "Gene_quant")
+# load the vireo result
+vireo_out <- read.csv(paste0(params$vireo_out, "/donor_ids.tsv"), header = T, sep = "\t")
+
+# add the donor information to the metadata
+so$vireo_rst <- vireo_out$donor_id[match(so %>% colnames, vireo_out$cell)]
 ```
 
 ## Basic QC
@@ -79,72 +91,24 @@ p <- DimPlot(
   reduction = "umap.Gene_quant",
   combine = FALSE, label.size = 5,
   label = TRUE)
-p <-c(p, FeaturePlot(so, features = c("nFeature_Gene_quant", "nCount_Gene_quant", "percent.mt") , combine = F))
+p <- c(p, FeaturePlot(so, features = c("nFeature_Gene_quant", "nCount_Gene_quant", "percent.mt"), combine = F))
+
+p <- c(p, DimPlot(
+  subset(so, vireo_rst != "unassigned" & vireo_rst != "doublet"),
+  group.by='vireo_rst',
+  reduction = "umap.Gene_quant",
+  combine = FALSE, label.size = 5,
+  label = TRUE))
+
 do.call(grid.arrange, p)
 ```
 
-# Part 2: Cell line annotation:
-Get demuxlet result
-```{r}
-# read the demuxlet output:
-demuxlet_out <- read.csv(params$demuxlet_out, header = T, sep = '\t') %>% dplyr::select(BARCODE, BEST, SNG.1ST)
+# Part 2: Annotated the original clusters:
 
-demuxlet_out <- demuxlet_out %>% mutate(
-  demuxlet.LABEL = case_when(
-    substr(BEST, 1, 3) == "SNG" ~ factor(substr(BEST, 5, nchar(BEST))),
-    TRUE ~ NA
-  ),
-  SNG.1ST = factor(SNG.1ST),
-  demuxlet.class = substr(BEST, 1, 3)
-) %>% dplyr::rename(demuxlet.SNG.1ST = SNG.1ST)
-
-
-knitr::kable(demuxlet_out, row.names = F) %>% kable_styling(bootstrap_options = "striped",font_size = 10) %>% scroll_box(height = "400px")
-```
-
-
-Merge it to the metadaata of seurat object
-```{r}
-merged_metadata <- merge(x = so@meta.data, y = demuxlet_out, by.x = "row.names", by.y = "BARCODE", all.x = TRUE)
-rownames(merged_metadata) <- merged_metadata$Row.names
-so@meta.data <- merged_metadata %>% dplyr::select( -Row.names)
-rm(merged_metadata)
-```
-
-```{r}
-# Summary of different categries of demuxlet output
-so$demuxlet.class %>% table
-```
-
-```{r, fig.height=10, fig.width=10}
-
-p1 <- DimPlot(
-  so,
-  group.by = 'demuxlet.class',
-  combine = F, label.size = 5,
-  label = F)
-p1[[1]] <- p1[[1]] + ggtitle("Demuxlet class")
-
-p2 <- DimPlot(
-  so[,!is.na(so$demuxlet.LABEL) ],
-  group.by = 'demuxlet.LABEL',
-  combine = F, label.size = 5,
-  label = F)
-p2[[1]] <- p2[[1]] + ggtitle("Cell line annotation (Cell classified as SNG)")
-
-p3 <- FeaturePlot(so, features = c("nCount_RNA", "percent.mt") , combine = F)
-
-do.call(grid.arrange, c(p1,
-                        p2,
-                        p3, ncol=2))
-
-rm(p1, p2, p3)
-```
-Annotated the original clusters:
-```{r}
+```{r, include=F, eval=F,echo=F}
 cluster_anno <- so$seurat_clusters %>% levels() %>% set_names() %>% map_chr( function(x) {
   subset_obj <- subset(so, idents = x)
-  prop_table <- table(subset_obj$demuxlet.LABEL) %>% prop.table()
+  prop_table <- table(subset_obj$vireo_rst[subset_obj$vireo_rst != "unassigned" & subset_obj$vireo_rst != "doublet"]) %>% prop.table()
   if (max(prop_table) > 0.9) {
     return(prop_table[which.max(prop_table)] %>% names)
   } else {
@@ -152,18 +116,23 @@ cluster_anno <- so$seurat_clusters %>% levels() %>% set_names() %>% map_chr( fun
   }
 } )
 
-so@meta.data$cell_lines <- cluster_anno[so$seurat_clusters_Gene_quant_res0.5] %>%  gsub("NCI", '', .)
+so@meta.data$cell_lines <- cluster_anno[so$seurat_clusters_Gene_quant_res0.5]
 
 # plot the annotated cell lines
 p <- DimPlot(
   so,
-  group.by='cell_lines',
+  group.by = "cell_lines",
   reduction = "umap.Gene_quant",
   combine = FALSE, label.size = 5,
-  label = TRUE)
+  label = TRUE
+)
+
+p
 ```
 
 
 ```{r}
+so <- subset(so, vireo_rst != "unassigned" & vireo_rst != "doublet")
+so$cell_lines <- so$vireo_rst
 saveRDS(so, file = params$out_annotated_so_rds)
 ```

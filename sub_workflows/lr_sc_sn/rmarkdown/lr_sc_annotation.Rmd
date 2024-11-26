@@ -1,0 +1,138 @@
+---
+title: "Processing of ONT single cell/nuclei data"
+author: "Yupei"
+date: '2024-06-07'
+output:
+  html_document:
+    code_folding: hide
+    toc: yes
+    toc_float: yes
+    number_sections: yes
+    toc_depth: 4
+  pdf_document:
+    toc: yes
+    toc_depth: '4'
+params:
+  random_seed: 2024
+  cache_dir: NULL
+  sc_long_preprocessing_script: NULL
+  vireo_out: NULL
+  out_annotated_so_rds: NULL
+  fn_flames_gene_quant: NULL
+  output_figures: NULL
+
+    
+---
+```{r, include=F, eval=F, echo=F}
+params <- list(
+  random_seed = 2024,
+  cache_dir = NULL,
+  sc_long_preprocessing_script =  '/home/users/allstaff/you.yu/LongBench/analysis/workflow/sub_workflows/lr_sc_sn/rmarkdown/sc_long_preprocessing.R',
+  vireo_out =  '/home/users/allstaff/you.yu/LongBench/analysis/lr_sc_sn/result/vireo/ont_sn_vireo',
+  out_annotated_so_rds =  NULL,
+  fn_flames_gene_quant =  "/vast/projects/LongBench/analysis/lr_sc_sn/result/flames_out/ont_sn/gene_count.csv",
+  output_figures = "/home/users/allstaff/you.yu/LongBench/analysis/lr_sc_sn/result/figures/test_clustering_annotation.pdf"
+)
+```
+```{r setup, include=FALSE}
+options(future.globals.maxSize = 5 * 1024 * 1024 * 1024)
+knitr::opts_chunk$set(echo = FALSE)
+knitr::opts_chunk$set(cache = FALSE, cache.path = params$cache_dir)
+pdf(params$output_figures, width = 10, height = 10)
+library(dplyr)
+library(tidyverse)
+library(Seurat)
+library(patchwork)
+library(Matrix)
+library(ggplot2)
+library(gridExtra)
+library(stringr)
+library(grid)
+library(knitr)
+library(DT)
+library(glue)
+library(kableExtra)
+```
+
+```{r, all input files}
+# other setting:
+seed <- params$random_seed
+
+# make sure the output directory exists
+dir.create(dirname(params$out_annotated_so_rds), showWarnings = F, recursive = T)
+source(params$sc_long_preprocessing_script)
+```
+
+# sing-cell QC and clustring
+```{r input file, echo=T, cache=TRUE, warning=F, eval=T}
+# input file
+so <- load_flames_gene_quant(params$fn_flames_gene_quant, assay = "Gene_quant")
+# load the vireo result
+vireo_out <- read.csv(paste0(params$vireo_out, "/donor_ids.tsv"), header = T, sep = "\t")
+
+# add the donor information to the metadata
+so$vireo_rst <- vireo_out$donor_id[match(so %>% colnames, vireo_out$cell)]
+```
+
+## Basic QC
+
+```{r}
+# Step 1: Remove Doublet
+so <- so %>% remove.doublet %>%  remove_outliers 
+so <- so %>% get_clusters(ndim=30,res=0.5,seed = params$random_seed)
+## Check the ndim preserve most of the variance:
+ElbowPlot(so, ndims = 30, reduction = "pca.Gene_quant")
+```
+
+
+```{r, fig.height=20, fig.width=20}
+p <- DimPlot(
+  so,
+  group.by='seurat_clusters_Gene_quant_res0.5',
+  reduction = "umap.Gene_quant",
+  combine = FALSE, label.size = 5,
+  label = TRUE)
+p <- c(p, FeaturePlot(so, features = c("nFeature_Gene_quant", "nCount_Gene_quant", "percent.mt"), combine = F))
+
+p <- c(p, DimPlot(
+  subset(so, vireo_rst != "unassigned" & vireo_rst != "doublet"),
+  group.by='vireo_rst',
+  reduction = "umap.Gene_quant",
+  combine = FALSE, label.size = 5,
+  label = TRUE))
+
+do.call(grid.arrange, p)
+```
+
+# Part 2: Annotated the original clusters:
+
+```{r}
+cluster_anno <- so$seurat_clusters %>% levels() %>% set_names() %>% map_chr( function(x) {
+  subset_obj <- subset(so, idents = x)
+  prop_table <- table(subset_obj$vireo_rst) %>% prop.table()
+  if (max(prop_table) > 0.9) {
+    return(prop_table[which.max(prop_table)] %>% names)
+  } else {
+    return("AMB")
+  }
+} )
+
+so@meta.data$cell_lines <- cluster_anno[so$seurat_clusters_Gene_quant_res0.5]
+
+# plot the annotated cell lines
+p <- DimPlot(
+  so,
+  group.by = "cell_lines",
+  reduction = "umap.Gene_quant",
+  combine = FALSE, label.size = 5,
+  label = TRUE
+)
+
+p + ggtitle("Annotated cell lines for each seurat cluster")
+```
+
+
+```{r}
+dev.off(lr_sc_clustering_annotation.Rmd)
+saveRDS(so, file = params$out_annotated_so_rds)
+```
