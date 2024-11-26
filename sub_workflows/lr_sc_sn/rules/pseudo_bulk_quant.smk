@@ -33,7 +33,7 @@ rule get_cell_line_pseudo_bulk_fq:
         bc_list =os.path.join(results_dir,  "misc/{sample}/{cell_line}_BC_list.txt"),
         fastq = os.path.join(results_dir, 'flames_out/{sample}/matched_reads_dedup.fastq')
     output:
-        results_dir + "/PseudoBulkAlignment/{sample}_{cell_line}_pseudo_bulk.fastq"
+        temp(results_dir + "/PseudoBulkAlignment/{sample}_{cell_line}_pseudo_bulk.fastq")
     shell:
         """
         FASTQ_FILE={input.fastq}
@@ -63,7 +63,7 @@ rule lr_bulk_minimap2_transcript:
     output:
         bam = results_dir + "/PseudoBulkAlignment/{sample}_{cell_line}.bam"
     resources:
-        cpus_per_task=32,
+        cpus_per_task=16,
         mem_mb=64000
     params:
         minimap2 = config["software"]["minimap2"]
@@ -81,6 +81,7 @@ rule run_salmon:
         ref = config["reference"]["transcript"]
     output:
         out_dir = directory(os.path.join(results_dir,"PseudoBulkSalmon/{sample}/{cell_line}"))
+    priority: 1
     conda:
         main_conda
     resources:
@@ -89,17 +90,39 @@ rule run_salmon:
         slurm_extra="--mail-type=FAIL --mail-user=you.yu@wehi.edu.au"
     params:
         lib_type = "A", # auto
-        gibbs_samples = 50
+        numBootstraps = 50
     shell:
         """
         mkdir -p {output.out_dir}
-        salmon quant -t {input.ref} -l {params.lib_type} -a {input.bam} -p {resources.cpus_per_task}  -o {output.out_dir} --ont --numBootstraps {params.gibbs_samples}
+        salmon quant -t {input.ref} -l {params.lib_type} -a {input.bam} -p {resources.cpus_per_task}  -o {output.out_dir} --ont --numBootstraps {params.numBootstraps}
         """
 
-rule pseudo_bulk_salmon_quant:
+rule run_oarfish_cov:
+    priority: 10
+    input:
+        bam = results_dir + "/PseudoBulkAlignment/{sample}_{cell_line}.bam",
+        ref = config["reference"]["transcript"]
+    output:
+        out_dir = directory(os.path.join(results_dir,"PseudoBulkOarfishCov/{sample}/{cell_line}"))
+    conda:
+        config["conda"]["oarfish"]
+    resources:
+        cpus_per_task=16,
+        mem_mb=32000,
+        slurm_extra="--mail-type=FAIL --mail-user=you.yu@wehi.edu.au"
+    params:
+        numBootstraps = 50
+    shell:
+        """
+        mkdir -p {output.out_dir}
+        oarfish --alignments {input.bam} --threads {resources.cpus_per_task} --output {output.out_dir}/ --model-coverage  -d . --filter-group no-filters --num-bootstraps 50
+        """
+
+rule pseudo_bulk_oarfish_quant:
     input: 
-        expand(os.path.join(results_dir,"PseudoBulkSalmon/{sample}/{cell_line}"), 
+        expand(os.path.join(results_dir,"PseudoBulkOarfishCov/{sample}/{cell_line}"), 
                                                     cell_line = config['cell_line_list'],
                                                     sample = config['sample_id']) 
     output:
-        touch(os.path.join(results_dir, ".flag/pseudo_bulk_salmon_quant.done"))
+        touch(os.path.join(results_dir, ".flag/pseudo_bulk_oarfish_quant.done"))
+

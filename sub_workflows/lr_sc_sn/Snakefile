@@ -27,10 +27,10 @@ include: "rules/flames.smk"
 include: "rules/qc.smk"
 include: "rules/internal_priming.smk"
 include: "rules/mutation.smk"
-include: "rules/demuxlet.smk"
+include: "rules/vireo.smk"
 include: "rules/emptydrop.smk"
 include: "rules/sc_clustering.smk"
-include: "rules/pseudo_bulk_salmon_quant.smk"
+include: "rules/pseudo_bulk_quant.smk"
 include: config['main_wf_dir'] + "/modules/utilities.smk"
 
 
@@ -39,11 +39,11 @@ rule all:
         # all qc
         rules.flames.output,
         rules.qc.output,
-        rules.demuxlet.output,
-        rules.emptydrop.output,
+        rules.run_vireo.output,
+        #rules.emptydrop.output,
         rules.run_all_rmarkdown.input,
         rules.plot_silhouette.output,
-        rules.pseudo_bulk_salmon_quant.input
+        rules.pseudo_bulk_oarfish_quant.input
     output:
         touch(os.path.join(results_dir, ".flag/all.done"))
 
