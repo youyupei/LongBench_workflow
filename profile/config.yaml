@@ -10,3 +10,4 @@ conda-prefix: "/vast/projects/LongBench/analysis/workflow/conda/envs"
 singularity-prefix: "/vast/projects/LongBench/analysis/workflow/singularity"
 keep-going: true
 benchmark-extended: true
+rerun-triggers: ["code", "input", "mtime", "params"] # disable "software-env"
