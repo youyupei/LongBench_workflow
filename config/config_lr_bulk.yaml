@@ -2,6 +2,8 @@ reference:
   # have to exist
   genome: "/home/users/allstaff/you.yu/LongBench/reference_files/GRCh38.add.spikein/GRCh38.primary_assembly.genome.add.spikein.fa"
   gtf: "/home/users/allstaff/you.yu/LongBench/reference_files/GRCh38.add.spikein/gencode.v44.transcripts.add.spikein.gtf"
+  gtf_gz: "/home/users/allstaff/you.yu/LongBench/reference_files/GRCh38.add.spikein/gencode.v44.transcripts.add.spikein.gtf.gz"
+  genePred: "/home/users/allstaff/you.yu/LongBench/reference_files/GRCh38.add.spikein/gencode.v44.transcripts.add.spikein.gtf.genePred"
   bed_human: "/home/users/allstaff/you.yu/LongBench/reference_files/GRCh38/gencode.v44.annotation.gtf.bed"
   transcript: "/home/users/allstaff/you.yu/LongBench/reference_files/GRCh38.add.spikein/gencode.v44.transcripts.add.spikein.fa"
   picard_reference: '/home/users/allstaff/you.yu/LongBench/reference_files/GRCh38/refFlat.txt'
@@ -13,6 +15,7 @@ sample_id:
   - 'ont_bulk'
   - 'pb_bulk'
   - 'dRNA_bulk'
+  # - 'dRNA_bulk_topup'
   #- 'dRNA_bulk_q10'
 
 
@@ -26,7 +29,8 @@ samples_raw_bam_dir:
 samples_fastq_dir: 
   ont_bulk: "/home/users/allstaff/you.yu/LongBench/sequencing_data/ONT_bulk/fastq_q10_filter"
   pb_bulk: "/home/users/allstaff/you.yu/LongBench/sequencing_data/pb_bulk"
-  dRNA_bulk: "/home/users/allstaff/you.yu/LongBench/sequencing_data/ONT_dRNA/fastq_q10_filter"
+  dRNA_bulk: "/home/users/allstaff/you.yu/LongBench/sequencing_data/ONT_dRNA/fastq_q10_filter_merged_with_topup"
+  # dRNA_bulk_topup: "/home/users/allstaff/you.yu/LongBench/sequencing_data/ONT_dRNA/fastq_topup_q10_filter"
   #dRNA_bulk_q10: "/vast/scratch/users/you.yu/LongBench/dRNA/fastq_q10_filter"
 
 barcode_list:
@@ -56,14 +60,15 @@ output_path:
 scratch_dir: "/vast/scratch/users/you.yu/LongBench/lr_bulk"
 
 
-
 minimap2_genome_options:
   ont_bulk: "-ax splice:hq"
   pb_bulk: "-ax splice:hq"
   dRNA_bulk: "-ax splice -uf" # For RNA002, people use -k14 as the error rate is high, I removed it here to revert to the default setting as the error rate is similar to the old cDNA data
   dRNA_bulk_q10: "-ax splice -uf"
+  dRNA_bulk_topup: "-ax splice -uf"
 minimap2_trans_options:
   ont_bulk: "-ax lr:hq --eqx -N 100 "
   pb_bulk: "-ax lr:hq --eqx -N 100 "
   dRNA_bulk: "-ax map-ont --eqx -N 100 " # I used a  similar setting to the old cDNA data
   dRNA_bulk_q10: "-ax map-ont --eqx -N 100 " 
+  dRNA_bulk_topup: "-ax map-ont --eqx -N 100 "

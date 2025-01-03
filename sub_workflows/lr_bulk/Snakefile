@@ -50,9 +50,10 @@ wildcard_constraints:
 # Main rule
 rule all:
    input:
-      results_dir + "/.flag/run_all_mapping.done",
+      # results_dir + "/.flag/run_all_mapping.done",
+      rules.run_all_mapping.output,
       rules.run_quantification.output,
       rules.qc.output,
-      rules.run_kallisto.output
+      #rules.run_kallisto.output
    output:
       touch(os.path.join(results_dir, ".flag/all.done"))

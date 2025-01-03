@@ -1,7 +1,8 @@
 # config
 bulk_count_file <- snakemake@input$bulk_read_count |> unlist()
 sc_blaze_summary <- snakemake@input$sc_blaze_summary |> unlist()
-sr_bulk_fastp_json <- snakemake@input$sr_bulk_fastp_json |> unlist()
+sr_bulk_json <- paste0(snakemake@input$sr_bulk_salmon |> unlist(), "/aux_info/meta_info.json")
+print(sr_bulk_json)
 bulk_sample_name <- snakemake@params$bulk_sample_name |> unlist()
 sc_sample_names <- snakemake@params$sc_sample_name |> unlist()
 sr_bulk_sample_name <- snakemake@params$sr_sample_name |> unlist()
@@ -25,7 +26,14 @@ extract_sr_bulk_read_count <- function(json) {
   # Read the json file
   json_data <- jsonlite::fromJSON(json)
   # Extract the read count
-  return(json_data$summary$before_filtering$total_reads)
+  return(json_data$num_processed)
+}
+
+extract_sr_bulk_mapped_read_count <- function(json) {
+  # Read the json file
+  json_data <- jsonlite::fromJSON(json)
+  # Extract the read count
+  return(json_data$num_mapped)
 }
 
 extract_blaze_stats <- function(file_path) {
@@ -55,7 +63,7 @@ read_count_from_file <- function(file_path) {
 # Extract read counts from all files
 bulk_read_counts <- sapply(bulk_count_file, read_count_from_file)
 sc_read_counts <- sapply(sc_blaze_summary, extract_blaze_stats)
-sr_bulk_read_counts <- sapply(sr_bulk_fastp_json, extract_sr_bulk_read_count)
+sr_bulk_read_counts <- sapply(sr_bulk_json, extract_sr_bulk_read_count)
 
 # Create a data frame
 sample_names <- c(bulk_sample_name, sc_sample_names, sr_bulk_sample_name)
@@ -86,7 +94,7 @@ library(ggplot2)
 p <- ggplot(df, aes(x = sample, y = read_count, fill = datatype)) +
   geom_bar(stat = "identity") +
   theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
-  labs(title = "Read count comparison", x = "Sample", y = "Read count") +
+  labs(title = "Read count comparison", x = "Sample", y = "Read/Read pair count") +
   scale_fill_manual(values = color_palette[c("Illumina", "PacBio", "ONT", "ONT_1")] %>% unname)
 # Save the plot
 ggsave(output_fig, p, width = 10, height = 6, units = "in", dpi = 300)

@@ -1,4 +1,4 @@
-main_conda = config["conda"]["main"]
+
 rule salmon:
     input:
         bam = "/home/users/allstaff/you.yu/LongBench/analysis/lr_sc_sn/result/flames_out/ont_sc/test_Sortsam.name_sorted.bam",

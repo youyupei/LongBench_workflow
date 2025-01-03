@@ -1,6 +1,3 @@
-# setup dirs
-results_dir = config["output_path"]
-main_conda = config["conda"]["main"]
 
 # Main work flow
 rule blaze:

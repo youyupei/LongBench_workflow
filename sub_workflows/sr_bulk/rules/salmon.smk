@@ -45,4 +45,4 @@ rule salmon:
             cell_line = config['cell_lines']
         )
     output:
-        touch(join(results_dir, "qc/.flag/qc.done"))
+        touch(join(results_dir, "qc/.flag/salmon.done"))

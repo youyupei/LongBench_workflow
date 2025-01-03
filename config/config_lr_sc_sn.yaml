@@ -7,6 +7,7 @@ scratch_dir: "/vast/scratch/users/you.yu/LongBench/lr_sc_sn"
 reference:
   genome: "/home/users/allstaff/you.yu/project/ref_files/GRCh38.primary_assembly.genome.fa"
   gtf: "/home/users/allstaff/you.yu/LongBench/reference_files/GRCh38/gencode.v44.annotation.gtf"
+  gtf_gz: "/home/users/allstaff/you.yu/LongBench/reference_files/GRCh38/gencode.v44.annotation.gtf.gz"
   transcript: "/home/users/allstaff/you.yu/LongBench/reference_files/GRCh38/gencode.v44.transcripts.fa"
   cellline_mutations: '/home/users/allstaff/you.yu/LongBench/reference_files/celllines_mutation/mutations_subsetted_NAsdropped.csv'
   picard_reference: '/home/users/allstaff/you.yu/LongBench/reference_files/GRCh38/refFlat.txt'

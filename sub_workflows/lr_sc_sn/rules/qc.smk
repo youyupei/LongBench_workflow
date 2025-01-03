@@ -9,36 +9,6 @@
 ## config["software"]["sqanti3_dir"]
 ## results_dir
 
-###################### Run QC pipelines ###############################
-rule qc:
-    input:
-        expand(
-            [
-                os.path.join(results_dir, "qc/coverage/{sample}.flame.coverage_plot.{flames_cov_plot_suffix}"),
-                #os.path.join(results_dir, "qc/sqanti3/{sample}"),
-                os.path.join(results_dir, "qc/NanoPlot/{sample}/NanoPlot-data.tsv.gz"),
-                os.path.join(results_dir, "qc/RSeQC/{sample}.geneBodyCoverage.curves.pdf"),
-                os.path.join(results_dir, "qc/coverage/{sample}.picard.RNA_Metrics"),
-                os.path.join(results_dir, "qc/RSeQC/{sample}.junctionSaturation_plot.pdf"),
-                os.path.join(results_dir, "qc/RSeQC/{sample}.splice_events.pdf"),
-                os.path.join(results_dir, "qc/RSeQC/{sample}.splice_junction.pdf")
-
-            ],
-            sample=config["sample_id"],
-            #read_length_source=["raw"],
-            flames_cov_plot_suffix = ['png', 'CDS.png']
-        ),
-        
-        Demultiplexing_plot = os.path.join(results_dir, "plots/qc/demultiplexing_state.pdf")
-    output:
-        os.path.join(results_dir, "qc/.flag/qc.done")
-    shell:
-        """
-        mkdir -p $(dirname {output})
-        touch {output}
-        """
-###################################################################################
-
 ######## Demultiplexing ########
 # NOTE: this is the only QC rule that uses all reads, the following rules use reads successfully assigned to a cell
 
@@ -66,7 +36,7 @@ rule subsample_2M_reads:
     input:
         lambda wildcards: config["samples_fastq_dir"][wildcards.sample]
     output:
-        os.path.join(results_dir, "qc/subsample_fq/{sample}_matched_reads_subsampled.fastq")
+        os.path.join(scratch_dir, "qc/subsample_fq/{sample}_matched_reads_subsampled.fastq")
     resources:
         cpus_per_task=1,
         mem_mb=32000
@@ -80,40 +50,28 @@ rule subsample_2M_reads:
         """
 
 
-
-######## Read length (subsampled fastq) ########
-# rule generate_read_length_statistics:
-#     input:
-#         os.path.join(results_dir, "qc/subsample_fq/{sample}_matched_reads_subsampled.fastq")
-#     output:
-#         os.path.join(results_dir, "qc/{sample}.read_length.txt")
-#     resources:
-#         cpus_per_task=1,
-#         mem_mb=32000,
-#         slurm_extra="--mail-type=FAIL --mail-user=you.yu@wehi.edu.au"
-#     shell:
-#         """
-#         mkdir -p $(dirname {output})
-# 
-#         # remove output file if it already exists
-#         if [ -f {output} ]; then
-#             rm {output}
-#         fi
-# 
-#         # if input is a directory, iterate through all the fastq 
-#         if [ -d {input} ]; then
-#             for f in {input}/*.fastq; do
-#                 awk '{{if(NR%4==2){{print length($0)}}}}' $f >> {output}
-#             done
-#         else
-#             awk '{{if(NR%4==2){{print length($0)}}}}' {input} > {output}
-#         fi
-#         """
+rule Filter_and_Subsample_bam_for_qc:
+    input:
+        bam = os.path.join(results_dir,"flames_out/{sample}/align2genome.bam")
+    output:
+        bam = temp(os.path.join(scratch_dir,"subsample_data/{sample}/genome_map_subsample_rate_{subsample_rate}.bam")),
+        bai = temp(os.path.join(scratch_dir,"subsample_data/{sample}/genome_map_subsample_rate_{subsample_rate}.bam.bai"))
+    resources:
+        cpus_per_task=1,
+        mem_mb=8000
+    params:
+        seed = config['random_seed'],
+    shell:
+        """
+        mkdir -p $(dirname {output.bam})
+        samtools view --subsample {wildcards.subsample_rate} --subsample-seed {params.seed} -F2034 {input.bam} -h | samtools sort -o {output.bam}
+        samtools index {output.bam}
+        """
 
 ######## NanoPlot ########
 rule NanoPlot:
     input:
-        reads=os.path.join(results_dir, "qc/subsample_fq/{sample}_matched_reads_subsampled.fastq")
+        reads=os.path.join(scratch_dir, "qc/subsample_fq/{sample}_matched_reads_subsampled.fastq")
     output:
         os.path.join(results_dir, "qc/NanoPlot/{sample}/NanoPlot-data.tsv.gz")
     conda:
@@ -201,7 +159,7 @@ rule flame_coverage_plot:
 ## SQANTI3
 rule sqanti3:
     input:
-        reads=os.path.join(results_dir, "qc/subsample_fq/{sample}_matched_reads_subsampled.fastq"),
+        reads=os.path.join(scratch_dir, "qc/subsample_fq/{sample}_matched_reads_subsampled.fastq"),
         gtf=config['reference']['gtf'],
         genome=config['reference']['genome']
     output:
@@ -223,29 +181,12 @@ rule sqanti3:
         """
 
 
-rule Subsample_bam_for_RSeQC:
-    input:
-        bam = os.path.join(results_dir,"flames_out/{sample}/align2genome.bam")
-    output:
-        bam = temp(os.path.join(results_dir,"subsample_data/{sample}/genome_map_subsample_rate_{subsample_rate}.bam")),
-        bai = temp(os.path.join(results_dir,"subsample_data/{sample}/genome_map_subsample_rate_{subsample_rate}.bam.bai"))
-    resources:
-        cpus_per_task=1,
-        mem_mb=8000
-    params:
-        seed = config['random_seed'],
-    shell:
-        """
-        mkdir -p $(dirname {output.bam})
-        samtools view --subsample {wildcards.subsample_rate} --subsample-seed {params.seed} {input.bam} -h | samtools sort -o {output.bam}
-        samtools index {output.bam}
-        """
 
 rule RSeQC_gene_body_coverage:
     input:
         bed=config['reference']['bed_housekeeping_genes'], 
-        genome_bam = os.path.join(results_dir,"subsample_data/{sample}/genome_map_subsample_rate_0.01.bam"),
-        genome_bai = os.path.join(results_dir,"subsample_data/{sample}/genome_map_subsample_rate_0.01.bam.bai")
+        genome_bam = os.path.join(scratch_dir,"subsample_data/{sample}/genome_map_subsample_rate_0.1.bam"),
+        genome_bai = os.path.join(scratch_dir,"subsample_data/{sample}/genome_map_subsample_rate_0.1.bam.bai")
     output:
         report(os.path.join(results_dir, "qc/RSeQC/{sample}.geneBodyCoverage.curves.pdf"))
     resources:
@@ -295,53 +236,42 @@ rule RSeQC_junction_annotation:
         mkdir -p $(dirname {output[0]})
         junction_annotation.py -i {input.genome_bam} -r {input.bed} -o $(dirname {output[0]})/{wildcards.sample}
         """
-## Read length related
-# rule generate_demux_read_length_statistics:
-#     input:
-#         os.path.join(results_dir, "flames_out/{sample}/matched_reads.fastq")
-#     output:
-#         os.path.join(results_dir, "qc/{sample}.blaze_demux.read_length.txt")
-#     resources:
-#         cpus_per_task=1,
-#         mem_mb=32000,
-#         slurm_extra="--mail-type=FAIL --mail-user=you.yu@wehi.edu.au"
-#     shell:
-#         """
-#         mkdir -p $(dirname {output})
-# 
-#         # remove output file if it already exists
-#         if [ -f {output} ]; then
-#             rm {output}
-#         fi
-# 
-#         # if input is a directory, iterate through all the fastq 
-#         if [ -d {input} ]; then
-#             for f in {input}/*.fastq; do
-#                 awk '{{if(NR%4==2){{print length($0)}}}}' $f >> {output}
-#             done
-#         else
-#             awk '{{if(NR%4==2){{print length($0)}}}}' {input} > {output}
-#         fi
-#         """
 
-# Tried LongReadSum: doesn't seem to be very interesting
-    # rule LongReadSum:
-    #     input:
-    #         reads=os.path.join(results_dir, "flames_out/{sample}/matched_reads_subsampled.fastq")
-    #     output:
-    #         flag = touch(os.path.join(results_dir, ".flag/{sample}_LongReadSum.done"))
-    #     conda:
-    #         config['conda']['LongReadSum']
-    #     resources:
-    #         cpus_per_task=16,
-    #         mem_mb=32000,
-    #         slurm_extra="--mail-type=FAIL --mail-user=you.yu@wehi.edu.au"
-    #     params:
-    #         dir = os.path.join(results_dir,"qc/LongReadSum")
-    #     shell:
-    #         """
-    #         longreadsum fq -i {input.reads} -o {params.dir} --threads {resources.cpus_per_task}
-    #         """
+
+
+## AlignQC
+rule alignQC_analysis:
+    input: 
+        #fa=config['reference']['genome'], 
+        fa="/vast/scratch/users/you.yu/LongBench/reference/GRCh38.primary_assembly.genome.fa",
+        anno=config['reference']['gtf_gz'],
+        genome_bam = os.path.join(scratch_dir,"subsample_data/{sample}/genome_map_subsample_rate_0.01.bam"),
+        bai = os.path.join(scratch_dir,"subsample_data/{sample}/genome_map_subsample_rate_0.01.bam.bai")
+    # conda:
+    #     config['conda']['AlignQC']
+    resources:
+        cpus_per_task=16,
+        mem_mb=800000,
+        slurm_extra="--mail-type=FAIL --mail-user=you.yu@wehi.edu.au" # tmp use bonus qos
+   
+    output:
+        output = directory(os.path.join(results_dir, "qc/AlignQC/{sample}/")),
+        tmp_dir = temp(directory(os.path.join(scratch_dir, "alignQC_tmp","{sample}")))
+    priority: 10
+    container: "docker://vacation/alignqc"
+    retries: 3
+    shell:
+        """
+        mkdir -p $(dirname {output.output})
+        mkdir -p {output.tmp_dir}
+        alignqc analyze {input.genome_bam} \
+            -g {input.fa} \
+            --gtf {input.anno} \
+            --output_folder {output.output} \
+            --threads {resources.cpus_per_task} \
+            --specific_tempdir {output.tmp_dir}
+        """
+
 
 # # Commented out as sqanti3 provides similar information
 #     # Read length related
@@ -480,3 +410,41 @@ rule RSeQC_junction_annotation:
 #             O={output.txt} \
 #             CHART={output.chart}
 #         """
+
+###################### Run QC pipelines ###############################
+rule qc:
+    input:
+        expand(
+            [
+                os.path.join(results_dir, "qc/coverage/{sample}.flame.coverage_plot.{flames_cov_plot_suffix}"),
+                #os.path.join(results_dir, "qc/sqanti3/{sample}"),
+                os.path.join(results_dir, "qc/NanoPlot/{sample}/NanoPlot-data.tsv.gz"),
+                os.path.join(results_dir, "qc/RSeQC/{sample}.geneBodyCoverage.curves.pdf"),
+                os.path.join(results_dir, "qc/coverage/{sample}.picard.RNA_Metrics"),
+                os.path.join(results_dir, "qc/RSeQC/{sample}.junctionSaturation_plot.pdf"),
+                os.path.join(results_dir, "qc/RSeQC/{sample}.splice_events.pdf"),
+                os.path.join(results_dir, "qc/RSeQC/{sample}.splice_junction.pdf"),
+                # rules.alignQC_analysis.output[0],
+            ],
+            sample=config["sample_id"],
+            #read_length_source=["raw"],
+            flames_cov_plot_suffix = ['png', 'CDS.png']
+        ),
+        
+        Demultiplexing_plot = os.path.join(results_dir, "plots/qc/demultiplexing_state.pdf")
+    output:
+        os.path.join(results_dir, "qc/.flag/qc.done")
+    shell:
+        """
+        mkdir -p $(dirname {output})
+        touch {output}
+        """
+###################################################################################
+
+rule all_alignQC_analysis:
+    input:
+        expand(
+            rules.alignQC_analysis.output[0], 
+            sample=config["sample_id"])
+    output:
+        touch(os.path.join(config['flag_dir'], "lr_sc_sn_bulk_alginQC.done"))

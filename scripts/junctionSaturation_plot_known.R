@@ -138,8 +138,8 @@ p2_3 <- ggplot(df_avg, aes(x = total_bases, y = value, color = datatype)) +
 
 # Open PDF device to save the plots as multipage
 pdf(snakemake@output[[1]], width = 7, height = 5)
-  print(p1 / p2)
-  print(p1_2 / p2_2)
+  # print(p1 / p2)
+  # print(p1_2 / p2_2)
   print(p1_3 / p2_3)
 # Close the PDF device
 dev.off()

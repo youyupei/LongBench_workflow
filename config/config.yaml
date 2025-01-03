@@ -3,6 +3,7 @@ global_config_path: "/vast/projects/LongBench/analysis/workflow/config/config.ya
 tmp_dir: "/vast/scratch/users/you.yu/LongBench/tmp"
 scratch_dir: "/vast/scratch/users/you.yu/LongBench" #direct short-term intemediate output to vast scratch
 main_wf_dir: "/vast/projects/LongBench/analysis/workflow"
+flag_dir: "/vast/projects/LongBench/analysis/workflow/.flag"
 
 # sub workflow dir setup, the abs path will be automatically generated and accessible as config['sub_wf_dir'] in 
 # corresponding sub workflow
@@ -23,6 +24,7 @@ conda_config: # the parser will convert it to absolute path will be accessible a
   sqanti3: "conda/config/SQANTI3.conda_env.yml"
   oarfish: "conda/config/oarfish.yaml"
   fastp: "conda/config/fastp.yaml"
+  AlignQC: "conda/config/AlignQC.yaml"
 
 conda:
   sqanti3: "SQANTI3" # prebuilt conda env name
@@ -51,6 +53,7 @@ email: "you.yu@wehi.edu.au"
 
 # This is the path to output the final figures (or any figure selected)
 figures_output_path: "/vast/projects/LongBench/analysis/figures"
+reports_output_path: "/vast/projects/LongBench/analysis/reports"
 
 # Other config
 # The number subsampled reads

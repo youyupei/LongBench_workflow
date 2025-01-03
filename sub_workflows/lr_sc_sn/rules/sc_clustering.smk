@@ -1,6 +1,4 @@
 
-results_dir = config["output_path"]
-
 # SC analysis
 rule rmd_clustering_and_annotation:
     input:

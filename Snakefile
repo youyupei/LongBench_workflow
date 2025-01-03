@@ -23,12 +23,6 @@ onerror:
 # Config the values for main workflow
 scratch_dir = config['scratch_dir']
 
-#Sub workflows
-rule NoRuleSpecified:
-    localrule: True
-    shell:
-        "echo 'There is no default rule for this workflow, please specify a rule to run, e.g. snakemake ... all'"
-
 module lr_sc_sn:
     snakefile: 'sub_workflows/lr_sc_sn/Snakefile'
     config:config
@@ -57,10 +51,15 @@ for sub_wf in ['lr_sc_sn', 'lr_bulk', 'sr_bulk']:
         sub_wf_name = sub_wf)
 
 include: "rules/qc_plot.smk"
-    
+include: "rules/DE_analysis.smk"
+include: "rules/sc_cell_line_anno.smk"
 rule all:
     input:
         rules.lr_bulk_all.input,
         rules.lr_sc_sn_all.input,
         rules.sr_sc_sn_all.input,
-        rules.main_qc_plot.output
+        rules.sr_bulk_all.input,
+        rules.main_qc_plot.output,
+        rules.run_cell_line_annotation_pipeline.output,
+        rules.rmd_bulk_de_human.output
+    default_target: True

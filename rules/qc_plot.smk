@@ -18,12 +18,12 @@ rule read_number_plot:
             join(lr_sc_sn_result_dir, "flames_out/{sample}/summary.txt"),
             sample = sub_wf_config['lr_sc_sn']["sample_id"]
         ),
-        sr_bulk_fastp_json = expand(
-            join(sr_bulk_result_dir, "qc/fastp/{cell_line}.json"),
-            cell_line = sub_wf_config['lr_bulk']["cell_lines"]
+        sr_bulk_salmon = expand(
+            join(sr_bulk_result_dir, "salmon/salmon_quant/{cell_line}"),
+            cell_line = sub_wf_config['sr_bulk']["cell_lines"]
         )
     output:
-        report(join(figures_output_path, "qc/read_number_plot.pdf"), 
+        report(join(figures_output_path, "qc/read_number_plot.svg"), 
                 category = "QC", subcategory = "Read number"),
         join(figures_output_path, "qc/read_number_table.txt")
     params:
@@ -35,9 +35,6 @@ rule read_number_plot:
                             cell_line = sub_wf_config['lr_bulk']["cell_lines"])
     script:
         join(config['main_wf_dir'], "scripts/read_count_plot.R")
-
-    
-
 
 rule lr_read_length_plot:
     # get the read length from the read length file and plot
@@ -58,7 +55,7 @@ rule lr_read_length_plot:
         #     cell_line = sub_wf_config['lr_bulk']["cell_lines"]
         # )
     output:
-        report(join(figures_output_path, "qc/read_length_and_quality_plot.pdf"), 
+        report(join(figures_output_path, "qc/read_length_and_quality_plot.svg"), 
                 category = "QC", subcategory = "Read length and quality"),
         join(figures_output_path, "qc/read_length_and_qual_table.txt")
     params:
@@ -87,7 +84,7 @@ rule RSeQC_gene_body_coverage_plot:
                 cell_line = sub_wf_config['lr_bulk']["cell_lines"]
             )
     output:
-        report(join(figures_output_path, "qc/gene_body_coverage_plot.pdf"), 
+        report(join(figures_output_path, "qc/gene_body_coverage_plot.svg"), 
                 category = "QC", subcategory = "Gene body coverage")
     params:
         lr_sample_name = expand("{sample}_{cell_line}", 
@@ -120,7 +117,7 @@ rule RSeQC_junction_saturation_plot_known:
         read_length_table = join(figures_output_path, "qc/read_length_and_qual_table.txt"),
         read_number_table = join(figures_output_path, "qc/read_number_table.txt")
     output:
-        report(join(figures_output_path, "qc/KnownJunctionSaturation_plot.pdf"), 
+        report(join(figures_output_path, "qc/KnownJunctionSaturation_plot.svg"), 
                 category = "QC", subcategory = "Gene body coverage")
     params:
         lr_sample_name = expand("{sample}_{cell_line}", 
@@ -148,7 +145,7 @@ rule RSeQC_junction_saturation_plot_novel:
                 cell_line = sub_wf_config['sr_bulk']["cell_lines"]
             )
     output:
-        report(join(figures_output_path, "qc/NovelJunctionSaturation_plot.pdf"), 
+        report(join(figures_output_path, "qc/NovelJunctionSaturation_plot.svg"), 
                 category = "QC", subcategory = "Gene body coverage")
     params:
         lr_sample_name = expand("{sample}_{cell_line}", 
@@ -170,7 +167,7 @@ rule RSeQC_junction_saturation_plot_novel:
 #         expand(join(lr_sc_sn_result_dir, "qc/sqanti3/{sample}/"),
 #                 sample = sub_wf_config['lr_sc_sn']["sample_id"])
 #     output:
-#         report(join(figures_output_path, "qc/sqanti_summary.pdf"), 
+#         report(join(figures_output_path, "qc/sqanti_summary.svg"), 
 #                 category = "QC", subcategory = "SQANTI3")
 #     params:
 #         sample_names = expand("{sample}_{cell_line}", 

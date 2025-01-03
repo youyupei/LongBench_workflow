@@ -1,8 +1,4 @@
 import textwrap, os
-results_dir = config["output_path"]
-main_conda = config["conda"]["main"]
-git_repo = config["git_repo_dir"]
-
 rule run_internal_priming_analysis:
     input:
         results_dir + "/.flag/{x}_run_primspotter.done"

@@ -1,4 +1,4 @@
-main_conda = config["conda"]["main"]
+
 
 rule emptydrop:
     input:

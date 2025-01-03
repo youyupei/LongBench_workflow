@@ -9,13 +9,13 @@ rule gtf_to_bed:
         gtf2bed --input={input} > {output}
         """
 
-rule gff_to_gtf:
-    input:
-        {x}.gff
-    output:
-        {x}.gtf
-    run:
-        """
-        from bioinfokit.analys import gff
-        gff.gff_to_gtf(file="Athaliana_167_TAIR10.gene_chr1.gff3")
-        """
+# rule gff_to_gtf:
+#     input:
+#         {x}.gff
+#     output:
+#         {x}.gtf
+#     run:
+#         """
+#         from bioinfokit.analys import gff
+#         gff.gff_to_gtf(file="Athaliana_167_TAIR10.gene_chr1.gff3")
+#         """

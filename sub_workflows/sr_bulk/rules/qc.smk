@@ -21,6 +21,25 @@ rule subsample_1M_from_R1_R2:
         seqtk sample -s {params.seed} {input.R2} {params.n_reads} >> {output}
         """
 
+
+rule subsample_bam_for_QC:
+    input:
+        bam = rules.sort_and_index_bam.output.sorted_bam
+    output:
+        bam = temp(join(scratch_dir,"subsample_data/{cell_line}/genome_map_subsample_rate_{subsample_rate}.bam")),
+        bai = temp(join(scratch_dir,"subsample_data/{cell_line}/genome_map_subsample_rate_{subsample_rate}.bam.bai"))
+    resources:
+        cpus_per_task=4,
+        mem_mb=8000
+    params:
+        seed = config['random_seed'],
+    shell:
+        """
+        mkdir -p $(dirname {output.bam})
+        samtools view --subsample {wildcards.subsample_rate} --subsample-seed {params.seed} {input.bam} -h | samtools sort -o {output.bam}
+        samtools index {output.bam}
+        """
+
 ######## NanoPlot ########
 rule NanoPlot:
     input:
@@ -40,23 +59,6 @@ rule NanoPlot:
         """
 
 ######## RSeQC ########
-rule subsample_bam_for_RSeQC_coverage:
-    input:
-        bam = rules.sort_and_index_bam.output.sorted_bam
-    output:
-        bam = temp(join(scratch_dir,"subsample_data/{cell_line}/genome_map_subsample_rate_{subsample_rate}.bam")),
-        bai = temp(join(scratch_dir,"subsample_data/{cell_line}/genome_map_subsample_rate_{subsample_rate}.bam.bai"))
-    resources:
-        cpus_per_task=4,
-        mem_mb=8000
-    params:
-        seed = config['random_seed'],
-    shell:
-        """
-        mkdir -p $(dirname {output.bam})
-        samtools view --subsample {wildcards.subsample_rate} --subsample-seed {params.seed} {input.bam} -h | samtools sort -o {output.bam}
-        samtools index {output.bam}
-        """
 
 rule RSeQC_gene_body_coverage:
     input:
@@ -127,6 +129,40 @@ rule RSeQC:
         touch(join(results_dir, "qc/.flag/RSeQC.done"))
 
 
+
+
+
+## AlignQC
+rule alignQC_analysis:
+    input: 
+        fa=config['reference']['genome'], 
+        anno=config['reference']['gtf_gz'],
+        genome_bam =join(scratch_dir,"subsample_data/{cell_line}/genome_map_subsample_rate_0.1.bam"),
+        genome_bai = join(scratch_dir,"subsample_data/{cell_line}/genome_map_subsample_rate_0.1.bam.bai")
+    # conda:
+    #     config['conda']['AlignQC']
+    resources:
+        cpus_per_task=32,
+        mem_mb=400000,
+        slurm_extra="--mail-type=FAIL --mail-user=you.yu@wehi.edu.au --qos=bonus"
+    output:
+        output = directory(os.path.join(results_dir, "qc/AlignQC/{cell_line}/")),
+        tmp_dir = temp(directory(os.path.join(scratch_dir, "alignQC_tmp","{cell_line}")))
+    priority: 10
+    container: "docker://vacation/alignqc"
+    shell:
+        """
+        mkdir -p $(dirname {output.output})
+        mkdir -p {output.tmp_dir}
+        alignqc analyze {input.genome_bam} \
+            -g {input.fa} \
+            --gtf {input.anno} \
+            --output_folder {output.output} \
+            --threads {resources.cpus_per_task} \
+            --specific_tempdir {output.tmp_dir}
+        """
+
+
 # Entire qc worflow head
 rule qc:
     input:
@@ -134,17 +170,24 @@ rule qc:
             [
                 rules.fastp.output.R1,
                 rules.fastp.output.R2,
-                rules.NanoPlot.output[0]
+                rules.NanoPlot.output[0],
+                # rules.alignQC_analysis.output[0]
             ],
             cell_line = config['cell_lines']
         ),
-
         rules.RSeQC.output
     output:
         touch(join(results_dir, "qc/.flag/qc.done"))
 
 
-
+rule all_alignQC_analysis:
+    input:
+        expand(
+            rules.alignQC_analysis.output[0], 
+            cell_line = config['cell_lines']
+            )
+    output:
+        touch(os.path.join(config['flag_dir'], "sr_bulk_bulk_alginQC.done"))
 
 
 # 

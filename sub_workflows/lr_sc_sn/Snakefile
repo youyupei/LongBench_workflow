@@ -23,11 +23,19 @@ if config.get("subsample_read_n"):
     include: "rules/subsample.smk"
 
 
+
+
+main_conda = config["conda"]["main"]
+results_dir = config["output_path"]
+scratch_dir = config["scratch_dir"]
+git_repo = config["git_repo_dir"]
+
+
 include: "rules/flames.smk"
 include: "rules/qc.smk"
 include: "rules/internal_priming.smk"
 include: "rules/mutation.smk"
-include: "rules/vireo.smk"
+# include: "rules/.vireo.smk"
 include: "rules/emptydrop.smk"
 include: "rules/sc_clustering.smk"
 include: "rules/pseudo_bulk_quant.smk"
@@ -39,52 +47,10 @@ rule all:
         # all qc
         rules.flames.output,
         rules.qc.output,
-        rules.run_vireo.output,
+        # rules.run_vireo.output,
         #rules.emptydrop.output,
         rules.run_all_rmarkdown.input,
         rules.plot_silhouette.output,
         rules.pseudo_bulk_oarfish_quant.input
     output:
         touch(os.path.join(results_dir, ".flag/all.done"))
-
-# rule internal_priming_analysis:
-#     input:
-#         expand(".flag/{sample}_internal_priming.done",
-#         sample=config["sample_id"])
-    
-# rule run_all_qc:
-#     input:
-
-#         os.path.join(results_dir, "qc/.flag/all_qc.done")
-
-# rule run_flames_quant_only_no_identification_tmp:
-#     input:
-#          expand(".flag/flames_{sample}_tmp.done", sample=config["sample_id"])
-
-# rule run_flames:
-#     input:
-#          expand(".flag/flames_{sample}.done", sample=config["sample_id"])
-
-# rule get_read_length:
-#     input:
-#         expand(config['output_path'] + "/read_length_analysis/{x}.read_length.txt",
-#                 x = config['sample_id'])
-
-
-
-# rule run_demuxlet:
-#     input:
-#         expand(config['output_path'] + '/demuxlet/{sample}.demuxlet.best',
-#                 sample = config['sample_id'])
-
-# rule run_demuxlet_cluster:
-#     input:
-#         expand(config['output_path'] + '/demuxlet/{sample}.res{res}.cluster.demuxlet.best',
-#                 sample = 'ont_sn', res = ['0.5', '5', '40'])
-
-# rule run_demuxlet_cluster_filter_deconX_contaminantions:
-#     input:
-#         expand(config['output_path'] + '/demuxlet/{sample}.cluster_v2.demuxlet.best',
-#                 sample = 'ont_sn')
-
-        

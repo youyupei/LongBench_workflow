@@ -1,18 +1,6 @@
 results_dir = config["output_path"]
 main_conda = config["conda"]["main"]
 
-# quantificaiton
-rule run_quantification:
-    input:
-        expand([
-            os.path.join(results_dir,"salmon_output/{sample}/{cell_line}"),
-            os.path.join(results_dir,"oarfish_nocov_output/{sample}/{cell_line}"),
-            os.path.join(results_dir,"oarfish_cov_output/{sample}/{cell_line}")
-            ],
-            sample = config["sample_id"],
-            cell_line = config["cell_lines"]),
-    output:
-        touch(results_dir + "/.flag/run_salmon.done")
 
 # Salmon
 rule salmon:
@@ -78,3 +66,17 @@ rule oarfish_cov:
         mkdir -p {output.out_dir_cov}
         oarfish --alignments {input.bam} --threads {resources.cpus_per_task} --output {output.out_dir_cov}/ --model-coverage  -d . --filter-group no-filters --num-bootstraps 50
         """
+
+
+# quantificaiton
+rule run_quantification:
+    input:
+        expand([
+            # os.path.join(results_dir,"salmon_output/{sample}/{cell_line}"),
+            # os.path.join(results_dir,"oarfish_nocov_output/{sample}/{cell_line}"),
+            os.path.join(results_dir,"oarfish_cov_output/{sample}/{cell_line}")
+            ],
+            sample = config["sample_id"],
+            cell_line = config["cell_lines"]),
+    output:
+        touch(results_dir + "/.flag/run_quantification.done")
