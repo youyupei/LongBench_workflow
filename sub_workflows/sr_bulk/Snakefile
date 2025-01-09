@@ -17,6 +17,7 @@ scratch_dir = config["scratch_dir"]
 sub_wf_dir = config['sub_wf_dir']
 
 include: "rules/mapping.smk"
+include: "rules/mapping_masked_genome.smk"
 include: "rules/qc.smk"
 include: "rules/salmon.smk"
 #include: config['main_wf_dir'] + "/modules/utilities.smk"

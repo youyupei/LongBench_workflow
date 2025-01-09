@@ -252,7 +252,7 @@ rule RSeQC_junction_annotation:
 
 
 ## AlignQC
-rule alignQC_analysis:
+rule alignQC_analysis_subsample:
     input: 
         fa=config['reference']['genome'], 
         anno=config['reference']['gtf_gz'],
@@ -279,6 +279,20 @@ rule alignQC_analysis:
             --threads {resources.cpus_per_task} \
             --specific_tempdir {output.tmp_dir}
         """
+
+use rule alignQC_analysis_subsample as alignQC_analysis_full with:
+    input: 
+        fa=config['reference']['genome'], 
+        anno=config['reference']['gtf_gz'],
+        genome_bam = os.path.join(scratch_dir,"subsample_data/{sample}_{cell_line}/genome_map_subsample_rate_1.bam"),
+        genome_bai = os.path.join(scratch_dir,"subsample_data/{sample}_{cell_line}/genome_map_subsample_rate_1.bam.bai")
+    output:
+        output = directory(os.path.join(results_dir, "qc/AlignQC_full/{sample}_{cell_line}/")),
+        tmp_dir = temp(directory(os.path.join(scratch_dir, "alignQC_full_tmp","{sample}_{cell_line}")))
+    resources:
+        cpus_per_task=8,
+        mem_mb=400000,
+        slurm_extra="--mail-type=FAIL --mail-user=you.yu@wehi.edu.au --qos=bonus" # tmp use bonus qos
 
 ### Target QC rules
 ###################### Run QC pipelines ###############################
@@ -311,7 +325,7 @@ rule qc:
         """
 
 
-rule all_alignQC_analysis:
+rule all_alignQC_analysis_subsample:
     input:
         expand(
             os.path.join(results_dir, "qc/AlignQC/{sample}_{cell_line}/"), 
@@ -320,3 +334,13 @@ rule all_alignQC_analysis:
         )
     output:
         touch(os.path.join(config['flag_dir'], "lr_bulk_alginQC.done"))
+
+rule all_alignQC_analysis_full:
+    input:
+        expand(
+            rules.alignQC_analysis_full.output.output, 
+            sample=config["sample_id"],
+            cell_line = cell_line_to_barcode.keys()
+        )
+    output:
+        touch(os.path.join(config['flag_dir'], "lr_bulk_alginQC_full.done"))

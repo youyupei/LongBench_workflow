@@ -8,7 +8,7 @@ wildcard_constraints:
 rule lr_bulk_minimap2_transcript:
     priority: 10
     input:
-        fastq = lambda w: os.path.join(config['samples_fastq_dir'][w.sample], "{cell_line}.fastq"),
+        fastq = lambda w: glob.glob(os.path.join(config['samples_fastq_dir'][w.sample],f"{w.cell_line}.fastq*"))[0],
         ref = config['reference']['transcript']
     output:
         bam = results_dir + "/TranscriptAlignment/{sample}_{cell_line}.bam"
@@ -26,7 +26,7 @@ rule lr_bulk_minimap2_transcript:
 rule lr_bulk_minimap2_Genome:
     priority: 10
     input:
-        fastq = lambda w: os.path.join(config['samples_fastq_dir'][w.sample], "{cell_line}.fastq"),
+        fastq = lambda w: glob.glob(os.path.join(config['samples_fastq_dir'][w.sample],f"{w.cell_line}.fastq*"))[0],
         ref = config['reference']['genome']
     output:
         bam = temp(results_dir + "/GenomeAlignment/{sample}_{cell_line}.bam")

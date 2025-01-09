@@ -57,3 +57,20 @@ rule all:
       #rules.run_kallisto.output
    output:
       touch(os.path.join(results_dir, ".flag/all.done"))
+
+
+# Map read to masked genome
+use rule lr_bulk_minimap2_Genome as lr_bulk_minimap2_Masked_Genome with:
+   input:
+      fastq = lambda w: glob.glob(os.path.join(config['samples_fastq_dir'][w.sample],f"{w.cell_line}.fastq*"))[0],
+      ref = config['reference']['genome_masked']
+   output:
+      bam = temp(results_dir + "/MaskedGenomeAlignment/{sample}_{cell_line}.bam")
+
+rule run_masked_mapping:
+    input:
+        expand(results_dir + "/MaskedGenomeAlignment/{sample}_{cell_line}.sorted.bam",
+                sample = config['sample_id'],
+                cell_line = config['cell_lines'])
+    output:
+        touch(results_dir + "/.flag/run_masked_mapping.done")

@@ -98,3 +98,4 @@ rule mapping:
         )
     output:
         touch(join(config["output_path"], ".flag/mapping.done"))
+
