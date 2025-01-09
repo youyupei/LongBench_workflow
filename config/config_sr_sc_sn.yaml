@@ -3,6 +3,7 @@ output_path: "/vast/projects/LongBench/analysis/illumina_sc_sn/result"
 reference:
   # have to exist
   genome: "/home/users/allstaff/you.yu/project/ref_files/GRCh38.primary_assembly.genome.fa"
+  genome_masked: "/vast/projects/LongBench/reference_files/GRCh38/GRCh38.N-masked.genome.fa"
   gtf: "/home/users/allstaff/you.yu/LongBench/reference_files/GRCh38/gencode.v44.annotation.gtf"
   picard_reference: '/home/users/allstaff/you.yu/LongBench/reference_files/GRCh38/refFlat.txt'
   transcript: "/home/users/allstaff/you.yu/LongBench/reference_files/GRCh38/gencode.v44.transcripts.fa"
