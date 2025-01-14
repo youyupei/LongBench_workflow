@@ -1,36 +1,36 @@
-rule get_cell_line_bc_list:
-    input:
-        #expand(os.path.join(results_dir,  "reports/RDS/{sample}_annotated.rds"), sample = config['sample_id']) 
-        lambda w: os.path.join(results_dir,  f"reports/RDS/{w.sample}_annotated.rds")
-    output:
-        [os.path.join(results_dir,  "misc/{sample}/", f"{x}_BC_list.txt") for x in config['cell_line_list']]
-    shell:
-        """
-        # module load R
-        Rscript -e '
-            library(dplyr)
-            outdir <- dirname("{output[0]}")
-            dir.create(outdir, recursive = TRUE, showWarnings = FALSE)
-            so <- readRDS("{input}")
-            metadata <- so@meta.data
-
-            # Create a list where each unique cell line has its associated barcodes
-            barcode_list <- metadata %>%
-                tibble::rownames_to_column(var = "barcode") %>%
-                dplyr::rename(cell_lines = cell_lines) %>%
-                dplyr::group_by(cell_lines) %>%
-                dplyr::summarise(BC_list = list(barcode))
-
-            # Convert the resulting tibble to a named list
-            barcode_list <- setNames(barcode_list$BC_list, barcode_list$cell_lines)
-            for (cell_line in names(barcode_list)) {{writeLines(barcode_list[[cell_line]], con = paste0(outdir, "/", cell_line, "_BC_list.txt"))}}
-            '
-        """
+# rule get_cell_line_bc_list:
+#     input:
+#         #expand(os.path.join(results_dir,  "reports/RDS/{sample}_annotated.rds"), sample = config['sample_id']) 
+#         lambda w: os.path.join(results_dir,  f"reports/RDS/{w.sample}_annotated.rds")
+#     output:
+#         [os.path.join(results_dir,  "misc/{sample}/", f"{x}_BC_list.txt") for x in config['cell_line_list']]
+#     shell:
+#         """
+#         # module load R
+#         Rscript -e '
+#             library(dplyr)
+#             outdir <- dirname("{output[0]}")
+#             dir.create(outdir, recursive = TRUE, showWarnings = FALSE)
+#             so <- readRDS("{input}")
+#             metadata <- so@meta.data
+# 
+#             # Create a list where each unique cell line has its associated barcodes
+#             barcode_list <- metadata %>%
+#                 tibble::rownames_to_column(var = "barcode") %>%
+#                 dplyr::rename(cell_lines = cell_lines) %>%
+#                 dplyr::group_by(cell_lines) %>%
+#                 dplyr::summarise(BC_list = list(barcode))
+# 
+#             # Convert the resulting tibble to a named list
+#             barcode_list <- setNames(barcode_list$BC_list, barcode_list$cell_lines)
+#             for (cell_line in names(barcode_list)) {{writeLines(barcode_list[[cell_line]], con = paste0(outdir, "/", cell_line, "_BC_list.txt"))}}
+#             '
+#         """
 
 
 rule get_cell_line_pseudo_bulk_fq:
     input:
-        bc_list =os.path.join(results_dir,  "misc/{sample}/{cell_line}_BC_list.txt"),
+        bc_list =lambda w: os.path.join(results_dir,  f"misc/cell_line_bc_list/{'sn' if 'sn' in w.sample else 'sc'}/{w.cell_line}_BC_list.txt"),
         fastq = os.path.join(results_dir, 'flames_out/{sample}/matched_reads_dedup.fastq')
     output:
         temp(results_dir + "/PseudoBulkAlignment/{sample}_{cell_line}_pseudo_bulk.fastq")
