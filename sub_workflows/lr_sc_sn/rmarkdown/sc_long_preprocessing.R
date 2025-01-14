@@ -122,18 +122,37 @@ get_clusters <- function(so, assay=NULL, ndim=30,res=0.5,seed = 2024) {
 }
 
 
-remove_outliers <- function(so, assay=NULL){
+
+
+check.qc.pass <- function(so, assay=NULL, max.mt.pct=100){
   if (is.null(assay)) {
     assay <- DefaultAssay(so)
   }
 
-  p.before <- VlnPlot(SetIdent(so, value = 'orig.ident'), features = c("nFeature_{assay}" %>% glue, "nCount_{assay}"%>% glue, "percent.mt",'percent.ribo'), ncol = 4, alpha=0.2)
-  is.outlier <- scuttle::isOutlier(so@meta.data[["nFeature_{assay}" %>% glue]] %>% log, nmad=3) |
-                  scuttle::isOutlier(so@meta.data[["nCount_{assay}" %>% glue]]  %>% log, nmad=3) |
-                  scuttle::isOutlier(so$percent.mt, nmad=3)
-  so <- subset(x=so, cells=names(is.outlier)[!is.outlier])
+  is.fail <- scuttle::isOutlier(so@meta.data[["nFeature_{assay}" %>% glue()]] %>% log(), nmad = 3) |
+    scuttle::isOutlier(so@meta.data[["nCount_{assay}" %>% glue()]] %>% log(), nmad = 3) |
+    scuttle::isOutlier(so$percent.mt, nmad = 3, type="higher") |
+    so$percent.mt > max.mt.pct
+
+  return(!is.fail)
+}
+
+
+remove_outliers <- function(so, assay=NULL, max.mt.pct=100, plot=FALSE){
+  if (is.null(assay)) {
+    assay <- DefaultAssay(so)
+  }
+  if (plot){
+    p.before <- VlnPlot(SetIdent(so, value = 'orig.ident'), features = c("nFeature_{assay}" %>% glue, "nCount_{assay}"%>% glue, "percent.mt",'percent.ribo'), ncol = 4, alpha=0.2)
+  }
+
+  is.qc.pass <- check.qc.pass(so, assay, max.mt.pct)
+  so <- subset(x=so, cells=names(is.qc.pass)[is.qc.pass])
   so <- add_qc_state(so, "outlier_removal")
-  p.after <- VlnPlot(SetIdent(so, value = 'orig.ident'), features = c("nFeature_{assay}" %>% glue, "nCount_{assay}"%>% glue, "percent.mt",'percent.ribo'), ncol = 4, alpha=0.2)
-  print(p.before / p.after)
+
+  if (plot){
+    p.after <- VlnPlot(SetIdent(so, value = 'orig.ident'), features = c("nFeature_{assay}" %>% glue, "nCount_{assay}"%>% glue, "percent.mt",'percent.ribo'), ncol = 4, alpha=0.2)
+    print(p.before / p.after)
+  }
   return(so)
 }
