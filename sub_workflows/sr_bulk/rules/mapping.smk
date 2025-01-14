@@ -53,7 +53,7 @@ rule subjunc_index:
     input:
         genome = rules.split_fa.output
     output:
-        index = directory(join(config["output_path"], "subjunc/genome_index"))
+        index = temp(directory(join(config["output_path"], "subjunc/genome_index")))
     resources:
         cpus_per_task=4,
         mem_mb=32000
