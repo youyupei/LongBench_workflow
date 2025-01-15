@@ -1,0 +1,1656 @@
+---
+title: "DE analysis"
+author: "Yupei & Ash"
+output:
+  html_document:
+    code_folding: hide
+    toc: yes
+    toc_float: yes
+    number_sections: yes
+    toc_depth: 4
+  pdf_document:
+    toc: yes
+    toc_depth: '4'
+params:
+  random_seed: 2024
+  cache_dir: NULL
+  sirv_ercc_gtf: '/vast/projects/LongBench/reference_files/SIRV_Set4_Norm_Sequences_20210507/SIRV_ERCC_longSIRV_multi-fasta_20210507.gtf'
+  sequins_gtf: '/vast/projects/LongBench/reference_files/Sequin_resources/v2.4/rnasequin_annotation_2.4.gtf'
+  sequins_tsv: '/vast/projects/LongBench/reference_files/Sequin_resources/v2.4/rnasequin_isoforms_2.4.tsv'
+  human_gtf: '/vast/projects/LongBench/reference_files/GRCh38/gencode.v44.annotation.gtf'
+  sirv_csv: '/home/users/allstaff/you.yu/LongBench/reference_files/SIRV_Set4_Norm_Sequences_20210507/SIRV_set4_concentration.csv'
+  ont_bulk_oarfish_dir: "/vast/projects/LongBench/analysis/lr_bulk/result/oarfish_cov_output/ont_bulk"
+  pb_bulk_oarfish_dir: "/vast/projects/LongBench/analysis/lr_bulk/result/oarfish_cov_output/pb_bulk"
+  ont_drnd_oarfish_dir: "/vast/projects/LongBench/analysis/lr_bulk/result/oarfish_cov_output/dRNA_bulk"
+  ill_bulk_salmon_dir: "/vast/projects/LongBench//analysis/sr_bulk/result/salmon/salmon_quant"
+  bulk_meta: "/vast/projects/LongBench/sequencing_data/illumina_bulk/metadata.txt"
+---
+
+# Setup: Create DGE from input
+
+## Libraries and chunk setup
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(cache = TRUE, fig.width = 7, fig.height=5, warning = F)
+```
+
+```{r Libraries,include=FALSE}
+library(limma)
+library(edgeR)
+library(tidyverse)
+library(RColorBrewer)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(ggrepel)
+library(glue)
+library(ggplot2)
+library(gridExtra)
+library(ggExtra)
+library(knitr)
+library(kableExtra)
+library(rtracklayer)
+library(scales)
+library(UpSetR)
+library(ggtree)
+library(aplot)
+source("/home/users/allstaff/you.yu/LongBench/analysis/workflow/scripts/Rfunctions.R")
+
+# setup some conflict functions
+rename <- dplyr::rename
+select <- dplyr::select
+```
+
+## Input filename setup
+```{r Input filename setup, include=FALSE, eval=F}
+params <- list(
+  random_seed = 2024,
+  cache_dir = NULL,
+  sirv_ercc_gtf = '/vast/projects/LongBench/reference_files/SIRV_Set4_Norm_Sequences_20210507/SIRV_ERCC_longSIRV_multi-fasta_20210507.gtf',
+  sequins_gtf = '/vast/projects/LongBench/reference_files/Sequin_resources/v2.4/rnasequin_annotation_2.4.gtf',
+  sequins_tsv = '/vast/projects/LongBench/reference_files/Sequin_resources/v2.4/rnasequin_isoforms_2.4.tsv',
+  human_gtf = '/vast/projects/LongBench/reference_files/GRCh38/gencode.v44.annotation.gtf',
+  sirv_csv = '/home/users/allstaff/you.yu/LongBench/reference_files/SIRV_Set4_Norm_Sequences_20210507/SIRV_set4_concentration.csv',
+  ont_bulk_oarfish_dir = "/vast/projects/LongBench/analysis/lr_bulk/result/oarfish_cov_output/ont_bulk",
+  pb_bulk_oarfish_dir = "/vast/projects/LongBench/analysis/lr_bulk/result/oarfish_cov_output/pb_bulk",
+  ont_drnd_oarfish_dir = "/vast/projects/LongBench/analysis/lr_bulk/result/oarfish_cov_output/dRNA_bulk",
+  ill_bulk_salmon_dir = "/vast/projects/LongBench//analysis/sr_bulk/result/salmon/salmon_quant",
+  bulk_meta = "/vast/projects/LongBench/sequencing_data/illumina_bulk/metadata.txt"
+)
+```
+
+```{r color code, include=FALSE, eval=T}
+color_palette <- c(
+  PacBio = "#df1995",
+  ONT = "#00789b",
+  ONT_1 = "#04476c",
+  ONT_2 = "#24cdcd",
+  Illumina = "#e88b20"
+)
+```
+
+```{r function for splitting the transcript origin}
+is.sequins <- function(dge) {grepl("^R", rownames(dge))}
+is.human <- function(dge) {grepl("^ENS", rownames(dge))}
+is.sirv_or_ercc <- function(dge) {!is.human(dge) & !is.sequins(dge)} # thie is the whole SIRV set4 (ERCC + SIRV E0 + Long SIRV)
+is.sirv_E0 <- function(dge) {grepl("^SIRV\\d{3}$", rownames(dge))} 
+is.sirv_all <- function(dge) {grepl("^SIRV", rownames(dge))} # including all SIRV E0 and Long SIRV
+is.long_sirv <- function(dge) {grepl("^SIRV\\d{4}", rownames(dge))}
+is.ercc <- function(dge) {!is.human(dge) & !is.sequins(dge) & !is.sirv_all(dge)}
+```
+
+```{r, get number of transcripts gene from gtf}
+calcTxNum <- function(G.Tx.map){
+  geneid = rep(NA, nrow(G.Tx.map))
+  txcount = table(G.Tx.map$gene_id)
+  txnum = as.numeric(txcount[match(G.Tx.map$gene_id, names(txcount))])
+}
+# SIRV
+SIRV_tx <- GenomicFeatures::makeTxDbFromGFF(params$sirv_ercc_gtf, format = "gtf") %>% GenomicFeatures::transcripts(columns = c("tx_id", "tx_name", "gene_id"))
+SIRV.G.Tx.map <- tibble(
+  gene_id = SIRV_tx$gene_id %>% unlist,
+  tx_name = SIRV_tx$tx_name
+)
+rm(SIRV_tx)
+SIRV.G.Tx.map$tx_count <- SIRV.G.Tx.map %>% calcTxNum
+
+# Sequins
+sequins_tx  <- GenomicFeatures::makeTxDbFromGFF(params$sequins_gtf, format = "gtf") %>% GenomicFeatures::transcripts(columns = c("tx_id", "tx_name", "gene_id"))
+sequins.G.Tx.map <- tibble(
+  gene_id = sequins_tx$gene_id %>% unlist,
+  tx_name = sequins_tx$tx_name
+)
+rm(sequins_tx)
+sequins.G.Tx.map$tx_count <- sequins.G.Tx.map %>% calcTxNum
+```
+
+## Create transcript DGE from input
+```{r Create DGE from input, echo=F}
+bulk.meta <- read.csv(params$bulk_meta)
+rownames(bulk.meta) <- bulk.meta$sample
+
+# SR salmon
+ill_bulk.dge <- get_dge_from_salmon(params$ill_bulk_salmon_dir, ".*/")
+
+# LR oarfish
+ont_bulk.dge.oarfish <- get_dge_from_oarfish(params$ont_bulk_oarfish_dir, ".*/")
+pb_bulk.dge.oarfish <- get_dge_from_oarfish(params$pb_bulk_oarfish_dir, ".*/")
+ont_drna.dge.oarfish <- get_dge_from_oarfish(params$ont_drnd_oarfish_dir, ".*/")
+```
+
+
+
+## Aggregate transcript counts to gene level using `tximport` with unfiltered transcript counts
+```{r}
+library(tximport) # install latest version from github
+
+# Extract tx_name and gene_id columns from human and sequins
+# human_tx2gene <- human.G.Tx.map[, c("tx_name", "gene_id")]
+sequins_tx2gene <- sequins.G.Tx.map[, c("tx_name", "gene_id")]
+SIRV_tx2gene <- SIRV.G.Tx.map[, c("tx_name", "gene_id")]
+combined_tx2gene <- rbind(
+  # human_tx2gene, 
+  sequins_tx2gene, 
+  SIRV_tx2gene
+)
+
+# Get quant.sf file paths
+get_quant_paths <- function(dirs, file_name) {
+  # Generate file paths for quantification files
+  quant_paths <- file.path(dirs, file_name)
+  return(quant_paths)
+}
+
+# Define directories with their corresponding expected file names
+oarfish_dirs <- list(
+  ill_bulk = list(dir = params$ill_bulk_salmon_dir, file_name = "quant.sf"),
+  ont_bulk = list(dir = params$ont_bulk_oarfish_dir, file_name = ".quant"),
+  pb_bulk = list(dir = params$pb_bulk_oarfish_dir, file_name = ".quant"),
+  drna_bulk = list(dir = params$ont_drnd_oarfish_dir, file_name = ".quant")
+)
+
+# Apply function to each directory to get all quant file paths
+quant_paths <- lapply(oarfish_dirs, function(dir_info) {
+  # Get the directory and file name from dir_info
+  dir <- dir_info$dir
+  file_name <- dir_info$file_name
+  
+  # List all subdirectories and get the quant file paths
+  sub_dirs <- list.dirs(dir, full.names = TRUE, recursive = FALSE)
+  get_quant_paths(sub_dirs, file_name)
+})
+
+# Flatten the list of quant_paths into a named list
+quant_paths <- lapply(quant_paths, unlist)
+
+# Function to import DGE from tximport
+get_dge_from_txi <- function(quant_dir, sample_prefix_regex, type) {
+  # Import data using tximport
+  txi <- tximport(quant_dir,
+                  type = type,
+                  tx2gene = combined_tx2gene,
+                  ignoreAfterBar = TRUE,
+                  countsFromAbundance = "no") # raw counts
+  counts <- as.data.frame(txi$counts, stringAsFactors = FALSE)
+  sample_names <- gsub(sample_prefix_regex, '', basename(dirname(quant_dir)))
+  colnames(counts) <- sample_names
+  rst.dge <- DGEList(counts = counts)
+  rst.dge$genes <- data.frame(Length=txi$length %>% rowMeans())
+  rownames(rst.dge$samples) <- sub(sample_prefix_regex, '', rownames(rst.dge$samples))
+  colnames(rst.dge$counts) <- sub(sample_prefix_regex, "", colnames(rst.dge$counts))
+  # colnames(rst.dge$gene$Length) <- sub(sample_prefix_regex, "", colnames(rst.dge$gene$Length))
+  
+  rst.dge$samples <- merge(rst.dge$samples %>% select(-group), bulk.meta, by = "row.names", all.x = TRUE) %>% select(-Row.names)
+  rst.dge$samples <- rst.dge$samples[match(colnames(rst.dge$counts), rst.dge$samples$sample),]
+  return(rst.dge)
+}
+
+# Process each quant path for different bulk types
+ill_bulk.gene.dge <- get_dge_from_txi(quant_paths$ill_bulk, ".*/", "salmon")
+ont_bulk.gene.dge <- get_dge_from_txi(quant_paths$ont_bulk, ".*/", "oarfish")
+pb_bulk.gene.dge <- get_dge_from_txi(quant_paths$pb_bulk, ".*/", "oarfish")
+drna_bulk.gene.dge <- get_dge_from_txi(quant_paths$drna_bulk, ".*/", "oarfish")
+
+# Get seqins and sirv gene dge
+## get seqins and sirv gene dge
+ill_bulk.gene.dge_sequins <- ill_bulk.gene.dge[is.sequins(ill_bulk.gene.dge), ]
+ont_bulk.gene.dge_sequins <- ont_bulk.gene.dge[is.sequins(ont_bulk.gene.dge), ]
+pb_bulk.gene.dge_sequins <- pb_bulk.gene.dge[is.sequins(pb_bulk.gene.dge), ]
+drna_bulk.gene.dge_sequins <- drna_bulk.gene.dge[is.sequins(drna_bulk.gene.dge), ]
+
+## get sirv gene dge
+ill_bulk.gene.dge_sirv <- ill_bulk.gene.dge[is.sirv_all(ill_bulk.gene.dge), ]
+ont_bulk.gene.dge_sirv <- ont_bulk.gene.dge[is.sirv_all(ont_bulk.gene.dge), ]
+pb_bulk.gene.dge_sirv <- pb_bulk.gene.dge[is.sirv_all(pb_bulk.gene.dge), ]
+drna_bulk.gene.dge_sirv <- drna_bulk.gene.dge[is.sirv_all(drna_bulk.gene.dge), ]
+
+## get ercc gene dge
+ill_bulk.gene.dge_ercc <- ill_bulk.gene.dge[is.ercc(ill_bulk.gene.dge), ]
+ont_bulk.gene.dge_ercc <- ont_bulk.gene.dge[is.ercc(ont_bulk.gene.dge), ]
+pb_bulk.gene.dge_ercc <- pb_bulk.gene.dge[is.ercc(pb_bulk.gene.dge), ]
+drna_bulk.gene.dge_ercc <- drna_bulk.gene.dge[is.ercc(drna_bulk.gene.dge), ]
+
+# Get seqins and sirv transcript dge
+ill_bulk.txi.dge_sequins <- ill_bulk.dge[is.sequins(ill_bulk.dge), ]
+ont_bulk.txi.dge_sequins <- ont_bulk.dge.oarfish[is.sequins(ont_bulk.dge.oarfish), ]
+pb_bulk.txi.dge_sequins <- pb_bulk.dge.oarfish[is.sequins(pb_bulk.dge.oarfish), ]
+drna_bulk.txi.dge_sequins <- ont_drna.dge.oarfish[is.sequins(ont_drna.dge.oarfish), ]
+
+## get sirv transcript dge
+ill_bulk.txi.dge_sirv <- ill_bulk.dge[is.sirv_all(ill_bulk.dge), ]
+ont_bulk.txi.dge_sirv <- ont_bulk.dge.oarfish[is.sirv_all(ont_bulk.dge.oarfish), ]
+pb_bulk.txi.dge_sirv <- pb_bulk.dge.oarfish[is.sirv_all(pb_bulk.dge.oarfish), ]
+drna_bulk.txi.dge_sirv <- ont_drna.dge.oarfish[is.sirv_all(ont_drna.dge.oarfish), ]
+
+## get ercc transcript dge
+ill_bulk.txi.dge_ercc <- ill_bulk.dge[is.ercc(ill_bulk.dge), ]
+ont_bulk.txi.dge_ercc <- ont_bulk.dge.oarfish[is.ercc(ont_bulk.dge.oarfish), ]
+pb_bulk.txi.dge_ercc <- pb_bulk.dge.oarfish[is.ercc(pb_bulk.dge.oarfish), ]
+drna_bulk.txi.dge_ercc <- ont_drna.dge.oarfish[is.ercc(ont_drna.dge.oarfish), ]
+
+
+# save all workpalce as Rdata
+# save.image("/vast/scratch/users/you.yu/test/Spikein_DE_line259.Rdata")
+```
+
+
+
+# Gene Transcript discovery analysis
+Using `filterByExpr` for each dataset, using min.count = 10 for gene and min.count = 5 for transcript.
+```{r Gene Transcript discovery upset plot}
+# Transcript
+get_discovery_upset <- function(dge_lst, min.count = 10) {
+  tx_discovery <- tibble(
+    "Illumina" = filterByExpr(dge_lst[["Illumina"]], group = dge_lst[["Illumina"]]$samples$sample, min.count = min.count),
+    "ONT cDNA" = filterByExpr(dge_lst[["ONT cDNA"]], group = dge_lst[["ONT cDNA"]]$samples$sample, min.count = min.count),
+    "PacBio" = filterByExpr(dge_lst[["PacBio"]], group = dge_lst[["PacBio"]]$samples$sample, min.count = min.count),
+    "ONT dRNA" = filterByExpr(dge_lst[["ONT dRNA"]], group = dge_lst[["ONT dRNA"]]$samples$sample, min.count = min.count),
+    Length = dge_lst[["Illumina"]]$genes$Length # use illumina here but they are the same
+  )
+
+ComplexUpset::upset(
+  tx_discovery,
+  intersect = c('Illumina', "ONT cDNA", "PacBio", "ONT dRNA"),
+  annotations = list(
+        # 1st method - passing list:
+        "Gene length" = list(
+          aes = aes(x = intersection, y = Length),
+          # provide a list if you wish to add several geoms
+          geom = geom_boxplot(na.rm = TRUE, outliers = FALSE)
+        )
+  ),
+  wrap = TRUE
+)}
+
+# Gene
+list(
+  "Illumina" = ill_bulk.gene.dge_sequins,
+  "ONT cDNA" = ont_bulk.gene.dge_sequins,
+  "PacBio" = pb_bulk.gene.dge_sequins,
+  "ONT dRNA" = drna_bulk.gene.dge_sequins
+) %>% get_discovery_upset(min.count = 10) + ggtitle("Sequins gene discovery")
+list(
+  "Illumina" = ill_bulk.gene.dge_sirv,
+  "ONT cDNA" = ont_bulk.gene.dge_sirv,
+  "PacBio" = pb_bulk.gene.dge_sirv,
+  "ONT dRNA" = drna_bulk.gene.dge_sirv
+) %>% get_discovery_upset(min.count = 10) + ggtitle("SIRV gene discovery")
+list(
+  "Illumina" = ill_bulk.gene.dge_ercc,
+  "ONT cDNA" = ont_bulk.gene.dge_ercc,
+  "PacBio" = pb_bulk.gene.dge_ercc,
+  "ONT dRNA" = drna_bulk.gene.dge_ercc
+) %>% get_discovery_upset(min.count = 10) + ggtitle("ERCC gene discovery")
+
+# Transcript
+list(
+  "Illumina" = ill_bulk.txi.dge_sequins,
+  "ONT cDNA" = ont_bulk.txi.dge_sequins,
+  "PacBio" = pb_bulk.txi.dge_sequins,
+  "ONT dRNA" = drna_bulk.txi.dge_sequins
+) %>% get_discovery_upset(min.count = 5) + ggtitle("Sequins transcript discovery")
+
+list(
+  "Illumina" = ill_bulk.txi.dge_sirv,
+  "ONT cDNA" = ont_bulk.txi.dge_sirv,
+  "PacBio" = pb_bulk.txi.dge_sirv,
+  "ONT dRNA" = drna_bulk.txi.dge_sirv
+) %>% get_discovery_upset(min.count = 5) + ggtitle("SIRV transcript discovery")
+
+## ERCC with true abundance
+dge_lst <- list(
+  "Illumina" = ill_bulk.txi.dge_ercc,
+  "ONT cDNA" = ont_bulk.txi.dge_ercc,
+  "PacBio" = pb_bulk.txi.dge_ercc,
+  "ONT dRNA" = drna_bulk.txi.dge_ercc
+)
+min.count = 5
+tx_discovery <- tibble(
+    "Illumina" = filterByExpr(dge_lst[["Illumina"]], group = dge_lst[["Illumina"]]$samples$sample, min.count = min.count),
+    "ONT cDNA" = filterByExpr(dge_lst[["ONT cDNA"]], group = dge_lst[["ONT cDNA"]]$samples$sample, min.count = min.count),
+    "PacBio" = filterByExpr(dge_lst[["PacBio"]], group = dge_lst[["PacBio"]]$samples$sample, min.count = min.count),
+    "ONT dRNA" = filterByExpr(dge_lst[["ONT dRNA"]], group = dge_lst[["ONT dRNA"]]$samples$sample, min.count = min.count),
+    Length = dge_lst[["Illumina"]]$genes$Length, # use illumina here but they are the same,
+    Name = rownames(dge_lst[["Illumina"]])
+  ) %>% left_join(read_csv(params$sirv_csv) %>% filter(grepl("ERCC", txid)), by = c("Name" = "GenBank"))
+
+  ComplexUpset::upset(
+    tx_discovery,
+    intersect = c("Illumina", "ONT cDNA", "PacBio", "ONT dRNA"),
+    annotations = list(
+      # 1st method - passing list:
+      "Gene length" = list(
+        aes = aes(x = intersection, y = Length),
+        # provide a list if you wish to add several geoms
+        geom = geom_boxplot(na.rm = TRUE, outliers = FALSE)
+      ),
+      "True abundance (log10 amol/ul)" = list(
+        aes = aes(x = intersection, y = log10(conc)),
+        geom = geom_boxplot(na.rm = TRUE, outliers = FALSE)
+      )
+    ),
+    wrap = TRUE
+  )
+```
+
+# Transcript quantification analysis
+## Code setup
+```{r Transcript quantification analysis code setup}
+# Sequins
+get_sequins_scatter_plot <- function(dge, figure_name, tx_len_norm = TRUE) {
+
+    dge <- dge[is.sequins(dge),]
+    dge.sequins <- dge[is.sequins(dge),]
+
+    # Normalisation functions
+    get_ltpm <- function(counts,len) {
+        x <- counts/len
+        get_lcpm(x)
+    }
+
+    get_lcpm <- function(x) { 
+        return(log2(x*1e6/sum(x) + 1))
+    }
+    
+    # Prepare Sequins ground truth
+    sequins.gt <- read_tsv(params$sequins_tsv)
+    sequins.gt.norm <- sequins.gt %>% mutate(across(starts_with("MIX"), get_lcpm)) %>% select(NAME, MIX_A, MIX_B, LENGTH) %>% mutate(N_transcript_per_gene = gsub("^R.*_", "", NAME) %>% as.numeric)
+    
+    # Normalise observed data
+    if (tx_len_norm) {
+        dge.sequins.norm <- dge.sequins$counts %>% as_tibble(rownames="NAME")  %>% mutate(across(where(is.numeric), ~ get_ltpm(.x, dge.sequins$gene$Length)))
+    } else {
+        dge.sequins.norm <- dge.sequins$counts %>% as_tibble(rownames="NAME")  %>% mutate(across(where(is.numeric), get_lcpm))
+    }
+    dge.sequins.norm  <- dge.sequins.norm %>% left_join(dge.sequins$gene %>% as_tibble(rownames="NAME") %>% select(NAME))
+
+    # Merge the ground truth and observed data
+    mixA_df <-dge.sequins.norm %>% select(-dge.sequins$samples$sample[dge.sequins$samples$sequins=='B']) %>% left_join(sequins.gt.norm)  %>% 
+          mutate(GT=MIX_A, MIX='A')  %>% 
+          select(-MIX_B, -MIX_A)
+    mixB_df <- dge.sequins.norm %>% select(-dge.sequins$samples$sample[dge.sequins$samples$sequins=='A']) %>% left_join(sequins.gt.norm) %>% 
+      mutate(GT=MIX_B, MIX='B')  %>% 
+      select(-MIX_B, -MIX_A)
+    
+    mixA_df.long <- mixA_df %>% pivot_longer(cols = mixA_df %>% select(dge.sequins$samples$sample[dge.sequins$samples$sequins=='A']) %>% colnames, names_to = "Sample", values_to = "Observed log-CPM")
+    mixB_df.long <- mixB_df %>% pivot_longer(cols = mixB_df %>% select(dge.sequins$samples$sample[dge.sequins$samples$sequins=='B']) %>% colnames, names_to = "Sample", values_to = "Observed log-CPM")
+    combined_df <- rbind(mixA_df.long, mixB_df.long)
+    
+    per_sample_cor <- sapply(dge$samples$sample, function(x) {
+      cor(combined_df[combined_df$Sample == x,]$GT, combined_df[combined_df$Sample == x,]$`Observed log-CPM`) %>% unlist
+    })
+    
+    # Calculate the correlation
+    combined_df$Sample <- factor(combined_df$Sample)
+    combined_df$MIX <- factor(combined_df$MIX)
+    correlation <- cor(combined_df$GT, combined_df$`Observed log-CPM`)
+    mean_sq_error <- mean((combined_df$GT - combined_df$`Observed log-CPM`)^2)
+    mean_abs_error <- mean(abs(combined_df$GT - combined_df$`Observed log-CPM`))
+    
+    combined_df <- combined_df %>% mutate(N_transcript_per_gene = N_transcript_per_gene %>% as.factor(), `Transcript length` = LENGTH)
+    # color by the quantile of the transcript length
+    combined_df$`Transcript length` <- cut(combined_df$`Transcript length`, 
+                                                      breaks = quantile(combined_df$`Transcript length`, 
+                                                      probs = seq(0, 1, 0.25)), 
+                                                      include.lowest = TRUE,
+                                                      labels = c("1st Quartile", "2nd Quartile", "3rd Quartile", "4th Quartile"))
+
+     p2 <- ggplot(combined_df[rownames(combined_df) %>% sample(nrow(combined_df), replace = F),], aes(y = GT, x = `Observed log-CPM`, color = `Transcript length`)) +
+      geom_point() +
+      geom_abline(slope = 1, intercept = 0, linetype = "dotted") +  # Add a dotted line of x=y
+      theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+      theme_classic() + 
+      # scale_y_log10(labels = label_number()) + 
+      labs(title = figure_name, y = "Expected abundance log2(TPM+1)", x = "Observed log2(TPM+1)") +
+      annotate("text", x = 10, y = 5, 
+               label = paste("Correlation: ", round(correlation, 2),'\n'
+                             ,"MSE: ", round(mean_sq_error, 2),'\n'
+                             ,"MAE: ", round(mean_abs_error, 2)),
+               hjust = 0, vjust = 1, 
+               color = "black", size =3, 
+               fontface = "italic") +
+      scale_color_viridis_d() +
+      scale_size_continuous(limits = c(0, 5))
+    
+    t <- tibble(
+      sample = dge$samples$sample,
+      sample_correlation = per_sample_cor,
+      merged_correlation = correlation
+    )
+    return(list(plot1 = p1,  plot2 = p2, table = t))
+}
+get_sequin_quartiled_states <- function(dge, sample_name, tx_len_norm = TRUE) {
+  # tx_len_norm <- TRUE
+  # dge <- ont_bulk.dge.oarfish
+  # sample_name <- "ONT BULK Sequins"
+
+  dge <- dge[is.sequins(dge), ]
+  dge.sequins <- dge[is.sequins(dge), ]
+
+  # Normalisation functions
+  get_ltpm <- function(counts, len) {
+    x <- counts / len
+    get_lcpm(x)
+  }
+
+  get_lcpm <- function(x) {
+    return(log2(x * 1e6 / sum(x) + 1))
+  }
+
+  # Prepare Sequins ground truth
+  sequins.gt <- read_tsv(params$sequins_tsv)
+  sequins.gt.norm <- sequins.gt %>%
+    mutate(across(starts_with("MIX"), get_lcpm)) %>%
+    select(NAME, MIX_A, MIX_B, LENGTH) %>%
+    mutate(N_transcript_per_gene = gsub("^R.*_", "", NAME) %>% as.numeric())
+
+  # Normalise observed data
+  if (tx_len_norm) {
+    dge.sequins.norm <- dge.sequins$counts %>%
+      as_tibble(rownames = "NAME") %>%
+      mutate(across(where(is.numeric), ~ get_ltpm(.x, dge.sequins$gene$Length)))
+  } else {
+    dge.sequins.norm <- dge.sequins$counts %>%
+      as_tibble(rownames = "NAME") %>%
+      mutate(across(where(is.numeric), get_lcpm))
+  }
+  dge.sequins.norm <- dge.sequins.norm %>% left_join(dge.sequins$gene %>% as_tibble(rownames = "NAME") %>% select(NAME))
+
+  # Merge the ground truth and observed data
+  mixA_df <- dge.sequins.norm %>%
+    select(-dge.sequins$samples$sample[dge.sequins$samples$sequins == "B"]) %>%
+    left_join(sequins.gt.norm) %>%
+    mutate(GT = MIX_A, MIX = "A") %>%
+    select(-MIX_B, -MIX_A)
+  mixB_df <- dge.sequins.norm %>%
+    select(-dge.sequins$samples$sample[dge.sequins$samples$sequins == "A"]) %>%
+    left_join(sequins.gt.norm) %>%
+    mutate(GT = MIX_B, MIX = "B") %>%
+    select(-MIX_B, -MIX_A)
+
+  mixA_df.long <- mixA_df %>% pivot_longer(cols = mixA_df %>% select(dge.sequins$samples$sample[dge.sequins$samples$sequins == "A"]) %>% colnames(), names_to = "Sample", values_to = "Observed log-CPM")
+  mixB_df.long <- mixB_df %>% pivot_longer(cols = mixB_df %>% select(dge.sequins$samples$sample[dge.sequins$samples$sequins == "B"]) %>% colnames(), names_to = "Sample", values_to = "Observed log-CPM")
+  combined_df <- rbind(mixA_df.long, mixB_df.long)
+
+  per_sample_cor <- sapply(dge$samples$sample, function(x) {
+    cor(combined_df[combined_df$Sample == x, ]$GT, combined_df[combined_df$Sample == x, ]$`Observed log-CPM`) %>% unlist()
+  })
+  per_sample_mse <- sapply(dge$samples$sample, function(x) {
+    mean((combined_df[combined_df$Sample == x, ]$GT - combined_df[combined_df$Sample == x, ]$`Observed log-CPM`)^2) %>% unlist()
+  })
+
+  # Calculate the correlation
+  combined_df$Sample <- factor(combined_df$Sample)
+  combined_df$MIX <- factor(combined_df$MIX)
+  # correlation <- cor(combined_df$GT, combined_df$`Observed log-CPM`)
+  # mean_sq_error <- mean((combined_df$GT - combined_df$`Observed log-CPM`)^2)
+  # mean_abs_error <- mean(abs(combined_df$GT - combined_df$`Observed log-CPM`))
+
+  combined_df <- combined_df %>% mutate(N_transcript_per_gene = N_transcript_per_gene %>% as.factor(), `Transcript length` = LENGTH)
+  # color by the quantile of the transcript length
+  combined_df$`Transcript length` <- cut(combined_df$`Transcript length`, 
+                                                    breaks = quantile(combined_df$`Transcript length`, 
+                                                    probs = seq(0, 1, 0.25)), 
+                                                    include.lowest = TRUE,
+                                                    labels = c("1st Quartile", "2nd Quartile", "3rd Quartile", "4th Quartile"))
+
+                                              
+
+  # calculate the correlation per quartile and per sample, and also give the correlation overall all four quartiles
+  per_quartile_cor <- combined_df %>%
+    group_by(Sample, `Transcript length`) %>%
+    summarise(correlation = cor(GT, `Observed log-CPM`)) %>%
+    rename(
+      cell_line = Sample
+    ) %>%
+    ungroup()
+  
+  per_quartile_mse <- combined_df %>%
+    group_by(Sample, `Transcript length`) %>%
+    summarise(mean_sq_error = mean((GT - `Observed log-CPM`)^2)) %>%
+    rename(
+      cell_line = Sample
+    ) %>%
+    ungroup()
+
+  # merge the overall correlation with the per quartile correlation
+  per_sample_cor <- tibble(
+    cell_line = names(per_sample_cor),
+    new_correlation = as.numeric(per_sample_cor)
+  )
+  per_sample_mse <- tibble(
+    cell_line = names(per_sample_mse),
+    new_mean_sq_error = as.numeric(per_sample_mse)
+  )
+
+  # Combine the two tibbles
+  combined_data <- per_quartile_cor %>%
+    left_join(per_quartile_mse, by = c("cell_line", "Transcript length")) %>%
+    rename('mean square error' = mean_sq_error)
+  # Add "All transcript" row with the new correlations
+  all_transcripts <- per_sample_cor %>%
+    left_join(per_sample_mse, by = "cell_line") %>%
+    mutate(`Transcript length` = "All transcript") %>%
+    rename(correlation = new_correlation,   "mean square error" = new_mean_sq_error)
+
+  # Combine with the original data
+  combined_data <- bind_rows(combined_data, all_transcripts)
+  combined_data$sample <- sample_name
+  combined_data
+}
+
+# ERCC
+get_ercc_scatter_plot <- function(dge, figure_name, tx_len_norm = TRUE) {
+    dge.ercc <- dge[is.sirv_or_ercc(dge) & !is.sirv_all(dge),]
+
+    # Normalisation functions
+    get_ltpm <- function(counts,len) {
+        x <- counts/len
+        get_lcpm(x)
+    }
+
+    get_lcpm <- function(x) { 
+        return(log2(x*1e6/sum(x) + 1))
+    }
+    
+    # Prepare Sequins ground truth
+    ercc.gt <- read_csv(params$sirv_csv) %>% filter(grepl("ERCC", txid))
+    ercc.gt.norm <- ercc.gt %>% mutate(GT=get_lcpm(conc), NAME=GenBank, Length=dge.ercc$genes$Length[match(GenBank, rownames(dge.ercc))]) %>% select(NAME, GT, Length)
+    
+    # Normalise observed data
+    if (tx_len_norm) {
+        dge.ercc.norm <- dge.ercc$counts %>% as_tibble(rownames="NAME")  %>% mutate(across(where(is.numeric), ~ get_ltpm(.x, dge.ercc$gene$Length)))
+    } else {
+        dge.ercc.norm <- dge.ercc$counts %>% as_tibble(rownames="NAME")  %>% mutate(across(where(is.numeric), get_lcpm))
+    }
+    dge.ercc.norm  <- dge.ercc.norm %>% left_join(dge.ercc$gene %>% as_tibble(rownames="NAME") %>% select(NAME))
+
+    # Merge the ground truth and observed data
+    df <-dge.ercc.norm %>% left_join(ercc.gt.norm)
+    
+    combined_df <- df %>% pivot_longer(cols = dge.ercc$samples$sample, names_to = "Sample", values_to = "Observed log-CPM")
+    
+    per_sample_cor <- sapply(dge$samples$sample, function(x) {
+      cor(combined_df[combined_df$Sample == x, ]$GT, combined_df[combined_df$Sample == x, ]$`Observed log-CPM`) %>% unlist()
+    })
+
+
+    # Calculate the correlation
+    combined_df$Sample <- factor(combined_df$Sample)
+    correlation <- cor(combined_df$GT, combined_df$`Observed log-CPM`)
+    mean_sq_error <- mean((combined_df$GT - combined_df$`Observed log-CPM`)^2)
+    mean_abs_error <- mean(abs(combined_df$GT - combined_df$`Observed log-CPM`))
+    
+    combined_df <- combined_df %>% rename("Transcript length" = Length)
+
+    # color by the quantile of the transcript length
+    combined_df$`Transcript length` <- cut(combined_df$`Transcript length`, 
+                                                      breaks = quantile(combined_df$`Transcript length`, 
+                                                      probs = seq(0, 1, 0.25)), 
+                                                      include.lowest = TRUE,
+                                                      labels = c("1st Quartile", "2nd Quartile", "3rd Quartile", "4th Quartile"))
+
+    #p2 <- ggplot(combined_df[rownames(combined_df) %>% sample(nrow(combined_df), replace = F),], aes(y = GT, x = `Observed log-CPM`, color = `Transcript length quartiles`, shape = N_transcript_per_gene, size = Overdispersion)) +
+     p2 <- ggplot(combined_df[rownames(combined_df) %>% sample(nrow(combined_df), replace = F),], aes(y = GT, x = `Observed log-CPM`, color = `Transcript length`)) +
+      geom_point() +
+      geom_abline(slope = 1, intercept = 0, linetype = "dotted") +  # Add a dotted line of x=y
+      theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+      theme_classic() + 
+      # scale_y_log10(labels = label_number()) + 
+      labs(title = figure_name, y = "Expected abundance log2(TPM+1)", x = "Observed log2(TPM+1)") +
+      annotate("text", x = 12, y = 5, 
+               label = paste("Correlation: ", round(correlation, 2), '\n'
+                             ,"MSE: ", round(mean_sq_error, 2), '\n'
+                             ,"MAE: ", round(mean_abs_error, 2)),
+               hjust = 0, vjust = 1, 
+               color = "black", size = 3, 
+               fontface = "italic") +
+      scale_color_viridis_d() +
+      scale_size_continuous(limits = c(0, 5))
+    
+    t <- tibble(
+      sample = dge$samples$sample,
+      sample_correlation = per_sample_cor,
+      merged_correlation = correlation
+    )
+    return(list(plot1 = p1,  plot2 = p2, table = t))
+}
+get_ercc_quartiled_states <- function(dge, sample_name, tx_len_norm = TRUE) {
+  dge.ercc <- dge[is.sirv_or_ercc(dge) & !is.sirv_all(dge), ]
+
+  # Normalisation functions
+  get_ltpm <- function(counts, len) {
+    x <- counts / len
+    get_lcpm(x)
+  }
+
+  get_lcpm <- function(x) {
+    return(log2(x * 1e6 / sum(x) + 1))
+  }
+
+  # Prepare Sequins ground truth
+  ercc.gt <- read_csv(params$sirv_csv) %>% filter(grepl("ERCC", txid))
+  ercc.gt.norm <- ercc.gt %>%
+    mutate(GT = get_lcpm(conc), NAME = GenBank, Length = dge.ercc$genes$Length[match(GenBank, rownames(dge.ercc))]) %>%
+    select(NAME, GT, Length)
+
+  # Normalise observed data
+  if (tx_len_norm) {
+    dge.ercc.norm <- dge.ercc$counts %>%
+      as_tibble(rownames = "NAME") %>%
+      mutate(across(where(is.numeric), ~ get_ltpm(.x, dge.ercc$gene$Length)))
+  } else {
+    dge.ercc.norm <- dge.ercc$counts %>%
+      as_tibble(rownames = "NAME") %>%
+      mutate(across(where(is.numeric), get_lcpm))
+  }
+  dge.ercc.norm <- dge.ercc.norm %>% left_join(dge.ercc$gene %>% as_tibble(rownames = "NAME") %>% select(NAME))
+
+  # Merge the ground truth and observed data
+  df <- dge.ercc.norm %>% left_join(ercc.gt.norm)
+
+  combined_df <- df %>% pivot_longer(cols = dge.ercc$samples$sample, names_to = "Sample", values_to = "Observed log-CPM")
+
+  per_sample_cor <- sapply(dge$samples$sample, function(x) {
+    cor(combined_df[combined_df$Sample == x, ]$GT, combined_df[combined_df$Sample == x, ]$`Observed log-CPM`) %>% unlist()
+  })
+  per_sample_mse <- sapply(dge$samples$sample, function(x) {
+      mean((combined_df[combined_df$Sample == x, ]$GT - combined_df[combined_df$Sample == x, ]$`Observed log-CPM`)^2) %>% unlist()
+  })
+    
+
+  # Calculate the correlation
+  combined_df$Sample <- factor(combined_df$Sample)
+  correlation <- cor(combined_df$GT, combined_df$`Observed log-CPM`)
+
+  combined_df <- combined_df %>% rename( "Transcript length" = Length)
+
+  # color by the quantile of the transcript length
+  combined_df$`Transcript length` <- cut(combined_df$`Transcript length`,
+    breaks = quantile(combined_df$`Transcript length`,
+      probs = seq(0, 1, 0.25)
+    ),
+    include.lowest = TRUE,
+    labels = c("1st Quartile", "2nd Quartile", "3rd Quartile", "4th Quartile")
+  )
+
+  # calculate the correlation per quartile and per sample, and also give the correlation overall all four quartiles
+  per_quartile_cor <- combined_df %>%
+    group_by(Sample, `Transcript length`) %>%
+    summarise(correlation = cor(GT, `Observed log-CPM`)) %>%
+    rename(
+      "cell_line" = Sample
+    ) %>%
+    ungroup()
+  
+
+  per_quartile_mse <- combined_df %>%
+    group_by(Sample, `Transcript length`) %>%
+    summarise(mean_sq_error = mean((GT - `Observed log-CPM`)^2)) %>%
+    rename(
+      "cell_line" = Sample
+    ) %>%
+    ungroup()
+
+  # merge the overall correlation with the per quartile correlation
+  per_sample_cor <- tibble(
+    cell_line = names(per_sample_cor),
+    new_correlation = as.numeric(per_sample_cor)
+  )
+  per_sample_mse <- tibble(
+    cell_line = names(per_sample_mse),
+    new_mean_sq_error = as.numeric(per_sample_mse)
+  )
+
+  # Combine the two tibbles
+  combined_data <- per_quartile_cor %>%
+    left_join(per_quartile_mse, by = c("cell_line", "Transcript length")) %>%
+    rename( "mean square error" = mean_sq_error)
+  
+  # Add "All transcript" row with the new correlations
+  all_transcripts <- per_sample_cor %>%
+    left_join(per_sample_mse, by = "cell_line") %>%
+    mutate(`Transcript length` = "All transcript") %>%
+    rename("correlation" = new_correlation,   "mean square error" =  new_mean_sq_error)
+
+  # Combine with the original data
+  combined_data <- bind_rows(combined_data, all_transcripts)
+  combined_data$sample <- sample_name
+  combined_data
+}
+
+# SIRV
+get_sirv_scatter_plot <- function(dge, figure_name, tx_len_norm = TRUE, filter_func = function(x) {is.sirv_E0(dge) | is.long_sirv(dge)}) {
+
+    dge.sirv <- dge[filter_func(dge),]
+
+    # Normalisation functions
+    get_ltpm <- function(counts,len) {
+        x <- counts/len
+        get_lcpm(x)
+    }
+
+    get_lcpm <- function(x) { 
+        return(log2(x*1e6/sum(x) + 1))
+    }
+
+    # Prepare sirv_e0 ground truth
+    sirv.gt <- tibble(
+        NAME = dge.sirv %>% row.names(),
+        LENGTH = dge.sirv$gene$Length,
+        GT = rep(1, nrow(dge.sirv$gene)),
+        is.long.sirv = is.long_sirv(dge.sirv)
+    )
+    sirv.gt.norm <- sirv.gt %>% mutate(GT = get_lcpm(GT)) %>%
+                                    mutate(N_transcript_per_gene = SIRV.G.Tx.map$tx_count[match(NAME, SIRV.G.Tx.map$tx_name)])
+    
+    # Normalise observed data
+    if (tx_len_norm) {
+        dge.sirv.norm <- dge.sirv$counts %>% as_tibble(rownames="NAME")  %>% mutate(across(where(is.numeric), ~ get_ltpm(.x, dge.sirv$gene$Length)))
+    } else {
+        dge.sirv.norm <- dge.sirv$counts %>% as_tibble(rownames="NAME")  %>% mutate(across(where(is.numeric), get_lcpm))
+    }
+    dge.sirv.norm  <- dge.sirv.norm %>% left_join(dge.sirv$gene %>% as_tibble(rownames="NAME") %>% select(NAME))
+
+
+    # Merge the ground truth and observed data
+    plot_df <- dge.sirv.norm %>% left_join(sirv.gt.norm) %>% pivot_longer(cols=dge.sirv %>% colnames(), names_to = "Sample", values_to = "Observed log-CPM")
+
+    per_sample_sd <- sapply(dge$samples$sample, function(x) {
+      sd(plot_df[plot_df$Sample == x,]$`Observed log-CPM`) %>% unlist
+    })
+    
+    per_sample_mad <- sapply(dge$samples$sample, function(x) {
+      mad(plot_df[plot_df$Sample == x,]$`Observed log-CPM`) %>% unlist
+    })
+    
+    # Calculate the standard deviation
+    plot_df$Sample <- factor(plot_df$Sample)
+    SD <- sd(plot_df$`Observed log-CPM`)
+    MAD <- mad(plot_df$`Observed log-CPM`)
+    MSE <- mean((plot_df$GT - plot_df$`Observed log-CPM`)^2)
+    MAE <- mean(abs(plot_df$GT - plot_df$`Observed log-CPM`))
+
+    # Scatter plot
+    plot_df <- plot_df %>% mutate(N_transcript_per_gene = N_transcript_per_gene %>% as.factor(), `Transcript length` = LENGTH, `is long sirv` = is.long.sirv)
+
+    p2 <- ggplot(plot_df[rownames(plot_df) %>% sample(nrow(plot_df), replace = F),], aes(y =`Transcript length`, x = `Observed log-CPM`, color = `is long sirv`)) +
+      geom_point() +
+      geom_vline(xintercept = plot_df$GT[1], linetype = "dashed", color = "red") + 
+      theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+      theme_classic() + 
+      labs(title = figure_name, y = "Transcript length", x = "Observed log2(TPM+1)") +
+      annotate("text", x = min(plot_df$`Observed log-CPM`), y = max(plot_df$`Transcript length`), 
+               label = paste("SD: ", round(SD, 2), "\nMAD: ", round(MAD, 2), 
+                          "\nMSE: ", round(MSE, 2), "\nMAE: ", round(MAE, 2)),
+               hjust = 0, vjust = 1, 
+               color = "black", size = 4, 
+               fontface = "italic") +
+      scale_color_viridis_d()
+    p2 <- ggMarginal(p2, type = "histogram", margins = "x", fill = NA)
+    
+    t <- tibble(
+      sample = dge$samples$sample,
+      sample_sd = per_sample_sd,
+      sample_mad = per_sample_mad,
+      merged_sd = SD,
+      merged_mad = MAD
+    )
+    return(list(plot1 = p1,  plot2 = p2, table = t))
+}
+get_sirv_quartiled_states <- function(dge, sample_name, tx_len_norm = TRUE) {
+# 
+#   dge <- ont_bulk.dge.oarfish
+#   sample_name="ONT cDNA" 
+#   tx_len_norm = FALSE
+  dge.sirv <- dge[is.sirv_all(dge), ]
+
+  # Normalisation functions
+  get_ltpm <- function(counts, len) {
+    x <- counts / len
+    get_lcpm(x)
+  }
+
+  get_lcpm <- function(x) {
+    return(log2(x * 1e6 / sum(x) + 1))
+  }
+
+  # Prepare sirv_e0 ground truth
+  sirv.gt <- tibble(
+      NAME = dge.sirv %>% row.names(),
+      LENGTH = dge.sirv$gene$Length,
+      GT = rep(1, nrow(dge.sirv$gene)),
+      is.long.sirv = is.long_sirv(dge.sirv)
+  )
+  sirv.gt.norm <- sirv.gt %>% mutate(GT = get_lcpm(GT)) %>%
+                                  mutate(N_transcript_per_gene = SIRV.G.Tx.map$tx_count[match(NAME, SIRV.G.Tx.map$tx_name)])
+  
+
+  # Normalise observed data
+  if (tx_len_norm) {
+    dge.sirv.norm <- dge.sirv$counts %>%
+      as_tibble(rownames = "NAME") %>%
+      mutate(across(where(is.numeric), ~ get_ltpm(.x, dge.sirv$gene$Length)))
+  } else {
+    dge.sirv.norm <- dge.sirv$counts %>%
+      as_tibble(rownames = "NAME") %>%
+      mutate(across(where(is.numeric), get_lcpm))
+  }
+  dge.sirv.norm <- dge.sirv.norm %>% left_join(dge.sirv$gene %>% as_tibble(rownames = "NAME") %>% select(NAME))
+
+  # Merge the ground truth and observed data
+  df <- dge.sirv.norm %>% left_join(sirv.gt.norm)
+
+  combined_df <- df %>% pivot_longer(cols = dge.sirv$samples$sample, names_to = "Sample", values_to = "Observed log-CPM")
+
+  # get the per sample correlation, standard deviation and mean absolute deviation
+  per_sample_sd <- sapply(dge$samples$sample, function(x) {
+    sd(combined_df[combined_df$Sample == x,]$`Observed log-CPM`) %>% unlist
+  })
+  
+  per_sample_mad <- sapply(dge$samples$sample, function(x) {
+    mad(combined_df[combined_df$Sample == x,]$`Observed log-CPM`) %>% unlist
+  })
+    
+  per_sample_mse <- sapply(dge$samples$sample, function(x) {
+      mean((combined_df[combined_df$Sample == x, ]$GT - combined_df[combined_df$Sample == x, ]$`Observed log-CPM`)^2) %>% unlist()
+  })
+    
+  per_sample_mae <- sapply(dge$samples$sample, function(x) {
+      mean(abs(combined_df[combined_df$Sample == x, ]$GT - combined_df[combined_df$Sample == x, ]$`Observed log-CPM`)) %>% unlist()
+  })
+
+  # Calculate the standard deviation
+  combined_df$Sample <- factor(combined_df$Sample)
+  # SD <- sd(combined_df$`Observed log-CPM`)
+  # MAD <- mad(combined_df$`Observed log-CPM`)
+  # MSE <- mean((combined_df$GT - combined_df$`Observed log-CPM`)^2)
+  # MAE <- mean(abs(combined_df$GT - combined_df$`Observed log-CPM`))
+
+
+  combined_df <- combined_df %>% rename("Transcript length" = LENGTH)
+
+  # color by the quantile of the transcript length
+  combined_df$`Transcript length` <- cut(combined_df$`Transcript length`,
+    breaks = quantile(combined_df$`Transcript length`,
+      probs = seq(0, 1, 0.25)
+    ),
+    include.lowest = TRUE,
+    labels = c("1st Quartile", "2nd Quartile", "3rd Quartile", "4th Quartile")
+  )
+
+  # calculate the correlation per quartile and per sample, and also give the correlation overall all four quartiles
+  per_quartile_mse <- combined_df %>%
+    group_by(Sample, `Transcript length`) %>%
+    summarise(mean_sq_error = mean((GT - `Observed log-CPM`)^2)) %>%
+    rename(
+      "cell_line" = Sample
+    ) %>%
+    ungroup()
+  
+  per_quartile_mae <- combined_df %>%
+    group_by(Sample, `Transcript length`) %>%
+    summarise(mean_abs_error = mean(abs(GT - `Observed log-CPM`))) %>%
+    rename(
+      "cell_line" = Sample
+    ) %>%
+    ungroup()
+
+  # merge the overall correlation with the per quartile correlation
+  per_sample_mse <- tibble(
+    cell_line = names(per_sample_mse),
+    new_mean_sq_error = as.numeric(per_sample_mse)
+  )
+
+  per_sample_mae <- tibble(
+    cell_line = names(per_sample_mae),
+    new_mean_abs_error = as.numeric(per_sample_mae)
+  )
+
+  # Combine the two tibbles
+  combined_data <- per_quartile_mae %>%
+    left_join(per_quartile_mse, by = c("cell_line", "Transcript length")) %>%
+    rename("mean square error"=mean_sq_error, "mean absolute error"=mean_abs_error)
+  
+  # Add "All transcript" row with the new correlations
+  all_transcripts <- per_sample_mae %>%
+    left_join(per_sample_mse, by = "cell_line") %>%
+    mutate(`Transcript length` = "All transcript") %>%
+    rename("mean absolute error"=new_mean_abs_error, "mean square error"=new_mean_sq_error)
+
+  # Combine with the original data
+  combined_data <- bind_rows(combined_data, all_transcripts)
+  combined_data$sample <- sample_name
+  combined_data
+}
+```
+## Sequins
+
+## ERCC
+```{r Scatter  ERCC quantification against ground truth}
+cor.ill_bulk <- get_ercc_scatter_plot(ill_bulk.txi.dge_ercc, figure_name = "Illumina", tx_len_norm = TRUE)
+cor.ont_bulk <- get_ercc_scatter_plot(ont_bulk.txi.dge_ercc, figure_name="ONT cDNA" ,tx_len_norm = FALSE)
+cor.pb_bulk <- get_ercc_scatter_plot(pb_bulk.txi.dge_ercc, figure_name = "Pacbio", tx_len_norm = FALSE)
+cor.drna_bulk <- get_ercc_scatter_plot(drna_bulk.txi.dge_ercc, figure_name = "ONT dRNA", tx_len_norm = FALSE)
+
+
+
+plot_df <- cor.ont_bulk$table %>% dplyr::rename(`ONT Bulk`=sample_correlation) %>% 
+            left_join(cor.ill_bulk$table %>% dplyr::rename(`Illumina Bulk`=sample_correlation), by = 'sample') %>% 
+            left_join(cor.pb_bulk$table %>% dplyr::rename(`PacBio Bulk`=sample_correlation), by = 'sample') %>% 
+            left_join(cor.drna_bulk$table %>% dplyr::rename(`ONT dRNA`=sample_correlation), by = 'sample') %>%
+            select(`ONT Bulk`, `ONT dRNA`, `PacBio Bulk`, `Illumina Bulk`) %>% 
+            pivot_longer(col=c(`ONT Bulk`, `ONT dRNA`, `PacBio Bulk`, `Illumina Bulk`), values_to = "correlation", names_to = "Sample")
+
+
+
+(cor.ill_bulk$plot2 | cor.pb_bulk$plot2) / (cor.ont_bulk$plot2 | cor.drna_bulk$plot2) +
+  patchwork::plot_layout(
+    guides = "collect"
+  ) + patchwork::plot_annotation(
+    title = "ERCC quantification Scatter plot"
+  )
+
+```
+
+```{r ERCC quartiled states}
+cor.ill_bulk <- get_ercc_quartiled_states(ill_bulk.txi.dge_ercc, sample_name = "Illumina", tx_len_norm = TRUE)
+cor.ont_bulk <- get_ercc_quartiled_states(ont_bulk.txi.dge_ercc, sample_name="ONT cDNA" ,tx_len_norm = FALSE)
+cor.pb_bulk <- get_ercc_quartiled_states(pb_bulk.txi.dge_ercc, sample_name = "Pacbio", tx_len_norm = FALSE)
+cor.drna_bulk <- get_ercc_quartiled_states(drna_bulk.txi.dge_ercc, sample_name = "ONT dRNA", tx_len_norm = FALSE)
+
+plot_df <- rbind(cor.ont_bulk, cor.pb_bulk, cor.drna_bulk, cor.ill_bulk)
+
+# get_stats_comparison
+## start a one column tibble called total counts
+dge_list <- list(
+  Illumina = ill_bulk.txi.dge_ercc,
+  Pacbio = pb_bulk.txi.dge_ercc,
+  'ONT cDNA' = ont_bulk.txi.dge_ercc,
+  "ONT dRNA" = drna_bulk.txi.dge_ercc
+) 
+  
+total_counts <- tibble(
+  sample = lapply(names(dge_list), function(x) {rep(x, nrow(dge_list[[x]]$samples))}) %>% unlist,
+  cell_line = lapply(dge_list, function(x) {x$samples$sample}) %>% unlist,
+  total_counts = lapply(dge_list, function(x) {x$counts %>% colSums()}) %>% unlist,
+  Transcript_discovery = lapply(dge_list, function(x) {
+     x$counts %>% apply(2, function(x) {
+       mean(x >= 5 )
+     })
+  }) %>% unlist
+)
+
+
+plot_df <- plot_df %>% left_join(total_counts, by = c("cell_line", "sample"))
+
+
+# working
+plot_df$cell_line_sample <- paste(plot_df$sample, plot_df$cell_line, sep = " - ")
+# order the cell line sample level first by the sample then by the cell line
+plot_df$cell_line_sample <- factor(plot_df$cell_line_sample, levels = plot_df$cell_line_sample %>% unique() %>% sort())
+
+
+p1 <- plot_df %>%
+  filter(`Transcript length` == "All transcript") %>%
+  ggplot(aes(x = cell_line_sample, y = total_counts, fill = sample)) +
+  # bar plot
+  geom_bar(stat = "identity") +
+  # better color scheme
+  scale_fill_viridis_d() +
+  # minimal theme
+  theme_minimal() +
+  # remove the x axis labels
+  theme(
+    axis.text.x = element_blank(),
+    axis.title.x = element_blank(),
+    panel.grid.major = element_blank()
+#    panel.grid.minor = element_blank()
+  ) +
+  scale_fill_manual(values = color_palette[c("Illumina", "ONT_1", "ONT_2", "PacBio")] %>% unname()) +
+  # log the y axis
+  #scale_y_log10() +
+  labs(y="Total counts")
+
+p2 <- plot_df %>%
+  filter(`Transcript length` == "All transcript") %>%
+  ggplot(aes(x = cell_line_sample, y = Transcript_discovery, fill = sample)) +
+  # bar plot
+  geom_bar(stat = "identity") +
+  # minimal theme
+  theme_minimal() +
+  # remove the x axis labels
+  theme(
+    axis.text.x = element_blank(),
+    axis.title.x = element_blank(),
+    panel.grid.major = element_blank()
+    #    panel.grid.minor = element_blank()
+  ) +
+  scale_fill_manual(values = color_palette[c("Illumina", "ONT_1", "ONT_2", "PacBio")] %>% unname()) +
+  labs(y = "Transcripts discovery rate \n (Transcript with >= 5 counts)")
+
+p3 <- plot_df %>%
+  ggplot(aes(x = cell_line_sample, y = `Transcript length`, color = correlation, size = `mean square error` )) +
+  geom_point() +
+  # better color scheme
+  scale_color_gradient(low = "#d2cccc", high = "black")  +
+  # minimal theme
+  theme_minimal() +
+  # rotate the x axis labels
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+  labs(x = "Samples")
+  
+p1 / (p2 + theme(legend.position = "none")) / p3 +
+  patchwork::plot_layout(
+    guides = "collect"
+  ) + patchwork::plot_annotation(
+    title = "ERCC quantification comparison"
+  )
+```
+## SIRV
+
+```{r Scatter  SIRV quantification against ground truth}
+cor.ill_bulk <- get_sirv_scatter_plot(ill_bulk.txi.dge_sirv, figure_name = "Illumina", tx_len_norm = TRUE)
+cor.ont_bulk <- get_sirv_scatter_plot(ont_bulk.txi.dge_sirv, figure_name="ONT cDNA" ,tx_len_norm = FALSE)
+cor.pb_bulk <- get_sirv_scatter_plot(pb_bulk.txi.dge_sirv, figure_name = "Pacbio", tx_len_norm = FALSE)
+cor.drna_bulk <- get_sirv_scatter_plot(drna_bulk.txi.dge_sirv, figure_name = "ONT dRNA", tx_len_norm = FALSE)
+
+
+
+grid.arrange(
+  cor.ill_bulk$plot2,
+  cor.pb_bulk$plot2,
+  cor.ont_bulk$plot2,
+  cor.drna_bulk$plot2
+)
+
+
+```
+
+```{r sirv quartiled states}
+cor.ill_bulk <- get_sirv_quartiled_states(ill_bulk.txi.dge_sirv, sample_name = "Illumina", tx_len_norm = TRUE)
+cor.ont_bulk <- get_sirv_quartiled_states(ont_bulk.txi.dge_sirv, sample_name="ONT cDNA" ,tx_len_norm = FALSE)
+cor.pb_bulk <- get_sirv_quartiled_states(pb_bulk.txi.dge_sirv, sample_name = "Pacbio", tx_len_norm = FALSE)
+cor.drna_bulk <- get_sirv_quartiled_states(drna_bulk.txi.dge_sirv, sample_name = "ONT dRNA", tx_len_norm = FALSE)
+
+plot_df <- rbind(cor.ont_bulk, cor.pb_bulk, cor.drna_bulk, cor.ill_bulk)
+
+# get_stats_comparison
+## start a one column tibble called total counts
+dge_list <- list(
+  'ONT cDNA' = ont_bulk.txi.dge_sirv,
+  Pacbio = pb_bulk.txi.dge_sirv,
+  "ONT dRNA" = drna_bulk.txi.dge_sirv,
+  Illumina = ill_bulk.txi.dge_sirv
+) 
+  
+total_counts <- tibble(
+  sample = lapply(names(dge_list), function(x) {rep(x, nrow(dge_list[[x]]$samples))}) %>% unlist,
+  cell_line = lapply(dge_list, function(x) {x$samples$sample}) %>% unlist,
+  total_counts = lapply(dge_list, function(x) {x$counts %>% colSums()}) %>% unlist,
+  Transcript_discovery = lapply(dge_list, function(x) {
+     x$counts %>% apply(2, function(x) {
+       mean(x >=5)
+     })
+  }) %>% unlist
+)
+
+
+plot_df <- plot_df %>% left_join(total_counts, by = c("cell_line", "sample"))
+
+
+# working
+plot_df$cell_line_sample <- paste(plot_df$sample, plot_df$cell_line, sep = " - ")
+# order the cell line sample level first by the sample then by the cell line
+plot_df$cell_line_sample <- factor(plot_df$cell_line_sample, levels = plot_df$cell_line_sample %>% unique() %>% sort())
+
+
+p1 <- plot_df %>%
+  filter(`Transcript length` == "All transcript") %>%
+  ggplot(aes(x = cell_line_sample, y = total_counts, fill = sample)) +
+  # bar plot
+  geom_bar(stat = "identity") +
+  # better color scheme
+  scale_fill_viridis_d() +
+  # minimal theme
+  theme_minimal() +
+  # remove the x axis labels
+  theme(
+    axis.text.x = element_blank(),
+    axis.title.x = element_blank(),
+    panel.grid.major = element_blank()
+#    panel.grid.minor = element_blank()
+  ) +
+  scale_fill_manual(values = color_palette[c("Illumina", "ONT_1", "ONT_2", "PacBio")] %>% unname()) +
+  # log the y axis
+  #scale_y_log10() +
+  labs(y="Total counts")
+
+p2 <- plot_df %>%
+  filter(`Transcript length` == "All transcript") %>%
+  ggplot(aes(x = cell_line_sample, y = Transcript_discovery, fill = sample)) +
+  # bar plot
+  geom_bar(stat = "identity") +
+  # minimal theme
+  theme_minimal() +
+  # remove the x axis labels
+  theme(
+    axis.text.x = element_blank(),
+    axis.title.x = element_blank(),
+    panel.grid.major = element_blank()
+    #    panel.grid.minor = element_blank()
+  ) +
+  scale_fill_manual(values = color_palette[c("Illumina", "ONT_1", "ONT_2", "PacBio")] %>% unname()) +
+  labs(y = "Transcripts discovery rate \n (Transcript with >= 5 counts)")
+
+p3 <- plot_df %>%
+  ggplot(aes(x = cell_line_sample, y = `Transcript length`, color = `mean absolute error`, size = `mean square error` )) +
+  geom_point() +
+  # better color scheme
+  scale_color_gradient(low = "#d2cccc", high = "black")  +
+  # minimal theme
+  theme_minimal() +
+  # rotate the x axis labels
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+  labs(x = "Samples")
+  
+p1 / (p2 + theme(legend.position = "none")) / p3 +
+  patchwork::plot_layout(
+    guides = "collect"
+  ) + patchwork::plot_annotation(
+    title = "SIRV quantification comparison"
+  )
+```
+
+
+
+
+
+
+# Differential analysis
+## MDS (Merged)
+### Code setup
+```{r Merge DGEs}
+# NOTE: The merged DGElist will only be used for the MDS plot. The DE analysis will be done separately for each dataset.
+# Gene
+ill_bulk.gene.dge_sequins$samples$platform <- "Illumina"
+ont_bulk.gene.dge_sequins$samples$platform <- "ONT cDNA"
+pb_bulk.gene.dge_sequins$samples$platform <- "PacBio"
+drna_bulk.gene.dge_sequins$samples$platform <- "ONT dRNA"
+bulk.gene.dge_sequins.merge <- cbind(
+  ill_bulk.gene.dge_sequins,
+  ont_bulk.gene.dge_sequins,
+  pb_bulk.gene.dge_sequins,
+  drna_bulk.gene.dge_sequins
+)
+
+ill_bulk.gene.dge_sirv$samples$platform <- "Illumina"
+ont_bulk.gene.dge_sirv$samples$platform <- "ONT cDNA"
+pb_bulk.gene.dge_sirv$samples$platform <- "PacBio"
+drna_bulk.gene.dge_sirv$samples$platform <- "ONT dRNA"
+bulk.gene.dge_sirv.merge <- cbind(
+  ill_bulk.gene.dge_sirv,
+  ont_bulk.gene.dge_sirv,
+  pb_bulk.gene.dge_sirv,
+  drna_bulk.gene.dge_sirv
+)
+
+ill_bulk.gene.dge_ercc$samples$platform <- "Illumina"
+ont_bulk.gene.dge_ercc$samples$platform <- "ONT cDNA"
+pb_bulk.gene.dge_ercc$samples$platform <- "PacBio"
+drna_bulk.gene.dge_ercc$samples$platform <- "ONT dRNA"
+bulk.gene.dge_ercc.merge <- cbind(
+  ill_bulk.gene.dge_ercc,
+  ont_bulk.gene.dge_ercc,
+  pb_bulk.gene.dge_ercc,
+  drna_bulk.gene.dge_ercc
+)
+
+bulk.gene.dge_sirv.merge <- rbind(bulk.gene.dge_sirv.merge, bulk.gene.dge_ercc.merge)
+
+
+# Transcript
+ill_bulk.txi.dge_sequins$samples$platform <- "Illumina"
+ont_bulk.txi.dge_sequins$samples$platform <- "ONT cDNA"
+pb_bulk.txi.dge_sequins$samples$platform <- "PacBio"
+drna_bulk.txi.dge_sequins$samples$platform <- "ONT dRNA"
+bulk.txi.dge_sequins.merge <- cbind(
+  ill_bulk.txi.dge_sequins,
+  ont_bulk.txi.dge_sequins,
+  pb_bulk.txi.dge_sequins,
+  drna_bulk.txi.dge_sequins
+)
+
+ill_bulk.txi.dge_sirv$samples$platform <- "Illumina"
+ont_bulk.txi.dge_sirv$samples$platform <- "ONT cDNA"
+pb_bulk.txi.dge_sirv$samples$platform <- "PacBio"
+drna_bulk.txi.dge_sirv$samples$platform <- "ONT dRNA"
+bulk.txi.dge_sirv.merge <- cbind(
+  ill_bulk.txi.dge_sirv,
+  ont_bulk.txi.dge_sirv,
+  pb_bulk.txi.dge_sirv,
+  drna_bulk.txi.dge_sirv
+)
+
+ill_bulk.txi.dge_ercc$samples$platform <- "Illumina"
+ont_bulk.txi.dge_ercc$samples$platform <- "ONT cDNA"
+pb_bulk.txi.dge_ercc$samples$platform <- "PacBio"
+drna_bulk.txi.dge_ercc$samples$platform <- "ONT dRNA"
+bulk.txi.dge_ercc.merge <- cbind(
+  ill_bulk.txi.dge_ercc,
+  ont_bulk.txi.dge_ercc,
+  pb_bulk.txi.dge_ercc,
+  drna_bulk.txi.dge_ercc
+)
+
+bulk.txi.dge_sirv.merge <- rbind(bulk.txi.dge_sirv.merge, bulk.txi.dge_ercc.merge)
+```
+
+```{r MDS plot func}
+norm_and_mds <- function(dge) {
+  dge <- calcNormFactors(dge, method = "TMM")
+  mds <- plotMDS(dge, plot = FALSE)
+  return(mds)
+}
+myMDS <- function(dge, mds) {
+  # normalisation
+  mds_data <- data.frame(
+    Dim1 = mds$x,
+    Dim2 = mds$y,
+    cell.line = dge$sample$sample,
+    Cancer.type = dge$sample$group,
+    Data.type = dge$sample$platform,
+    Sequins.mix = dge$samples$sequins
+  )
+
+  p <- ggplot(mds_data, aes(x = Dim1, y = Dim2, color = Cancer.type, shape = Data.type, label=cell.line)) +
+    geom_point(size = 3, alpha = 0.6) + # Plot points
+    geom_text_repel(size = 3) +
+    labs(title = "MDS plot", 
+        x = paste0("Dimension 1 (", round(mds$var.explained[1]*100, 2), "%)" ) , 
+        y = paste0("Dimension 2 (", round(mds$var.explained[2]*100, 2), "%)" )) +
+    scale_color_viridis_d() + # Set color scale
+    theme_minimal() 
+  return(p)
+}
+```
+### Gene count MDS
+#### Sequins
+```{r Sequins Gene MDS}
+mds <- norm_and_mds(bulk.gene.dge_sequins.merge)
+myMDS(bulk.gene.dge_sequins.merge, mds) + ggtitle("Sequins gene counts") +
+  aes(color = Data.type, shape = Cancer.type) + 
+  scale_color_manual(values = color_palette[c("Illumina", "ONT_1", "ONT_2", "PacBio")] %>% unname())
+```
+
+#### SIRV
+```{r SIRV Gene MDS}
+mds <- norm_and_mds(bulk.gene.dge_sirv.merge)
+myMDS(bulk.gene.dge_sirv.merge, mds) + ggtitle("SIRV gene counts") +
+  aes(color = Data.type, shape = Cancer.type) + 
+  scale_color_manual(values = color_palette[c("Illumina", "ONT_1", "ONT_2", "PacBio")] %>% unname())
+```
+
+
+### Transcript count MDS
+
+#### Sequins
+```{r Sequins transcript MDS}
+mds <- norm_and_mds(bulk.tx.dge.merge[is.sequins(bulk.tx.dge.merge),])
+p1 <- myMDS(bulk.tx.dge.merge[is.sequins(bulk.tx.dge.merge), ], mds) + ggtitle("Sequins transcript counts") +
+  aes(color = Sequins.mix, shape = Data.type)
+p2 <- myMDS(bulk.tx.dge.merge[is.sequins(bulk.tx.dge.merge), ], mds) + ggtitle("Sequins transcript counts") +
+  aes(color =  Data.type , shape = Sequins.mix) + 
+  scale_color_manual(values = color_palette[c("Illumina", "ONT_1", "ONT_2", "PacBio")] %>% unname())
+
+p1 | p2
+```
+
+#### SIRV
+```{r SIRV transcript MDS}
+mds <- norm_and_mds(bulk.tx.dge.merge[is.sirv_or_ercc(bulk.tx.dge.merge),])
+myMDS(bulk.tx.dge.merge[is.sirv_or_ercc(bulk.tx.dge.merge), ], mds) + ggtitle("SIRV transcript counts") +
+  aes(color = Data.type, shape = Cancer.type) + 
+  scale_color_manual(values = color_palette[c("Illumina", "ONT_1", "ONT_2", "PacBio")] %>% unname())
+```
+
+## Gene level
+### Run edgeR (Salmon and Oarfish)
+```{r}
+DGE.edgeR_sequins <- function(dge, norm.method = "TMM") {
+  # QC and normalization
+  filter <- filterByExpr(dge, group = dge$samples$sample)
+  dge <- dge[filter, , keep.lib.sizes = FALSE]
+
+  if (!is.null(norm.method)) {
+    dge <- calcNormFactors(dge, method = norm.method)
+  }
+
+  design <- model.matrix(~ 0 + sequins, data = dge$samples)
+  dge <- estimateDisp(dge, design)
+  qlfit <- glmQLFit(dge, design)
+
+  contrasts <- makeContrasts(
+    AvsB = sequinsA - sequinsB,
+    levels = design
+  )
+
+  AvsB.QLF.test <- glmQLFTest(qlfit, contrast = contrasts[, "AvsB"])
+
+  list(
+    AvsB.DE = AvsB.QLF.test
+  )
+}
+
+
+ill_bulk.dge_sequins.list <- DGE.edgeR_sequins(ill_bulk.gene.dge_sequins)
+ont_bulk.dge_sequins.list <- DGE.edgeR_sequins(ont_bulk.gene.dge_sequins)
+drna_bulk.dge_sequins.list <- DGE.edgeR_sequins(drna_bulk.gene.dge_sequins)
+pb_bulk.dge_sequins.list <- DGE.edgeR_sequins(pb_bulk.gene.dge_sequins)
+
+
+ill_bulk.dge_sirv.list <- DGE.edgeR_sequins(rbind(ill_bulk.gene.dge_sirv, ill_bulk.gene.dge_ercc))
+ont_bulk.dge_sirv.list <- DGE.edgeR_sequins(rbind(ont_bulk.gene.dge_sirv, ont_bulk.gene.dge_ercc))
+drna_bulk.dge_sirv.list <- DGE.edgeR_sequins(rbind(drna_bulk.gene.dge_sirv, drna_bulk.gene.dge_ercc))
+pb_bulk.dge_sirv.list <- DGE.edgeR_sequins(rbind(pb_bulk.gene.dge_sirv, pb_bulk.gene.dge_ercc))
+
+```
+
+### Cross-platform comparison (upset and scatter plot)
+```{r upset plot function}
+complex_upset_plot <- function(lst) {
+  # apply decideTests to each list element
+  DEGs <- lapply(lst, function(x) {
+    x <- x %>% decideTests()
+    x <- c(paste0(rownames(x)[x > 0], "_up"), paste0(rownames(x)[x < 0], "_down"))
+    return(x)
+  })
+
+  long_df <- stack(DEGs)
+
+  # Make the binary membership matrix
+  binary_matrix <- long_df %>%
+    mutate(present = 1) %>%
+    pivot_wider(names_from = ind, values_from = present, values_fill = 0)
+
+  p <- ComplexUpset::upset(
+    binary_matrix %>% select(-values) %>% as.data.frame(),
+    intersect = names(lst),
+    wrap = TRUE
+  )
+
+  return(list(
+    plot = p,
+    matrix = binary_matrix %>% rename(Gene = values)
+  ))
+}
+
+compare_sequins_gene_logFC <- function(glm.test.rst, fig.title){
+  sequins.gt <- read_tsv(params$sequins_tsv)
+  sequins.gt$GENE <- strsplit(sequins.gt$NAME, "\\_") %>% sapply(function(x) paste0(x[1], "_", x[2]))
+  # aggregate by gene
+  sequins.gt <- sequins.gt %>% group_by(GENE) %>% summarise(MIX_A = sum(MIX_A), MIX_B = sum(MIX_B),  LENGTH = mean(LENGTH))
+  sequins.gt$gt.logFC <- log2(sequins.gt$MIX_A/sequins.gt$MIX_B)
+
+  # glm.test result
+  df <- glm.test.rst %>% 
+    topTags(adjust.method = 'BH', n = nrow(glm.test.rst))  %>% 
+    data.frame() %>% tibble::rownames_to_column(var="GENE") %>% 
+    select(GENE, logFC, FDR) %>% 
+    left_join(sequins.gt %>% select(GENE, gt.logFC, LENGTH), by = c( "GENE"))
+
+  # add a column for significant DE, "down" for downregulated, "up" for upregulated
+  df$DE <- ifelse(df$logFC > 0 & df$FDR < 0.05, "up", ifelse(df$logFC < 0 & df$FDR < 0.05, "down", "not significant"))
+
+  # plot gt.logFC vs logFC, add correlation
+  p <- ggplot(df, aes(x = logFC, y = gt.logFC, color = DE, size = LENGTH, label=GENE)) +
+    geom_point() +
+    geom_text_repel(size = 3)    +
+    scale_size(limits = c(min(sequins.gt$LENGTH), max(sequins.gt$LENGTH))) + 
+    geom_abline(intercept = 0, slope = 1, linetype = "dashed") +
+    scale_color_viridis_d() +
+    theme_minimal() +
+    labs(x = "Estimated logFC", y = " Ground truth logFC", color = "DE") +
+    annotate("text",
+      x = min(df$logFC), y = max(df$gt.logFC),
+      label = paste(
+        "Correlation: ", round(cor(df$logFC, df$gt.logFC), 2),
+        "\nMAE: ", round(mean(abs(df$logFC - df$gt.logFC)), 2)
+      ),
+      hjust = 0, vjust = 1,
+      color = "black", size = 4,
+      fontface = "italic"
+    ) +
+    ggtitle(fig.title) 
+  return(p)
+}
+```
+
+
+### DGE sequins 
+```{r upset and scater plot dge sequins, fig.width=8, fig.height=6}
+# Upset plot
+## A vs B
+lst <- list(
+  "Illumina" = ill_bulk.dge_sequins.list$AvsB.DE,
+  "ONT cDNA" = ont_bulk.dge_sequins.list$AvsB.DE,
+  "PacBio" = pb_bulk.dge_sequins.list$AvsB.DE,
+  "ONT dRNA" = drna_bulk.dge_sequins.list$AvsB.DE
+)
+complex_upset_plot(lst)$plot + ggtitle("DGE Sequins MixA vs MixB") + theme(plot.title = element_text(size = 20))
+
+lfc_plot <- lapply(1:4, function(x) compare_sequins_gene_logFC(lst[[x]], fig.title = names(lst)[x]))
+
+# open a pdf
+(lfc_plot[[1]] | lfc_plot[[2]]) / (lfc_plot[[3]] | lfc_plot[[4]]) + patchwork::plot_annotation(
+  title = "Sequins MixA vs MixB",
+  theme = theme(plot.title = element_text(size =25))
+  )  + patchwork::plot_layout(
+    guides = "collect"
+)
+```
+
+### 
+```{r upset and scater plot dge sequins, fig.width=8, fig.height=6}
+# Upset plot
+## A vs B (AvsB)
+lst <- list(
+  "Illumina" = ill_bulk.dge_sequins.list$AvsB.DE,
+  "ONT cDNA" = ont_bulk.dge_sequins.list$AvsB.DE,
+  "PacBio" = pb_bulk.dge_sequins.list$AvsB.DE,
+  "ONT dRNA" = drna_bulk.dge_sequins.list$AvsB.DE
+)
+complex_upset_plot(lst)$plot + ggtitle("DGE Sequins MixA vs MixB") + theme(plot.title = element_text(size = 20))
+
+lfc_plot <- lapply(1:4, function(x) compare_sequins_gene_logFC(lst[[x]], fig.title = names(lst)[x]))
+
+# open a pdf
+(lfc_plot[[1]] | lfc_plot[[2]]) / (lfc_plot[[3]] | lfc_plot[[4]]) + patchwork::plot_annotation(
+  title = "Sequins MixA vs MixB",
+  theme = theme(plot.title = element_text(size =25))
+  )  + patchwork::plot_layout(
+    guides = "collect"
+)
+```
+
+
+
+## Transcript level
+### Run DTE edgeR+scaling (Salmon and Oarfish) 
+```{r}
+DTE.edgeR_sequins <- function(dge, norm.method = "TMM") {
+  
+  if (!is.null(norm.method)) {
+    dge <- calcNormFactors(dge, method = norm.method)
+  }
+  
+  design <- model.matrix(~0 + sequins, data = dge$samples)
+  dge <- estimateDisp(dge, design)
+  qlfit <- glmQLFit(dge, design)
+  
+  contrasts <- makeContrasts(
+    AvsB = sequinsA - sequinsB,
+    levels = design
+  )
+  
+  AvsB.QLF.test <- glmQLFTest(qlfit, contrast = contrasts[, "AvsB"])
+  
+  list(
+    AvsB.DE = AvsB.QLF.test
+  )
+}
+```
+
+```{r get dte scaling}
+ill_bulk.dte_sequins.list <- DGE.edgeR_sequins(ill_bulk.txi.dge_sequins)
+ont_bulk.dte_sequins.list <- DGE.edgeR_sequins(ont_bulk.txi.dge_sequins)
+drna_bulk.dte_sequins.list <- DGE.edgeR_sequins(drna_bulk.txi.dge_sequins)
+pb_bulk.dte_sequins.list <- DGE.edgeR_sequins(pb_bulk.txi.dge_sequins)
+
+
+ill_bulk.dte_sirv.list <- DGE.edgeR_sequins(rbind(ill_bulk.txi.dge_sirv, ill_bulk.txi.dge_ercc))
+ont_bulk.dte_sirv.list <- DGE.edgeR_sequins(rbind(ont_bulk.txi.dge_sirv, ont_bulk.txi.dge_ercc))
+drna_bulk.dte_sirv.list <- DGE.edgeR_sequins(rbind(drna_bulk.txi.dge_sirv, drna_bulk.txi.dge_ercc))
+pb_bulk.dte_sirv.list <- DGE.edgeR_sequins(rbind(pb_bulk.txi.dge_sirv, pb_bulk.txi.dge_ercc))
+```
+
+### Upset plot
+### DTE Upset plot (sequins transcript)
+```{r upset plot dte sequins edgeR scaling, fig.width=8, fig.height=6}
+# Upset plot
+## A vs B (AvsB)
+lst <- list(
+  "Illumina" = ill_bulk.dte_sequins.list$AvsB.DE,
+  "ONT cDNA" = ont_bulk.dte_sequins.list$AvsB.DE,
+  "PacBio" = pb_bulk.dte_sequins.list$AvsB.DE,
+  "ONT dRNA" = drna_bulk.dte_sequins.list$AvsB.DE
+)
+complex_upset_plot(lst)$plot + ggtitle("DTE Sequins MIX_A vs MIX_B (with scaling)") + theme(plot.title = element_text(size = 20))
+```
+
+# Spike in fold change analysis
+```{r}
+compare_sequins_txi_logFC <- function(glm.test.rst, fig.title){
+  sequins.gt <- read_tsv(params$sequins_tsv)
+  sequins.gt$gt.logFC <- log2(sequins.gt$MIX_A/sequins.gt$MIX_B)
+
+  # glm.test result
+  df <- glm.test.rst %>% 
+    topTags(adjust.method = 'BH', n = nrow(glm.test.rst))  %>% 
+    data.frame() %>% tibble::rownames_to_column(var="Transcript") %>% 
+    select(Transcript, logFC, FDR) %>% 
+    left_join(sequins.gt %>% select(NAME, gt.logFC, LENGTH), by = c("Transcript"="NAME"))
+
+  # add a column for significant DE, "down" for downregulated, "up" for upregulated
+  df$DE <- ifelse(df$logFC > 0 & df$FDR < 0.05, "up", ifelse(df$logFC < 0 & df$FDR < 0.05, "down", "not significant"))
+
+  # plot gt.logFC vs logFC, add correlation
+  p <- ggplot(df, aes(x = logFC, y = gt.logFC, color = DE, size = LENGTH, label=Transcript)) +
+    geom_point() +
+    # geom_text_repel(size = 3)    +
+    scale_size(limits = c(min(sequins.gt$LENGTH), max(sequins.gt$LENGTH))) + 
+    geom_abline(intercept = 0, slope = 1, linetype = "dashed") +
+    scale_color_viridis_d() +
+    theme_minimal() +
+    labs(x = "Estimated logFC", y = " Ground truth logFC", color = "DE") +
+    annotate("text",
+      x = min(df$logFC), y = max(df$gt.logFC),
+      label = paste(
+        "Correlation: ", round(cor(df$logFC, df$gt.logFC), 2),
+        "\nMAE: ", round(mean(abs(df$logFC - df$gt.logFC)), 2)
+      ),
+      hjust = 0, vjust = 1,
+      color = "black", size = 4,
+      fontface = "italic"
+    ) +
+    ggtitle(fig.title) 
+  return(p)
+}
+
+
+
+```
+
+```{r}
+compare_sirv_txi_logFC <- function(glm.test.rst.list){
+  # pb_bulk.dte_sequins.list
+  df <- do.call(rbind,lapply(
+    glm.test.rst.list %>% names(),
+    function(x){
+      glm.test.rst.list[[x]] %>% 
+        topTags(adjust.method = 'BH', n = nrow(glm.test.rst))  %>% 
+        data.frame() %>% tibble::rownames_to_column(var="NAME") %>% 
+        select(NAME, logFC, FDR)  %>% mutate(gt.logFC = 0, Platform=x)
+    }
+  ))
+  # add a column for significant DE, "down" for downregulated, "up" for upregulated
+  df$DE <- ifelse(df$logFC > 0 & df$FDR < 0.05, "up", ifelse(df$logFC < 0 & df$FDR < 0.05, "down", "not_sig"))
+
+  # plot gt.logFC vs logFC, add correlation
+  p <- ggplot(df, aes(x = logFC, fill = DE,  y=Platform)) +
+    # bine dot plot
+    geom_dotplot(binwidth = (max(df$logFC) - min(df$logFC))/200, stackdir = "up", color=NA,dotsize = 1.5) + 
+    scale_fill_viridis_d() +
+    theme_minimal() +
+    geom_vline(xintercept = 0, linetype = "dashed") +
+    labs(x = "Estimated logFC", fill = "DE") 
+    # +
+    # annotate("text", x = min(df$logFC), y = 2, 
+    #       label = paste("MAE: ", round(mean(abs(df$logFC - df$gt.logFC)), 2)),
+    #       hjust = 0, vjust = 1, 
+    #       color = "black", size = 4, 
+    #       fontface = "italic")
+  return(p)
+}
+```
+
+```{r spike in logFC scater edgeR + scaling, fig.width=8, fig.height=6}
+# Sequins
+# open a pdf
+lst <- list(
+  "Illumina" = ill_bulk.dte_sequins.list$AvsB.DE,
+  "ONT cDNA" = ont_bulk.dte_sequins.list$AvsB.DE,
+  "PacBio" = pb_bulk.dte_sequins.list$AvsB.DE,
+  "ONT dRNA" = drna_bulk.dte_sequins.list$AvsB.DE
+)
+lfc_plot <- lapply(1:4, function(x) compare_sequins_txi_logFC(lst[[x]], fig.title = names(lst)[x]))
+(lfc_plot[[1]] | lfc_plot[[2]]) / (lfc_plot[[3]] | lfc_plot[[4]]) + patchwork::plot_annotation(
+  title = "Sequins MixA vs MixB",
+  theme = theme(plot.title = element_text(size =25))
+  )  + patchwork::plot_layout(
+    guides = "collect"
+)
+
+
+# SIRV
+list(
+  "Illumina" = ill_bulk.dte_sirv.list$AvsB.DE,
+  "ONT cDNA" = ont_bulk.dte_sirv.list$AvsB.DE,
+  "PacBio" = pb_bulk.dte_sirv.list$AvsB.DE,
+  "ONT dRNA" = drna_bulk.dte_sirv.list$AvsB.DE
+) %>% compare_sirv_txi_logFC
+
+
+# save Rdata
+# save.image("~/vast/DE_with_salmon_oarfish.RData")
+# load("~/vast/DE_with_salmon_oarfish.RData")
+``` 

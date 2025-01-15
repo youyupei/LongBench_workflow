@@ -1,0 +1,530 @@
+---
+title: "Analysis of Cell and Cell Line Annotation"
+author: "Yupei"
+date: '2024-12-03'
+output:
+  html_document:
+    code_folding: hide
+    toc: yes
+    toc_float: yes
+    number_sections: yes
+    toc_depth: 4
+  pdf_document:
+    toc: yes
+    toc_depth: '4'
+params:
+  random_seed: 2024
+  cache_dir: NULL
+  sc_long_preprocessing_script: NULL
+  vireo_out: NULL
+  out_annotated_so_rds: NULL
+  fn_flames_gene_quant: NULL
+  output_figures: NULL
+
+    
+---
+```{r, include=F, eval=F, echo=F}
+color_palette <- c(
+  PacBio = "#df1995",
+  ONT = "#00789b",
+  ONT_1 = "#04476c",
+  ONT_2 = "#24cdcd",
+  Illumina = "#e88b20"
+)
+
+params <- list(
+  random_seed = 2024,
+  cache_dir = NULL,
+  sc_long_preprocessing_script =  '/home/users/allstaff/you.yu/LongBench/analysis/workflow/sub_workflows/lr_sc_sn/rmarkdown/sc_long_preprocessing.R',
+  vireo_out_ont =  '/home/users/allstaff/you.yu/LongBench/analysis/lr_sc_sn/result/vireo/ont_sc_vireo',
+  vireo_out_pb = '/home/users/allstaff/you.yu/LongBench/analysis/lr_sc_sn/result/vireo/pb_sc_vireo',
+  vireo_out_ill = '/home/users/allstaff/you.yu/LongBench/analysis/illumina_sc_sn/result/vireo/ill_sc_vireo',
+  out_annotated_so_rds =  NULL,
+  fn_flames_gene_quant_ont =  "/vast/projects/LongBench/analysis/lr_sc_sn/result/flames_out/ont_sc/gene_count.csv",
+  fn_flames_gene_quant_pb = "/vast/projects/LongBench/analysis/lr_sc_sn/result/flames_out/pb_sc/gene_count.csv",
+  cell_ranger_out = "/home/users/allstaff/you.yu/LongBench/analysis/illumina_sc_sn/result/cellranger/ill_sc/outs/filtered_feature_bc_matrix",
+  output_figures = "/home/users/allstaff/you.yu/LongBench/analysis/lr_sc_sn/result/figures/test_clustering_annotation.pdf"
+)
+```
+```{r setup, include=FALSE}
+options(future.globals.maxSize = 5 * 1024 * 1024 * 1024)
+knitr::opts_chunk$set(echo = FALSE)
+knitr::opts_chunk$set(cache = FALSE, cache.path = params$cache_dir)
+library(dplyr)
+library(tidyverse)
+library(Seurat)
+library(patchwork)
+library(Matrix)
+library(ggplot2)
+library(gridExtra)
+library(stringr)
+library(grid)
+library(knitr)
+library(DT)
+library(glue)
+library(kableExtra)
+```
+
+```{r, all input files}
+# other setting:
+seed <- params$random_seed
+
+# make sure the output directory exists
+if (!is.null(params$out_annotated_so_rds)){
+  dir.create(dirname(params$out_annotated_so_rds), showWarnings = F, recursive = T)
+}
+
+  source(params$sc_long_preprocessing_script)
+```
+
+# sing-cell QC and clustring
+```{r input file, echo=T, cache=TRUE, warning=F, eval=T}
+# input file
+so_ont <- load_flames_gene_quant(params$fn_flames_gene_quant_ont, assay = "Gene_quant", project = "ont_sc")
+so_pb <- load_flames_gene_quant(params$fn_flames_gene_quant_pb, assay = "Gene_quant", project = "pb_sc")
+data <- Read10X(data.dir = params$cell_ranger_out)
+so_ill <- CreateSeuratObject(counts = data, min.cells = 3, min.features = 0, assay = "Gene_quant", project = "ill_sc")
+rm(data)
+# Get mito and ribo gene percentage
+so_ill[["percent.mt"]] <- PercentageFeatureSet(so_ill, features = grep("^MT", rownames(so_ill), value = T)) %>% round(2)
+so_ill[["percent.ribo"]] <- PercentageFeatureSet(so_ill, features = grep("^RP[SL]", rownames(so_ill), value = T)) %>% round(2)
+
+so_ont[["qc.pass"]] <- check.qc.pass(so_ont)
+so_pb[["qc.pass"]] <- check.qc.pass(so_pb)
+so_ill[["qc.pass"]] <- check.qc.pass(so_ill)
+
+# load the vireo result
+vireo_out_ont <- read.csv(paste0(params$vireo_out_ont, "/donor_ids.tsv"), header = T, sep = "\t")
+vireo_out_pb <- read.csv(paste0(params$vireo_out_pb, "/donor_ids.tsv"), header = T, sep = "\t")
+vireo_out_ill <- read.csv(paste0(params$vireo_out_ill, "/donor_ids.tsv"), header = T, sep = "\t")
+# remove "-1" from the cell names
+vireo_out_ill$cell <- gsub("-1", "", vireo_out_ill$cell)
+colnames(so_ill) <- gsub("-1", "", colnames(so_ill))
+
+vireo_out_ont["sc_qc_pass"] <- vireo_out_ont$cell %in% colnames(so_ont)[so_ont$qc.pass]
+vireo_out_pb["sc_qc_pass"] <- vireo_out_pb$cell %in% colnames(so_pb)[so_pb$qc.pass]
+vireo_out_ill["sc_qc_pass"] <- vireo_out_ill$cell %in% colnames(so_ill)[so_ill$qc.pass]
+```
+
+```{r}
+# Feature plot
+plot_d <- bind_rows(
+  lapply(c(so_ont, so_pb, so_ill), function(so) {
+    FetchData(so, c(
+      "orig.ident",
+      "nFeature_Gene_quant",
+      "nCount_Gene_quant",
+      "percent.mt",
+      "percent.ribo"
+    ))
+  })
+) 
+# Order the factor levels
+plot_d$orig.ident <- factor(plot_d$orig.ident, levels = c("ill_sc", "ont_sc", "pb_sc" ))
+# violin plot
+library(ggplot2)
+map(
+  c("nFeature_Gene_quant", "nCount_Gene_quant", "percent.mt", "percent.ribo"),
+  function(x){
+    ggplot(plot_d, aes(x = orig.ident, y = !!sym(x))) + # Corrected this line
+      geom_violin(aes(fill = orig.ident), color = "black") + # Corrected fill to use the column dynamically
+      geom_boxplot(width = 0.1, position = position_dodge(0.9)) +  
+      scale_fill_manual(values = color_palette[c("Illumina", "ONT", "PacBio")] %>% unname) + 
+        theme_minimal() +
+        labs(title = "Violin Plot", x = "Protocols", y = x)
+  }
+) %>% patchwork::wrap_plots()
+
+
+# after qc
+plot_d <- bind_rows(
+  lapply(c(so_ont, so_pb, so_ill), function(so) {
+    so <- subset(so, qc.pass)
+    FetchData(so, c(
+      "orig.ident",
+      "nFeature_Gene_quant",
+      "nCount_Gene_quant",
+      "percent.mt",
+      "percent.ribo"
+    ))
+  })
+) 
+# Order the factor levels
+plot_d$orig.ident <- factor(plot_d$orig.ident, levels = c("ill_sc", "ont_sc", "pb_sc" ))
+# violin plot
+library(ggplot2)
+map(
+  c("nFeature_Gene_quant", "nCount_Gene_quant", "percent.mt", "percent.ribo"),
+  function(x){
+    ggplot(plot_d, aes(x = orig.ident, y = !!sym(x))) + # Corrected this line
+      geom_violin(aes(fill = orig.ident), color = "black") + # Corrected fill to use the column dynamically
+      geom_boxplot(width = 0.1, position = position_dodge(0.9)) +  
+      scale_fill_manual(values = color_palette[c("Illumina", "ONT", "PacBio")] %>% unname) + 
+        theme_minimal() +
+        labs(title = "Violin Plot", x = "Protocols", y = x)
+  }
+) %>% patchwork::wrap_plots()
+```
+## Overlap the cell Barcodes Identification
+```{r}
+# Combine all unique barcodes
+all_barcodes <- unique(c(vireo_out_ont$cell, vireo_out_pb$cell, vireo_out_ill$cell))
+
+# Create a tibble with membership flags
+barcode_tibble <- tibble(
+  barcode = all_barcodes,
+  PacBio = all_barcodes %in% vireo_out_pb$cell,
+  ONT = all_barcodes %in% vireo_out_ont$cell,
+  Illumina = all_barcodes %in% vireo_out_ill$cell,
+  PacBio_ident = vireo_out_pb$donor_id[match(all_barcodes, vireo_out_pb$cell)],
+  ONT_ident = vireo_out_ont$donor_id[match(all_barcodes, vireo_out_ont$cell)],
+  Illumina_ident = vireo_out_ill$donor_id[match(all_barcodes, vireo_out_ill$cell)]
+)
+
+# After qc
+all_barcodes_post_qc <- unique(c(
+  vireo_out_ont$cell[vireo_out_ont$sc_qc_pass],
+   vireo_out_pb$cell[vireo_out_pb$sc_qc_pass], 
+   vireo_out_ill$cell[vireo_out_ill$sc_qc_pass]
+))
+barcode_tibble_post_qc <- tibble(
+  barcode = all_barcodes_post_qc,
+  PacBio = all_barcodes_post_qc %in% vireo_out_pb$cell[vireo_out_pb$sc_qc_pass],
+  ONT = all_barcodes_post_qc %in% vireo_out_ont$cell[vireo_out_ont$sc_qc_pass],
+  Illumina = all_barcodes_post_qc %in% vireo_out_ill$cell[vireo_out_ill$sc_qc_pass],
+  PacBio_ident = vireo_out_pb %>% filter(sc_qc_pass) %>% {.$donor_id[match(all_barcodes_post_qc, .$cell)]},
+  ONT_ident = vireo_out_ont %>% filter(sc_qc_pass) %>% {.$donor_id[match(all_barcodes_post_qc, .$cell)]},
+  Illumina_ident = vireo_out_ill %>% filter(sc_qc_pass) %>% {.$donor_id[match(all_barcodes_post_qc, .$cell)]}
+)
+
+# write to file
+# write.csv(barcode_tibble, "/home/users/allstaff/you.yu/LongBench/analysis/figures/sc_sn_annotation/sc_cell_line_annotation.csv", row.names = F)
+# write.csv(barcode_tibble_post_qc, "/home/users/allstaff/you.yu/LongBench/analysis/figures/sc_sn_annotation/sc_cell_line_annotation_post_qc.csv", row.names = F)
+
+```
+
+
+```{r}
+
+ComplexUpset::upset(
+  barcode_tibble,
+  intersect = c("PacBio", "ONT", "Illumina"),
+)
+
+ComplexUpset::upset(
+  barcode_tibble_post_qc,
+  intersect = c("PacBio", "ONT", "Illumina"),
+)
+
+```
+
+
+## Agreement of the Cell Line Identification
+```{r}
+
+# Plot the alluvial diagram
+    # open a new svg device
+
+library(ggalluvial)
+library(ggplot2)
+
+svg("/home/users/allstaff/you.yu/LongBench/analysis/figures/sc_sn_annotation/sc_overlap_cell_barcodes.svg", width = 5, height = 5)
+custom_colors <- c(
+  "unidentified BCs" = "#ffffff",
+  "unassigned to cell line" = "gray",
+  "HCC827" = "#440154FF",  # Default Viridis colors for other categories
+  "H211" = "#482777FF",
+  "H1975" = "#3E4A89FF",
+  "H146" = "#31688EFF",
+  "H2228" = "#26828EFF",
+  "H526" = "#1F9E89FF",
+  "SHP77" = "#35B779FF",
+  "H69" = "#6DCD59FF"
+)
+
+
+
+# Reshape the data for ggalluvial
+long_df <- reshape2::melt(barcode_tibble %>% select(barcode, PacBio_ident, Illumina_ident, ONT_ident), id.vars = "barcode")
+# change NA to "unidentified BC"
+long_df$value[is.na(long_df$value)] <- "unidentified BCs"
+long_df$value[long_df$value %in% c("doublet", "unassigned")] <- "unassigned to cell line"
+long_df$value <- factor(long_df$value, levels = c("unidentified BCs", "unassigned to cell line",  "HCC827", "H211", "H1975", "H146", "H2228", "H526", "SHP77", "H69"))
+long_df$variable <- factor(long_df$variable, levels = c("Illumina_ident",  "PacBio_ident",  "ONT_ident"))
+
+# Plot the alluvial diagram
+ggplot(long_df, aes(x = variable, stratum = value, alluvium = barcode, fill = value)) +
+  geom_flow(stat = "alluvium", lode.guidance = "frontback") +
+  geom_stratum() +
+  theme_minimal() +
+  scale_fill_manual(values = custom_colors) +  # Apply custom colors
+  labs(x = "Methods", y = "Count")
+
+dev.off()
+
+# after filtering
+svg("/home/users/allstaff/you.yu/LongBench/analysis/figures/sc_sn_annotation/sc_overlap_cell_barcodes_post_qc.svg", width = 5, height = 5)
+# Reshape the data for ggalluvial
+long_df <- reshape2::melt(barcode_tibble_post_qc %>% select(barcode, PacBio_ident, Illumina_ident, ONT_ident), id.vars = "barcode")
+# change NA to "unidentified BC"
+long_df$value[is.na(long_df$value)] <- "unidentified BCs"
+long_df$value[long_df$value %in% c("doublet", "unassigned")] <- "unassigned to cell line"
+long_df$value <- factor(long_df$value, levels = c("unidentified BCs", "unassigned to cell line",  "HCC827", "H211", "H1975", "H146", "H2228", "H526", "SHP77", "H69"))
+long_df$variable <- factor(long_df$variable, levels = c("Illumina_ident",  "PacBio_ident",  "ONT_ident"))
+
+# Plot the alluvial diagram
+ggplot(long_df, aes(x = variable, stratum = value, alluvium = barcode, fill = value)) +
+  geom_flow(stat = "alluvium", lode.guidance = "frontback") +
+  geom_stratum() +
+  theme_minimal() +
+  scale_fill_manual(values = custom_colors) +  # Apply custom colors
+  labs(x = "Methods", y = "Count")
+
+dev.off()
+
+```
+
+
+### Merge the Annotation
+```{r}
+
+# Custom function to find the most frequent non-NA value, returning NA for ties
+get_merged_cellline_anno <- function(...) {
+  values <- c(...)
+  # change "unassigned" to NA
+  values[values=="unassigned"] <- NA
+  non_na_values <- na.omit(values)
+  if (length(non_na_values) == 0) {
+    return("unassigned")
+  }
+  counts <- table(non_na_values)
+  max_count <- max(counts)
+  if (sum(counts == max_count) > 1) {
+    return("unassigned") # Return NA if there is a tie
+  }
+  return(names(which.max(counts)))
+}
+
+barcode_tibble <- barcode_tibble %>%
+  rowwise() %>%
+  mutate(
+    merged_cellline_anno = get_merged_cellline_anno(c(PacBio_ident, ONT_ident, Illumina_ident))
+  )  
+ 
+barcode_tibble_post_qc <- barcode_tibble_post_qc %>%
+  rowwise() %>%
+  mutate(
+    merged_cellline_anno = get_merged_cellline_anno(c(PacBio_ident, ONT_ident, Illumina_ident))
+  )
+
+barcode_tibble$merged_cellline_anno %>% table()
+barcode_tibble_post_qc$merged_cellline_anno %>% table()
+
+write.csv(barcode_tibble, "/home/users/allstaff/you.yu/LongBench/analysis/figures/sc_sn_annotation/sc_cell_line_annotation.csv", row.names = F)
+write.csv(barcode_tibble_post_qc, "/home/users/allstaff/you.yu/LongBench/analysis/figures/sc_sn_annotation/sc_cell_line_annotation_post_qc.csv", row.names = F)
+
+```
+
+# Summary of the Cell level QC and Identification
+```{r}
+barcode_tibble <- readr::read_csv("/home/users/allstaff/you.yu/LongBench/analysis/figures/sc_sn_annotation/sc_cell_line_annotation.csv")
+barcode_tibble_post_qc <- readr::read_csv("/home/users/allstaff/you.yu/LongBench/analysis/figures/sc_sn_annotation/sc_cell_line_annotation_post_qc.csv")
+
+# Total number of cells (shared across all methods):
+barcode_tibble %>% filter(PacBio & ONT & Illumina) %>% nrow()
+# Total number of cells after QC (shared across all methods):
+barcode_tibble_post_qc %>% filter(PacBio & ONT & Illumina) %>% nrow()
+# Total number of cells after QC  (shared across all methods) and cell line identification:
+barcode_tibble_post_qc %>% filter(PacBio & ONT & Illumina & !merged_cellline_anno %in% c("unassigned", "doublet"))  %>% nrow()
+
+high.conf.cells <- barcode_tibble_post_qc %>%
+  filter(PacBio & ONT & Illumina & !merged_cellline_anno %in% c("unassigned", "doublet")) %>%
+  select(barcode, merged_cellline_anno) %>% pull(barcode)
+
+
+# # add the donor information to the metadata
+so_ont$cell_line <- barcode_tibble$merged_cellline_anno[match(colnames(so_ont), barcode_tibble$barcode)]
+so_pb$cell_line <- barcode_tibble$merged_cellline_anno[match(colnames(so_pb), barcode_tibble$barcode)]
+so_ill$cell_line <- barcode_tibble$merged_cellline_anno[match(colnames(so_ill), barcode_tibble$barcode)]
+```
+
+
+
+
+
+
+
+## Basic QC
+
+```{r}
+# Step 1: Remove Doublet
+so_ont <- so_ont %>%
+  remove.doublet() %>%
+  remove_outliers() %>%
+  get_clusters(ndim = 30, res = 0.5, seed = params$random_seed)
+
+so_pb <- so_pb %>%
+  remove.doublet() %>%
+  remove_outliers() %>%
+  get_clusters(ndim = 30, res = 0.5, seed = params$random_seed)
+
+
+
+so_ill[["percent.mt"]] <- PercentageFeatureSet(so_ill, features = grep("^MT", rownames(so_ill), value = T)) %>% round(2)
+so_ill[["percent.ribo"]] <- PercentageFeatureSet(so_ill, features = grep("^RP[SL]", rownames(so_ill), value = T)) %>% round(2)
+so_ill <- so_ill %>%
+  remove.doublet() %>%
+  remove_outliers() %>%
+  get_clusters(ndim = 30, res = 0.5, seed = params$random_seed)
+
+
+ElbowPlot(so_ont, ndims = 30, reduction = "pca.Gene_quant")
+ElbowPlot(so_pb, ndims = 30, reduction = "pca.Gene_quant")
+ElbowPlot(so_ill, ndims = 30, reduction = "pca.Gene_quant")
+```
+
+### Cell cycle scoring
+```{r, fig.height=20, fig.width=20}
+
+# add cell cycle score
+so_ont <- CellCycleScoring(
+  object = so_ont,
+  g2m.features = cc.genes$g2m.genes,
+  s.features = cc.genes$s.genes
+)
+
+so_pb <- CellCycleScoring(
+  object = so_pb,
+  g2m.features = cc.genes$g2m.genes,
+  s.features = cc.genes$s.genes
+)
+
+so_ill <- CellCycleScoring(
+  object = so_ill,
+  g2m.features = cc.genes$g2m.genes,
+  s.features = cc.genes$s.genes
+)
+```
+
+
+```{r, fig.height=20, fig.width=20}
+#NANOPORE
+p <- DimPlot(
+  so_ont,
+  group.by = "seurat_clusters_Gene_quant_res0.5",
+  reduction = "umap.Gene_quant",
+  combine = FALSE, label.size = 5,
+  label = FALSE
+)
+p <- c(p, DimPlot(
+  so_ont,
+  group.by = "Phase",
+  reduction = "umap.Gene_quant",
+  combine = FALSE, label.size = 5,
+  label = FALSE
+))
+p <- c(p, DimPlot(
+            so_ont,
+            group.by = "vireo_rst",
+            reduction = "umap.Gene_quant",
+            combine = FALSE, label.size = 5,
+            label = FALSE
+))
+p <- c(p, FeaturePlot(so_ont, features = c("nFeature_Gene_quant", "nCount_Gene_quant", "percent.mt"), combine = F))
+do.call(grid.arrange, p)
+
+
+#PACBIO
+p <- DimPlot(
+  so_pb,
+  group.by = "seurat_clusters_Gene_quant_res0.5",
+  reduction = "umap.Gene_quant",
+  combine = FALSE, label.size = 5,
+  label = FALSE
+)
+p <- c(p, DimPlot(
+  so_pb,
+  group.by = "Phase",
+  reduction = "umap.Gene_quant",
+  combine = FALSE, label.size = 5,
+  label = FALSE
+))
+p <- c(p, DimPlot(
+            so_pb,
+            group.by = "vireo_rst",
+            reduction = "umap.Gene_quant",
+            combine = FALSE, label.size = 5,
+            label = FALSE
+))
+p <- c(p, FeaturePlot(so_pb, features = c("nFeature_Gene_quant", "nCount_Gene_quant", "percent.mt"), combine = F))
+do.call(grid.arrange, p)
+
+# ILLUMINA
+p <- DimPlot(
+  so_ill,
+  group.by = "seurat_clusters_Gene_quant_res0.5",
+  reduction = "umap.Gene_quant",
+  combine = FALSE, label.size = 5,
+  label = FALSE
+)
+p <- c(p, DimPlot(
+  so_ill,
+  group.by = "Phase",
+  reduction = "umap.Gene_quant",
+  combine = FALSE, label.size = 5,
+  label = FALSE
+))
+p <- c(p, DimPlot(
+            so_ill,
+            group.by = "vireo_rst",
+            reduction = "umap.Gene_quant",
+            combine = FALSE, label.size = 5,
+            label = FALSE
+))
+p <- c(p, FeaturePlot(so_ill, features = c("nFeature_Gene_quant", "nCount_Gene_quant", "percent.mt"), combine = F))
+do.call(grid.arrange, p)
+
+
+# p <- c(p, DimPlot(
+#   subset(so, vireo_rst != "unassigned" & vireo_rst != "doublet"),
+#   group.by='vireo_rst',
+#   reduction = "umap.Gene_quant",
+#   combine = FALSE, label.size = 5,
+#   label = TRUE))
+# 
+# 
+```
+
+# Part 2: Annotated the original clusters:
+
+```{r, include=F, eval=F,echo=F}
+cluster_anno <- so$seurat_clusters %>% levels() %>% set_names() %>% map_chr( function(x) {
+  subset_obj <- subset(so, idents = x)
+  prop_table <- table(subset_obj$vireo_rst[subset_obj$vireo_rst != "unassigned" & subset_obj$vireo_rst != "doublet"]) %>% prop.table()
+  if (max(prop_table) > 0.9) {
+    return(prop_table[which.max(prop_table)] %>% names)
+  } else {
+    return("AMB")
+  }
+} )
+
+so@meta.data$cell_lines <- cluster_anno[so$seurat_clusters_Gene_quant_res0.5]
+
+# plot the annotated cell lines
+p <- DimPlot(
+  so,
+  group.by = "cell_lines",
+  reduction = "umap.Gene_quant",
+  combine = FALSE, label.size = 5,
+  label = TRUE
+)
+
+p
+```
+
+
+```{r}
+so <- subset(so, vireo_rst != "unassigned" & vireo_rst != "doublet")
+so$cell_lines <- so$vireo_rst
+saveRDS(so, file = params$out_annotated_so_rds)
+```
