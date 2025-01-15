@@ -53,6 +53,9 @@ for sub_wf in ['lr_sc_sn', 'lr_bulk', 'sr_bulk']:
 include: "rules/qc_plot.smk"
 include: "rules/DE_analysis.smk"
 include: "rules/sc_cell_line_anno.smk"
+include: "rules/rarefraction_analysis.smk"
+
+
 rule all:
     input:
         rules.lr_bulk_all.input,

@@ -60,3 +60,5 @@ reports_output_path: "/vast/projects/LongBench/analysis/reports"
 #subsample_read_n: 1000
 #subsample_dir: "/vast/scratch/users/you.yu/LongBench/subsample_fq"
 min_qscore: 10
+
+
