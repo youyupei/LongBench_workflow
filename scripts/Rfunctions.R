@@ -156,4 +156,23 @@ get_dge_from_kallisto <- function(dir, sample_prefix_regex) {
   rst.dge$samples <- rst.dge$samples[match(colnames(rst.dge$counts), rst.dge$samples$sample),]
   return(rst.dge)
 }
+# Function to import DGE from tximport
+get_dge_from_txi <- function(quant_dir, sample_prefix_regex, type) {
+  txi <- tximport(quant_dir,
+                  type = type,
+                  tx2gene = combined_tx2gene,
+                  ignoreAfterBar = TRUE,
+                  countsFromAbundance = "no") # raw counts
+  counts <- as.data.frame(txi$counts, stringAsFactors = FALSE)
+  sample_names <- gsub(sample_prefix_regex, '', basename(dirname(quant_dir)))
+  colnames(counts) <- sample_names
+  rst.dge <- DGEList(counts = counts)
+  rst.dge$genes <- data.frame(Length=txi$length %>% rowMeans())
+  rownames(rst.dge$samples) <- sub(sample_prefix_regex, '', rownames(rst.dge$samples))
+  colnames(rst.dge$counts) <- sub(sample_prefix_regex, "", colnames(rst.dge$counts))
+  
+  rst.dge$samples <- merge(rst.dge$samples %>% select(-group), bulk.meta, by = "row.names", all.x = TRUE) %>% select(-Row.names)
+  rst.dge$samples <- rst.dge$samples[match(colnames(rst.dge$counts), rst.dge$samples$sample),]
+  return(rst.dge)
+}
 
