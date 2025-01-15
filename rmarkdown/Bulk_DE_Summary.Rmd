@@ -1,9 +1,10 @@
 ---
 title: "DE analysis"
 author: "Yupei & Ash"
+date: '`r Sys.Date()`'
+version: 'v1.0'
 output:
   html_document:
-    root_dir: "/vast/scratch/users/solano.a/LongBench/DGE_summary_v2"
     code_folding: hide
     toc: yes
     toc_float: yes
@@ -26,6 +27,7 @@ params:
   ill_bulk_salmon_dir: "/vast/projects/LongBench/analysis/sr_bulk/result/salmon/salmon_quant"
   bulk_meta: "/vast/projects/LongBench/sequencing_data/illumina_bulk/metadata.txt"
   gene_info_dir: "/vast/scratch/users/solano.a/LongBench/DEG_summary/gene_info.rds"
+
 ---
 
 # Setup: Create DGE from Input
