@@ -2,7 +2,7 @@
 title: "DE analysis"
 author: "Yupei & Ash"
 date: '`r Sys.Date()`'
-version: 'v1.0'
+version: 'v2.0'
 output:
   html_document:
     code_folding: hide
@@ -242,9 +242,9 @@ pb_bulk.gene.dge <- pb_bulk.gene.dge[common_genes, ]
 drna_bulk.gene.dge <- drna_bulk.gene.dge[common_genes, ]
 
 ## 2. filter by expression
-keep <- filterByExpr(ill_bulk.gene.dge, group = ill_bulk.gene.dge$samples$sample) |
-          filterByExpr(ont_bulk.gene.dge, group = ont_bulk.gene.dge$samples$sample) |
-          filterByExpr(pb_bulk.gene.dge, group = pb_bulk.gene.dge$samples$sample) |
+keep <- filterByExpr(ill_bulk.gene.dge, group = ill_bulk.gene.dge$samples$sample) &
+          filterByExpr(ont_bulk.gene.dge, group = ont_bulk.gene.dge$samples$sample) &
+          filterByExpr(pb_bulk.gene.dge, group = pb_bulk.gene.dge$samples$sample) &
           filterByExpr(drna_bulk.gene.dge, group = drna_bulk.gene.dge$samples$sample)
 
 #table(keep)
@@ -266,9 +266,9 @@ pb_bulk.dge.oarfish <- pb_bulk.dge.oarfish[common_tx, ]
 ont_drna.dge.oarfish <- ont_drna.dge.oarfish[common_tx, ]
 
 ## 2. filter by expression
-keep <- filterByExpr(ill_bulk.dge, group = ill_bulk.dge$samples$sample) |
-          filterByExpr(ont_bulk.dge.oarfish, group = ont_bulk.dge.oarfish$samples$sample) |
-          filterByExpr(pb_bulk.dge.oarfish, group = pb_bulk.dge.oarfish$samples$sample) |
+keep <- filterByExpr(ill_bulk.dge, group = ill_bulk.dge$samples$sample) &
+          filterByExpr(ont_bulk.dge.oarfish, group = ont_bulk.dge.oarfish$samples$sample) &
+          filterByExpr(pb_bulk.dge.oarfish, group = pb_bulk.dge.oarfish$samples$sample) &
           filterByExpr(ont_drna.dge.oarfish, group = ont_drna.dge.oarfish$samples$sample)
 #table(keep)
 
