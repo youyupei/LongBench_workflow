@@ -121,10 +121,11 @@ catchMyKallisto <- function(paths) {
 }
 
 # Load dge from output directory of salmon, oarfish or kallisto
+
 get_dge_from_salmon <- function(dir, sample_prefix_regex) {
-  salmon.dirs <- file.path(dir, 
-                               list.dirs(dir, full.names = FALSE, recursive = FALSE))
-  catched.salmon <- edgeR::catchSalmon(salmon.dirs, verbose = TRUE)
+  #To Fix: at the moment, this function requires the bulk.meta to be defined in the global environment
+  oarfish.dirs <- file.path(dir, list.dirs(dir, full.names = FALSE, recursive = FALSE))
+  catched.salmon <- edgeR::catchSalmon(oarfish.dirs, verbose = TRUE)
   rst.dge <- DGEList(counts=catched.salmon$counts, gene=catched.salmon$annotation)
   rownames(rst.dge$samples) <- rownames(rst.dge$samples) %>% sub(sample_prefix_regex, '', .)
   colnames(rst.dge$counts) <- colnames(rst.dge$counts) %>% sub(sample_prefix_regex, '', .)
@@ -134,9 +135,9 @@ get_dge_from_salmon <- function(dir, sample_prefix_regex) {
 }
 
 get_dge_from_oarfish <- function(dir, sample_prefix_regex) {
-  salmon.dirs <- file.path(dir, 
-                               list.dirs(dir, full.names = FALSE, recursive = FALSE))
-  catched.oarfish <- catchOarfish(salmon.dirs, verbose = TRUE)
+  #To Fix: at the moment, this function requires the bulk.meta to be defined in the global environment
+  oarfish.dirs <- file.path(dir, list.dirs(dir, full.names = FALSE, recursive = FALSE))
+  catched.oarfish <- catchOarfish(oarfish.dirs, verbose = TRUE)
   rst.dge <- DGEList(counts=catched.oarfish$counts, gene=catched.oarfish$annotation)
   rownames(rst.dge$samples) <- rownames(rst.dge$samples) %>% sub(sample_prefix_regex, '', .)
   colnames(rst.dge$counts) <- colnames(rst.dge$counts) %>% sub(sample_prefix_regex, '', .)
@@ -146,6 +147,7 @@ get_dge_from_oarfish <- function(dir, sample_prefix_regex) {
 }
 
 get_dge_from_kallisto <- function(dir, sample_prefix_regex) {
+   #To Fix: at the moment, this function requires the bulk.meta to be defined in the global environment
   dirs <- file.path(dir, list.dirs(dir, full.names = FALSE, recursive = FALSE))
   catched.kallisto <- catchMyKallisto(dirs)
   catched.kallisto
@@ -157,12 +159,14 @@ get_dge_from_kallisto <- function(dir, sample_prefix_regex) {
   return(rst.dge)
 }
 # Function to import DGE from tximport
-get_dge_from_txi <- function(quant_dir, sample_prefix_regex, type) {
+get_dge_from_txi <- function(quant_dir, sample_prefix_regex, type, dropInfReps = FALSE) {
+  #To Fix: at the moment, this function requires the bulk.meta to be defined in the global environment
   txi <- tximport(quant_dir,
                   type = type,
                   tx2gene = combined_tx2gene,
                   ignoreAfterBar = TRUE,
-                  countsFromAbundance = "no") # raw counts
+                  countsFromAbundance = "no",
+                  dropInfReps=dropInfReps) # raw counts
   counts <- as.data.frame(txi$counts, stringAsFactors = FALSE)
   sample_names <- gsub(sample_prefix_regex, '', basename(dirname(quant_dir)))
   colnames(counts) <- sample_names
