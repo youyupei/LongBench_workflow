@@ -218,10 +218,11 @@ rule RSeQC_junction_saturation:
         bed=config['reference']['bed_human'], 
         genome_bam = results_dir + "/GenomeAlignment/{sample}_{cell_line}.sorted.bam"
     output:
-        report(os.path.join(results_dir, "qc/RSeQC/{sample}_{cell_line}.junctionSaturation_plot.pdf"))
+        report(os.path.join(results_dir, "qc/RSeQC/{sample}_{cell_line}.junctionSaturation_plot.pdf")),
+        os.path.join(results_dir, "qc/RSeQC/{sample}_{cell_line}.junctionSaturation_plot.r")
     resources:
-        cpus_per_task=1,
-        mem_mb=8000
+        cpus_per_task=8,
+        mem_mb=64000
     conda:
         config['conda']['RSeQC']
     shell:
