@@ -1360,7 +1360,7 @@ hallmark <- msigdbr(species = "Homo sapiens", category = "H")
 
 # Ensure your ranked genes are formatted properly
 ranked_genes <- combined_deg_tables$AvsL %>%
-  filter(!is.na(hgnc_symbol)) %>%        
+  filter(!is.na(hgnc_symbol), hgnc_symbol != "") %>%        
   select(hgnc_symbol, Illumina_logFC) %>% 
   arrange(desc(Illumina_logFC)) %>%      
   deframe()                           
