@@ -6,6 +6,7 @@ channels:
 dependencies:
   - python=3.11
   - pip
+  - seqtk=1.4
   - salmon=1.10.2
   - cellsnp-lite
   - pip:
