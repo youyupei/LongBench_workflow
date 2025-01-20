@@ -2,6 +2,7 @@
 title: "Analysis of Cell and Cell Line Annotation"
 author: "Yupei"
 date: '2024-12-03'
+version: "v1.0"
 output:
   html_document:
     code_folding: hide

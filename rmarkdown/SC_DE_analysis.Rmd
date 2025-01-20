@@ -1,6 +1,7 @@
 ---
-title: "DE analysis"
+title: "LongBench Single-cell DE analysis"
 author: "Yupei & Ash"
+version: "v1.0"
 output:
   html_document:
     code_folding: hide
@@ -44,10 +45,13 @@ knitr::opts_chunk$set(
   cache = TRUE,
   fig.width = 15, 
   fig.height = 10, 
-  warning = F, 
-  fig.path = params$fig.path, 
+  warning = FALSE, 
+  fig.path = ifelse(is.null(params$fig.path), "figures/", params$fig.path), 
   dev = c("png", "svg"),
-  cache.path = params$cache_dir)
+  cache.path = ifelse(is.null(params$cache_dir), 
+                      paste0(tools::file_path_sans_ext(knitr::current_input()), "_cache/"), 
+                      params$cache_dir)
+)
 ```
 
 ```{r Libraries,include=FALSE}
@@ -220,7 +224,7 @@ ggplot(plot_df, aes(x = Dataset, y = `Total Count` / 1000000, fill = Dataset)) +
 ## 2. Filter out lowly expressed genes and transcript using `filterByExpr` for each dataset, using default parameters
 
 ### Gene/Transcript kept after filtering
-```{r gene filtering for DE}
+```{r gene filtering for DE, fig.height=15, fig.width=30}
 #GENE 
 ## 1. get common genes
 common_genes <- Reduce(intersect, lapply(list(ont_sc.gene.dge, ont_sn.gene.dge, pb_sc.gene.dge, pb_sn.gene.dge), rownames))
@@ -305,7 +309,7 @@ ComplexUpset::upset(
 )
 ```
 
-```{r transcript filtering for DE}
+```{r transcript filtering for DE, fig.height=15, fig.width=30}
 # Transcript
 ## 1. get common transcripts
 common_tx <- Reduce(intersect, lapply(list(ont_sc.dge, ont_sn.dge, pb_sc.dge, pb_sn.dge), rownames))
@@ -360,7 +364,7 @@ ComplexUpset::upset(
 
 ## Overlap with Bulk discovery
 ### Gene
-```{r}
+```{r, fig.weight=20, fig.height=7}
 #save.image("/vast/scratch/users/you.yu/test/SC_DE_line358.Rdata")
 load
 library(ComplexUpset)
@@ -466,7 +470,7 @@ ComplexUpset::upset(
 )
 ```
 
-```{r}
+```{r, fig.weight=20, fig.height=7}
 ## 2. filter by expression (Transcript)
 df <- gene_discovery %>%
   left_join(
@@ -735,7 +739,7 @@ complex_upset_plot <- function(lst, bulk.any = NULL, bulk.all = NULL) {
 }
 ```
 
-```{r upset plot dge human, fig.width=8, fig.height=6}
+```{r upset plot dge human, fig.width=8, fig.height=12}
 # Upset plot
 
 bulk_rst <- readRDS("/home/users/allstaff/you.yu/LongBench/analysis/workflow/rmarkdown/DEG_DTE.rds")
@@ -829,7 +833,7 @@ pb_sn.scl_dte_human.list <- DTE.edgeR_human(pb_sn.tx.scale_dge)
 
 ### Upset plot
 ### DTE Upset plot (human transcript)
-```{r upset plot dte human edgeR with scaling, fig.width=8, fig.height=6}
+```{r upset plot dte human edgeR with scaling, fig.width=8, fig.height=12}
 
 # Upset plot
 ## SCLC_A vs LUAD (AvsL)
