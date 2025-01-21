@@ -2,7 +2,7 @@
 title: "DE analysis"
 author: "Yupei & Ash"
 date: '`r Sys.Date()`'
-version: 'v2.0'
+version: 'v2.1_lfc1'
 output:
   html_document:
     code_folding: hide
@@ -27,6 +27,7 @@ params:
   ill_bulk_salmon_dir: "/vast/projects/LongBench/analysis/sr_bulk/result/salmon/salmon_quant"
   bulk_meta: "/vast/projects/LongBench/sequencing_data/illumina_bulk/metadata.txt"
   gene_info_dir: "/vast/scratch/users/solano.a/LongBench/DEG_summary/gene_info.rds"
+  log2FC_cutoff: 1
 
 ---
 
@@ -101,7 +102,8 @@ params <- list(
   pb_bulk_oarfish_dir = "/vast/projects/LongBench/analysis/lr_bulk/result/oarfish_cov_output/pb_bulk",
   ont_drnd_oarfish_dir = "/vast/projects/LongBench/analysis/lr_bulk/result/oarfish_cov_output/dRNA_bulk",
   ill_bulk_salmon_dir = "/vast/projects/LongBench/analysis/sr_bulk/result/salmon/salmon_quant",
-  bulk_meta = "/vast/projects/LongBench/sequencing_data/illumina_bulk/metadata.txt"
+  bulk_meta = "/vast/projects/LongBench/sequencing_data/illumina_bulk/metadata.txt",
+  log2FC_cutoff= 1
 )
 ```
 
@@ -410,7 +412,7 @@ DGE analysis is performed on subsets for human genes, each with potentially diff
 -   SCLC type p vs. LUAD
 -   SCLC type a vs. SCLC type p
 -   ***Model: model.matrix(\~0 + group, data = dge\$samples)***
-
+4. Differential expression gene and transcript lists are defined using `DecideTests` with a log2 fold change cutoff of `r params$log2FC_cutoff` and adjusted p<0.05.
 ```{r echo=TRUE, message=FALSE, warning=FALSE, results='hide'}
 DGE.edgeR_human <- function(dge, norm.method = "TMM") {
   # QC and normalization
@@ -483,7 +485,7 @@ Here the differential gene expression (DGE) results visualized in the upset plot
 complex_upset_plot <- function(lst) {
   # apply decideTests to each list element
   DEGs <- lapply(lst, function(x) {
-    x <- x %>% decideTests()
+    x <- x %>% decideTests(lfc=params$log2FC_cutoff)
     x <- rownames(x)[x != 0]
     return(x)
   })
