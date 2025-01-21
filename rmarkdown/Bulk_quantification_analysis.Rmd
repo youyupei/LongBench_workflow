@@ -1,7 +1,7 @@
 ---
 title: "Longbench DE analysis"
 author: "Yupei & Ash"
-version: "v2.0"
+version: "v2.1"
 output:
   html_document:
     code_folding: hide
@@ -146,7 +146,39 @@ ont_bulk.dge.oarfish <- get_dge_from_oarfish(params$ont_bulk_oarfish_dir, ".*/")
 pb_bulk.dge.oarfish <- get_dge_from_oarfish(params$pb_bulk_oarfish_dir, ".*/")
 ont_drna.dge.oarfish <- get_dge_from_oarfish(params$ont_drnd_oarfish_dir, ".*/")
 ```
+# Analysis: Raw count vs Transcript length scatter (H146)
+```{r, fig.height=5, fig.width=10}
+plot_raw_count_vs_length <- function(dge, title) {
+  dge <- dge[is.human(dge), ]
+  plot_d <- tibble(
+    Length = log10(dge$genes$Length),
+    counts = log10(dge$counts[,'H146'])
+  ) %>% filter(counts > 0)
 
+
+  # Add regression line with confidence interval and correlation
+  p <- ggplot(plot_d %>% slice_sample(n = 1000), aes(x = Length, y = counts)) +
+    geom_point() +
+    geom_smooth(method = "lm", se = TRUE, color = "blue", linewidth = 1) +  # Add regression line with CI
+    theme_minimal() +
+    labs(title = title, x = "Transcript length (log10)", y = "Raw count (log10)")
+
+  # Calculate the correlation
+  cor_value <- cor(plot_d$Length, plot_d$counts, method = "pearson")  # Pearson correlation
+  p <- p + annotate("text", x = Inf, y = Inf, label = paste0("R = ", round(cor_value, 2)), 
+                    hjust = 1.1, vjust = 2, size = 5)
+
+  p
+}
+
+common_tx <- Reduce(intersect, lapply(list(ill_bulk.dge, ont_bulk.dge.oarfish, pb_bulk.dge.oarfish,ont_drna.dge.oarfish), rownames))
+p1 <- plot_raw_count_vs_length(ill_bulk.dge[common_tx,], "Illumina BULK")
+p2 <- plot_raw_count_vs_length(ont_bulk.dge.oarfish[common_tx,], "ONT BULK")
+p3 <- plot_raw_count_vs_length(pb_bulk.dge.oarfish[common_tx,], "PacBio BULK")
+p4 <- plot_raw_count_vs_length(ont_drna.dge.oarfish[common_tx,], "ONT dRNA")
+
+grid.arrange(p1, p2, p3, p4, ncol=2)
+```
 # Analysis: Raw count distribution (Before any filtering)
 ```{r Raw count distribution oarfish, fig.width=10, fig.height=5}
 plot_raw_count <- function(filter_func, title, legend = TRUE) {
@@ -2130,7 +2162,7 @@ pvca_result <- pvcaBatchAssess(
   threshold = 0.1
 )
 bp <- barplot(pvca_result$dat,  xlab = "Effects",
-       ylab = "Weighted average proportion variance (Transcript-level quantification)", ylim= c(0,1.1),
-       col = c("#00d5ff"), las=2, main="PVCA estimation bar chart")
+       ylab = "Weighted average proportion variance", ylim= c(0,1.1),
+       col = c("#00d5ff"), las=2, main="PVCA estimation  (transcript-level quantification)")
 axis(1, at = bp, labels = pvca_result$label, xlab = "Effects", cex.axis = 0.5, las=2)
 ```
