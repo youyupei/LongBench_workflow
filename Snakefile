@@ -54,6 +54,7 @@ include: "rules/qc_plot.smk"
 include: "rules/DE_analysis.smk"
 include: "rules/sc_cell_line_anno.smk"
 include: "rules/rarefraction_analysis.smk"
+include: "rules/annotation_redundency_analysis.smk"
 
 
 rule all:
