@@ -17,3 +17,6 @@ The workflow was structure as follow:
     * lr_sc_sn: preprocessing and analysis for long-read Single-cell and Single-nuclei samples, including the ONT and pacbio data
     * sr_sc_sn: preprocessing and analysis for short-read Single-cell and Single-nuclei samples
 
+
+## TODO
+[ ] In single-cell workflow, the bc_list is currently mannually generated, need to be added
