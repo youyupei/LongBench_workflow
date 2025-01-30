@@ -86,6 +86,20 @@ source("/vast/projects/LongBench/analysis/workflow/scripts/Rfunctions.R")
 # setup some conflict functions
 rename <- dplyr::rename
 select <- dplyr::select
+
+knitr::opts_chunk$set(
+  cache = !is.null(params$cache_dir),  # Enable caching only if cache_dir is provided
+  fig.width = 15,                     # Set default figure width
+  fig.height = 10,                    # Set default figure height
+  warning = FALSE,                    # Suppress warnings in the output
+  fig.path = params$fig.path,         # Set figure path (NULL if not provided)
+  dev = if (!is.null(params$fig.path)) c("png", "svg") else NULL  # Set output devices if fig.path is provided
+)
+
+# Set cache.path only if params$cache_dir is not NULL
+if (!is.null(params$cache_dir)) {
+  knitr::opts_chunk$set(cache.path = params$cache_dir)
+}
 ```
 
 ```{r Input filename setup, include=FALSE, eval=F}

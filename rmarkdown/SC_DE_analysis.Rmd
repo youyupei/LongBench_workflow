@@ -1,6 +1,6 @@
 ---
-title: "DE analysis"
-author: "Yupei & Ash"
+title: "Sing-cell DE analysis"
+author: "Yupei"
 output:
   html_document:
     code_folding: hide
@@ -41,13 +41,18 @@ params <- list(
 ```
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(
-  cache = TRUE,
-  fig.width = 15, 
-  fig.height = 10, 
-  warning = F, 
-  fig.path = params$fig.path, 
-  dev = c("png", "svg"),
-  cache.path = params$cache_dir)
+  cache = !is.null(params$cache_dir),  # Enable caching only if cache_dir is provided
+  fig.width = 15,                     # Set default figure width
+  fig.height = 10,                    # Set default figure height
+  warning = FALSE,                    # Suppress warnings in the output
+  fig.path = params$fig.path,         # Set figure path (NULL if not provided)
+  dev = if (!is.null(params$fig.path)) c("png", "svg") else NULL  # Set output devices if fig.path is provided
+)
+
+# Set cache.path only if params$cache_dir is not NULL
+if (!is.null(params$cache_dir)) {
+  knitr::opts_chunk$set(cache.path = params$cache_dir)
+}
 ```
 
 ```{r Libraries,include=FALSE}

@@ -24,14 +24,6 @@ params:
     
 ---
 ```{r, include=F, eval=F, echo=F}
-color_palette <- c(
-  PacBio = "#df1995",
-  ONT = "#00789b",
-  ONT_1 = "#04476c",
-  ONT_2 = "#24cdcd",
-  Illumina = "#e88b20"
-)
-
 params <- list(
   random_seed = 2024,
   cache_dir = NULL,
@@ -47,9 +39,17 @@ params <- list(
 )
 ```
 ```{r setup, include=FALSE}
+color_palette <- c(
+  PacBio = "#df1995",
+  ONT = "#00789b",
+  ONT_1 = "#04476c",
+  ONT_2 = "#24cdcd",
+  Illumina = "#e88b20"
+)
+
+
 options(future.globals.maxSize = 5 * 1024 * 1024 * 1024)
-knitr::opts_chunk$set(echo = FALSE)
-knitr::opts_chunk$set(cache = FALSE, cache.path = params$cache_dir)
+
 library(dplyr)
 library(tidyverse)
 library(Seurat)
@@ -63,6 +63,23 @@ library(knitr)
 library(DT)
 library(glue)
 library(kableExtra)
+
+
+knitr::opts_chunk$set(echo = FALSE)
+knitr::opts_chunk$set(cache = FALSE, cache.path = params$cache_dir)
+knitr::opts_chunk$set(
+  cache = !is.null(params$cache_dir),  # Enable caching only if cache_dir is provided
+  fig.width = 15,                     # Set default figure width
+  fig.height = 10,                    # Set default figure height
+  warning = FALSE,                    # Suppress warnings in the output
+  fig.path = params$fig.path,         # Set figure path (NULL if not provided)
+  dev = if (!is.null(params$fig.path)) c("png", "svg") else NULL  # Set output devices if fig.path is provided
+)
+
+# Set cache.path only if params$cache_dir is not NULL
+if (!is.null(params$cache_dir)) {
+  knitr::opts_chunk$set(cache.path = params$cache_dir)
+}
 ```
 
 ```{r, all input files}
