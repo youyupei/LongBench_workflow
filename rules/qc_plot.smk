@@ -3,6 +3,7 @@ figures_output_path = config["figures_output_path"]
 lr_sc_sn_result_dir = sub_wf_config['lr_sc_sn']["output_path"]
 lr_bulk_result_dir = sub_wf_config['lr_bulk']["output_path"]
 sr_bulk_result_dir = sub_wf_config['sr_bulk']["output_path"]
+sr_sc_result_dir = sub_wf_config['sr_sc_sn']["output_path"]
 
 from os.path import join
 
@@ -21,6 +22,10 @@ rule read_number_plot:
         sr_bulk_salmon = expand(
             join(sr_bulk_result_dir, "salmon/salmon_quant/{cell_line}"),
             cell_line = sub_wf_config['sr_bulk']["cell_lines"]
+        ),
+        sr_sc_out = expand(
+            os.path.join(sr_sc_result_dir, 'cellranger/{sample_name}'),
+            sample_name = sub_wf_config['sr_sc_sn']["sample_name"]
         )
     output:
         report(join(figures_output_path, "qc/read_number_plot.svg"), 
@@ -30,7 +35,8 @@ rule read_number_plot:
         bulk_sample_name = expand("{sample}_{cell_line}", 
                             sample = sub_wf_config['lr_bulk']["sample_id"],
                             cell_line = sub_wf_config['lr_bulk']["cell_lines"]),
-        sc_sample_name = sub_wf_config['lr_sc_sn']["sample_id"],
+        lr_sc_sample_name = sub_wf_config['lr_sc_sn']["sample_id"],
+        sr_sc_sample_name = sub_wf_config['sr_sc_sn']["sample_name"],
         sr_sample_name = expand("Illumina_{cell_line}", 
                             cell_line = sub_wf_config['lr_bulk']["cell_lines"])
     script:

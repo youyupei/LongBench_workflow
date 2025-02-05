@@ -45,7 +45,7 @@ use rule * from sr_bulk as sr_bulk_*
 
 # get sub-workflow config:
 sub_wf_config = {}
-for sub_wf in ['lr_sc_sn', 'lr_bulk', 'sr_bulk']:
+for sub_wf in ['lr_sc_sn', 'lr_bulk', 'sr_bulk', "sr_sc_sn"]:
     sub_wf_config[sub_wf] = config_parser.sub_wf_config_parser(
         main_cfg_fn = config['global_config_path'], 
         sub_wf_name = sub_wf)
