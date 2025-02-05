@@ -18,6 +18,7 @@ library(UpSetR)
 library(ggtree)
 library(aplot)
 library(tximport)
+library(purrr)
 source("Rfunctions.R")
 
 # setup some conflict functions
@@ -100,7 +101,7 @@ combined_tx2gene <- rbind(human.G.Tx.map, sequins.G.Tx.map, SIRV.G.Tx.map)[, c("
 
 # single process
 
-single_process_oarfish <- function(quant_dir, method = "oarfish") {
+single_process_oarfish <- function(quant_dir, method = "oarfish", length_interval=c(0,500,1000,2000, 4000, Inf)) {
     if (method == "oarfish") {
         tx.dge <- get_dge_from_oarfish(quant_dir, ".*/")
         gene.dge <- get_dge_from_txi(file.path(quant_dir %>% list.dirs(full.names = TRUE, recursive = FALSE), ".quant"), ".*/", "oarfish", dropInfReps=TRUE)
@@ -114,12 +115,24 @@ single_process_oarfish <- function(quant_dir, method = "oarfish") {
     # filter the dge for human genes only
     tx.dge <- tx.dge[is.human(tx.dge), ]
     gene.dge <- gene.dge[is.human(gene.dge), ]
+    
 
-    rst <- list(
-        file = quant_dir,
-        tx.ident = filterByExpr(tx.dge, group = tx.dge$samples$sample) %>% sum(),
-        gene.ident = filterByExpr(gene.dge, group = gene.dge$samples$sample) %>% sum()
+    # Create labels dynamically
+    labels <- paste(head(length_interval, -1), tail(length_interval, -1), sep = "-")
+    tx.length <- tx.dge$genes$Length %>% cut(length_interval, labels =labels)
+    gene.length <- gene.dge$genes$Length %>% cut(length_interval, labels =labels)
+
+    rst <- data.frame(
+      file = quant_dir,
+      total.tx.ident = filterByExpr(tx.dge, group = tx.dge$samples$sample) %>% sum(),
+      total.gene.ident = filterByExpr(gene.dge, group = gene.dge$samples$sample) %>% sum()
     )
+    # add count by length bins
+    for (x in labels) {
+      rst[glue("{x}.tx.ident")] <- filterByExpr(tx.dge[tx.length == x, ], group = tx.dge$samples$sample) %>% sum()
+      rst[glue("{x}.gene.ident")] <- filterByExpr(gene.dge[gene.length == x, ], group = gene.dge$samples$sample) %>% sum()
+    }
+    return(rst)
 }
 
 # read and put together the results
@@ -135,18 +148,14 @@ sr_quant_dirs <- glue::glue(
 )
 
 lr_rst <- map(lr_quant_dirs, single_process_oarfish, method = "oarfish") %>%
-    do.call(rbind, .) %>%
-    as.data.frame()
+    do.call(rbind, .)
 
 sr_rst <- map(sr_quant_dirs, single_process_oarfish, method='salmon') %>%
-    do.call(rbind, .) %>%
-    as.data.frame()
+    do.call(rbind, .)
 
 rst <- rbind(lr_rst, sr_rst)
 rst <- rst %>%
     mutate(
-        tx.ident = tx.ident %>% unlist(),
-        gene.ident = gene.ident %>% unlist(),
         protocols = map_chr(file, ~ strsplit(.x, "/")[[1]] %>%
             tail(2) %>%
             .[1]),
@@ -177,7 +186,10 @@ read_number_table <- read_number_table %>%
 
 
 # read csv
-data <- read.csv("/vast/projects/LongBench/analysis/main_workflow/result/rarefraction_analysis/rarefraction_tx_g_detection.csv")
+data <- read.csv(
+  "/vast/projects/LongBench/analysis/main_workflow/result/rarefraction_analysis/rarefraction_tx_g_detection.csv",
+  check.names = FALSE
+)
 data <- data %>%
             mutate(protocols = case_when(
                 protocols == "Illumina" ~ "Illumina",
@@ -192,7 +204,7 @@ data$protocols <- factor(data$protocols, levels = c("Illumina","ONT cDNA", "ONT 
 
 
 # plot the rarefraction curve
-p1 <- ggplot(data, aes(x = `Average read count`, y = tx.ident, color = protocols)) +
+p1 <- ggplot(data, aes(x = `Average read count`, y = total.tx.ident, color = protocols)) +
   geom_point() +
   geom_line() +
     scale_color_manual(values = color_palette[c("Illumina", "ONT_1", "ONT_2", "PacBio")] %>% unname()) +
@@ -205,7 +217,7 @@ p1 <- ggplot(data, aes(x = `Average read count`, y = tx.ident, color = protocols
   )
 
 # plot the rarefraction curve
-p2 <- ggplot(data, aes(x = `Average read count`, y = gene.ident, color = protocols)) +
+p2 <- ggplot(data, aes(x = `Average read count`, y = total.gene.ident, color = protocols)) +
   geom_point() +
   geom_line() +
     scale_color_manual(values = color_palette[c("Illumina", "ONT_1", "ONT_2", "PacBio")] %>% unname()) +
@@ -214,7 +226,53 @@ p2 <- ggplot(data, aes(x = `Average read count`, y = gene.ident, color = protoco
   labs(
     x = "Average read count",
     y = "Genes Detected",
-    title = "Rarefraction Curve (Gene)"
+    title = "Rarefaction Curve (Gene)"
   )
 
 p1 / p2
+
+# split based on length
+
+lapply(labels, function(l) {
+  ggplot(data, aes(x = `Average read count`, y = .data[[paste0(l, ".tx.ident")]], color = protocols)) +
+    geom_point() +
+    geom_line() +
+    scale_color_manual(values = color_palette[c("Illumina", "ONT_1", "ONT_2", "PacBio")] %>% unname()) +
+    theme_minimal() +
+    theme(legend.position = "bottom") +
+    labs(
+      x = "Average read count",
+      y = "Transcripts Detected",
+      title = "Rarefaction Curve (Transcript length {l})" %>% glue()
+    )
+}) %>% patchwork::wrap_plots(ncol = 3, guides = "collect") & theme(legend.position = "bottom")
+
+
+lapply(labels, function(l) {
+  ggplot(data, aes(x = `Average read count`, y = .data[[paste0(l, ".gene.ident")]], color = protocols)) +
+    geom_point() +
+    geom_line() +
+    scale_color_manual(values = color_palette[c("Illumina", "ONT_1", "ONT_2", "PacBio")] %>% unname()) +
+    theme_minimal() +
+    theme(legend.position = "bottom") +
+    labs(
+      x = "Average read count",
+      y = "Genes Detected",
+      title = "Rarefaction Curve (Gene length  {l})" %>% glue()
+    )
+}) %>% patchwork::wrap_plots(ncol = 3, guides = "collect") & theme(legend.position = "bottom")
+
+
+lapply(labels, function(l) {
+  ggplot(data, aes(x = `Average read count`, y = .data[[paste0(l, ".tx.ident")]] /.data[[paste0(l, ".gene.ident")]], color = protocols)) +
+    geom_point() +
+    geom_line() +
+    scale_color_manual(values = color_palette[c("Illumina", "ONT_1", "ONT_2", "PacBio")] %>% unname()) +
+    theme_minimal() +
+    theme(legend.position = "bottom") +
+    labs(
+      x = "Average read count",
+      y = "Transcript per genes detected",
+      title = "Rarefaction Curve (Gene length {l})" %>% glue()
+    )
+}) %>% patchwork::wrap_plots(ncol = 3, guides = "collect") & theme(legend.position = "bottom")
