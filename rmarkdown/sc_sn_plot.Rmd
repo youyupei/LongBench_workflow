@@ -1,0 +1,216 @@
+---
+title: "SC SN plot"
+author: "Yupei"
+date: '2024-12-03'
+output:
+  html_document:
+    code_folding: hide
+    toc: yes
+    toc_float: yes
+    number_sections: yes
+    toc_depth: 4
+  pdf_document:
+    toc: yes
+    toc_depth: '4'
+params:
+    fig.path: NULL
+    cache_dir: NULL
+---
+
+```{r setup, include=FALSE}
+library(tidyverse)
+source('/home/users/allstaff/you.yu/LongBench/analysis/workflow/sub_workflows/lr_sc_sn/rmarkdown/sc_long_preprocessing.R')
+
+knitr::opts_chunk$set(
+  cache = TRUE,
+  fig.width = 15, 
+  fig.height = 10, 
+  warning = F, 
+  fig.path = params$fig.path, 
+  dev = c("png", "svg"),
+  cache.path = ifelse(is.null(params$cache_dir), 
+                      paste0(tools::file_path_sans_ext(knitr::current_input()), "_cache/"), 
+                      params$cache_dir))
+```
+
+```{r}
+# Set up the params:
+color_palette <- c(
+  PacBio = "#df1995",
+  ONT = "#00789b",
+  ONT_1 = "#04476c",
+  ONT_2 = "#24cdcd",
+  Illumina = "#e88b20"
+)
+options(future.globals.maxSize = 5 * 1024 * 1024 * 1024)
+library(dplyr)
+library(tidyverse)
+library(Seurat)
+library(patchwork)
+library(Matrix)
+library(ggplot2)
+library(gridExtra)
+library(stringr)
+library(grid)
+library(knitr)
+library(DT)
+library(glue)
+library(kableExtra)
+
+params_sc <- list(
+  random_seed=2024,
+  cache_dir=NULL,
+  sc_long_preprocessing_script= '/home/users/allstaff/you.yu/LongBench/analysis/workflow/sub_workflows/lr_sc_sn/rmarkdown/sc_long_preprocessing.R',
+  vireo_out_ont= '/home/users/allstaff/you.yu/LongBench/analysis/lr_sc_sn/result/vireo/ont_sc_vireo',
+  vireo_out_pb='/home/users/allstaff/you.yu/LongBench/analysis/lr_sc_sn/result/vireo/pb_sc_vireo',
+  vireo_out_ill='/home/users/allstaff/you.yu/LongBench/analysis/illumina_sc_sn/result/vireo/ill_sc_vireo',
+  out_annotated_so_rds= NULL,
+  fn_flames_gene_quant_ont= "/vast/projects/LongBench/analysis/lr_sc_sn/result/flames_out/ont_sc/gene_count.csv",
+  fn_flames_gene_quant_pb="/vast/projects/LongBench/analysis/lr_sc_sn/result/flames_out/pb_sc/gene_count.csv",
+  cell_ranger_out="/home/users/allstaff/you.yu/LongBench/analysis/illumina_sc_sn/result/cellranger/ill_sc/outs/filtered_feature_bc_matrix",
+  output_figures="/home/users/allstaff/you.yu/LongBench/analysis/lr_sc_sn/result/figures/test_clustering_annotation.pdf"
+)
+
+params_sn <- list(
+  random_seed=2024,
+  cache_dir=NULL,
+  sc_long_preprocessing_script= '/home/users/allstaff/you.yu/LongBench/analysis/workflow/sub_workflows/lr_sc_sn/rmarkdown/sc_long_preprocessing.R',
+  vireo_out_ont= '/home/users/allstaff/you.yu/LongBench/analysis/lr_sc_sn/result/vireo/ont_sn_vireo',
+  vireo_out_pb='/home/users/allstaff/you.yu/LongBench/analysis/lr_sc_sn/result/vireo/pb_sn_vireo',
+  vireo_out_ill='/home/users/allstaff/you.yu/LongBench/analysis/illumina_sc_sn/result/vireo/ill_sn_vireo',
+  out_annotated_so_rds= NULL,
+  fn_flames_gene_quant_ont= "/vast/projects/LongBench/analysis/lr_sc_sn/result/flames_out/ont_sn/gene_count.csv",
+  fn_flames_gene_quant_pb="/vast/projects/LongBench/analysis/lr_sc_sn/result/flames_out/pb_sn/gene_count.csv",
+  cell_ranger_out="/home/users/allstaff/you.yu/LongBench/analysis/illumina_sc_sn/result/cellranger/ill_sn/outs/filtered_feature_bc_matrix",
+  output_figures="/home/users/allstaff/you.yu/LongBench/analysis/lr_sc_sn/result/figures/test_clustering_annotation.pdf"
+)
+
+```
+
+
+```{r}
+# input file
+so_ont <- load_flames_gene_quant(params_sc$fn_flames_gene_quant_ont, assay = "Gene_quant", project = "ont_sc")
+so_pb <- load_flames_gene_quant(params_sc$fn_flames_gene_quant_pb, assay = "Gene_quant", project = "pb_sc")
+data <- Read10X(data.dir = params_sc$cell_ranger_out)
+so_ill <- CreateSeuratObject(counts = data, min.cells = 3, min.features = 0, assay = "Gene_quant", project = "ill_sc")
+rm(data)
+colnames(so_ill) <- gsub("-1", "", colnames(so_ill))
+# Get mito and ribo gene percentage
+so_ill[["percent.mt"]] <- PercentageFeatureSet(so_ill, features = grep("^MT", rownames(so_ill), value = T)) %>% round(2)
+so_ill[["percent.ribo"]] <- PercentageFeatureSet(so_ill, features = grep("^RP[SL]", rownames(so_ill), value = T)) %>% round(2)
+
+so_ont[["qc.pass"]] <- check.qc.pass(so_ont)
+so_pb[["qc.pass"]] <- check.qc.pass(so_pb)
+so_ill[["qc.pass"]] <- check.qc.pass(so_ill)
+
+barcode_tibble <- readr::read_csv("/home/users/allstaff/you.yu/LongBench/analysis/figures/sc_sn_annotation/sc_cell_line_annotation_post_qc.csv")
+so_ont$cell_line <- barcode_tibble$merged_cellline_anno[match(colnames(so_ont), barcode_tibble$barcode)]
+so_pb$cell_line <- barcode_tibble$merged_cellline_anno[match(colnames(so_pb), barcode_tibble$barcode)]
+so_ill$cell_line <- barcode_tibble$merged_cellline_anno[match(colnames(so_ill), barcode_tibble$barcode)]
+high.conf.cells <- barcode_tibble %>%
+  filter(PacBio & ONT & Illumina & !merged_cellline_anno %in% c("unassigned", "doublet")) %>%
+  select(barcode, merged_cellline_anno) %>% pull(barcode)
+
+so_ont.sc <- so_ont[,high.conf.cells]
+so_pb.sc <- so_pb[,high.conf.cells]
+so_ill.sc <- so_ill[,high.conf.cells]
+
+
+
+# repeat for SN
+
+# input file
+so_ont <- load_flames_gene_quant(params_sn$fn_flames_gene_quant_ont, assay = "Gene_quant", project = "ont_sn")
+so_pb <- load_flames_gene_quant(params_sn$fn_flames_gene_quant_pb, assay = "Gene_quant", project = "pb_sn")
+data <- Read10X(data.dir = params_sn$cell_ranger_out)
+so_ill <- CreateSeuratObject(counts = data, min.cells = 3, min.features = 0, assay = "Gene_quant", project = "ill_sn")
+rm(data)
+colnames(so_ill) <- gsub("-1", "", colnames(so_ill))
+# Get mito and ribo gene percentage
+so_ill[["percent.mt"]] <- PercentageFeatureSet(so_ill, features = grep("^MT", rownames(so_ill), value = T)) %>% round(2)
+so_ill[["percent.ribo"]] <- PercentageFeatureSet(so_ill, features = grep("^RP[SL]", rownames(so_ill), value = T)) %>% round(2)
+
+so_ont[["qc.pass"]] <- check.qc.pass(so_ont)
+so_pb[["qc.pass"]] <- check.qc.pass(so_pb)
+so_ill[["qc.pass"]] <- check.qc.pass(so_ill)
+
+
+barcode_tibble <- readr::read_csv("/home/users/allstaff/you.yu/LongBench/analysis/figures/sc_sn_annotation/sn_cell_line_annotation_post_qc.csv")
+so_ont$cell_line <- barcode_tibble$merged_cellline_anno[match(colnames(so_ont), barcode_tibble$barcode)]
+so_pb$cell_line <- barcode_tibble$merged_cellline_anno[match(colnames(so_pb), barcode_tibble$barcode)]
+so_ill$cell_line <- barcode_tibble$merged_cellline_anno[match(colnames(so_ill), barcode_tibble$barcode)]
+high.conf.cells <- barcode_tibble %>%
+  filter(PacBio & ONT & Illumina & !merged_cellline_anno %in% c("unassigned", "doublet")) %>%
+  select(barcode, merged_cellline_anno) %>% pull(barcode)
+so_ont.sn <- so_ont[,high.conf.cells]
+so_pb.sn <- so_pb[,high.conf.cells]
+so_ill.sn <- so_ill[,high.conf.cells]
+
+rm(so_ont,  so_pb, so_ill)
+
+```
+
+
+# Plot1: Read counts and feature counts distribution of filtered objects
+```{r, fig.width=20, fig.height=10}
+# Feature plot
+plot_d <- bind_rows(
+  lapply(c(so_ont.sc, so_pb.sc, so_ill.sc, so_ont.sn, so_pb.sn, so_ill.sn), function(so) {
+    FetchData(so, c(
+      "orig.ident",
+      "nFeature_Gene_quant",
+      "nCount_Gene_quant",
+      "percent.mt",
+      "percent.ribo"
+    ))
+  })
+) %>% 
+  separate(orig.ident, into=c("Sequencer", "Library.Type")) %>%
+  mutate(Sequencer = factor(Sequencer, levels = c("ill", 'ont', 'pb')),
+         Library.Type = factor(Library.Type)
+  )
+
+# violin plot
+library(ggplot2)
+map(
+  c("nFeature_Gene_quant", "nCount_Gene_quant", "percent.mt", "percent.ribo"),
+  function(x){
+    ggplot(plot_d, aes(x = Library.Type, y = !!sym(x))) + # Corrected this line
+      geom_violin(aes(fill = Sequencer), color = "black") + # Corrected fill to use the column dynamically
+      geom_boxplot(aes(fill = Sequencer), width = 0.1, position = position_dodge(0.9)) +  
+      scale_fill_manual(values = color_palette[c("Illumina", "ONT", "PacBio")] %>% unname) + 
+        theme_minimal() +
+        labs(title = "Violin Plot", x = "Protocols", y = x)
+  }
+) %>% patchwork::wrap_plots(guides="collect")
+
+```
+
+
+# UMAP
+```{r, echo=F}
+options(future.globals.maxSize = 5 * 1024 * 1024 * 1024)
+so_ont.sc <- so_ont.sc %>% get_clusters(ndim = 30, res = 0.5, seed = params$random_seed)
+so_ont.sn <- so_ont.sn %>% get_clusters(ndim = 30, res = 0.5, seed = params$random_seed)
+so_pb.sc <- so_pb.sc %>% get_clusters(ndim = 30, res = 0.5, seed = params$random_seed)
+so_pb.sn <- so_pb.sn %>% get_clusters(ndim = 30, res = 0.5, seed = params$random_seed)
+so_ill.sc <- so_ill.sc %>% get_clusters(ndim = 30, res = 0.5, seed = params$random_seed)
+so_ill.sn <- so_ill.sn %>% get_clusters(ndim = 30, res = 0.5, seed = params$random_seed)
+
+
+map(
+  list(so_ont.sc, so_ont.sn, so_pb.sc, so_pb.sn, so_ill.sc, so_ill.sn),
+  function(x){
+    DimPlot(
+      x,
+      group.by = "cell_line",
+      reduction = "umap.Gene_quant",
+      combine = FALSE, label.size = 5,
+      label = FALSE
+)
+  }
+) %>% flatten %>% patchwork::wrap_plots(guides="collect")
+```
+
+

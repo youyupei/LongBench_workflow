@@ -15,29 +15,18 @@ output:
 params:
   random_seed: 2024
   cache_dir: NULL
-  sc_long_preprocessing_script: NULL
-  vireo_out: NULL
-  out_annotated_so_rds: NULL
-  fn_flames_gene_quant: NULL
-  output_figures: NULL
+  sc_long_preprocessing_script:  '/home/users/allstaff/you.yu/LongBench/analysis/workflow/sub_workflows/lr_sc_sn/rmarkdown/sc_long_preprocessing.R'
+  vireo_out_ont:  '/home/users/allstaff/you.yu/LongBench/analysis/lr_sc_sn/result/vireo/ont_sc_vireo'
+  vireo_out_pb: '/home/users/allstaff/you.yu/LongBench/analysis/lr_sc_sn/result/vireo/pb_sc_vireo'
+  vireo_out_ill: '/home/users/allstaff/you.yu/LongBench/analysis/illumina_sc_sn/result/vireo/ill_sc_vireo'
+  out_annotated_so_rds:  NULL
+  fn_flames_gene_quant_ont:  "/vast/projects/LongBench/analysis/lr_sc_sn/result/flames_out/ont_sc/gene_count.csv"
+  fn_flames_gene_quant_pb: "/vast/projects/LongBench/analysis/lr_sc_sn/result/flames_out/pb_sc/gene_count.csv"
+  cell_ranger_out: "/home/users/allstaff/you.yu/LongBench/analysis/illumina_sc_sn/result/cellranger/ill_sc/outs/filtered_feature_bc_matrix"
+  output_figures: "/home/users/allstaff/you.yu/LongBench/analysis/lr_sc_sn/result/figures/test_clustering_annotation.pdf"
 
     
 ---
-```{r, include=F, eval=F, echo=F}
-params <- list(
-  random_seed = 2024,
-  cache_dir = NULL,
-  sc_long_preprocessing_script =  '/home/users/allstaff/you.yu/LongBench/analysis/workflow/sub_workflows/lr_sc_sn/rmarkdown/sc_long_preprocessing.R',
-  vireo_out_ont =  '/home/users/allstaff/you.yu/LongBench/analysis/lr_sc_sn/result/vireo/ont_sc_vireo',
-  vireo_out_pb = '/home/users/allstaff/you.yu/LongBench/analysis/lr_sc_sn/result/vireo/pb_sc_vireo',
-  vireo_out_ill = '/home/users/allstaff/you.yu/LongBench/analysis/illumina_sc_sn/result/vireo/ill_sc_vireo',
-  out_annotated_so_rds =  NULL,
-  fn_flames_gene_quant_ont =  "/vast/projects/LongBench/analysis/lr_sc_sn/result/flames_out/ont_sc/gene_count.csv",
-  fn_flames_gene_quant_pb = "/vast/projects/LongBench/analysis/lr_sc_sn/result/flames_out/pb_sc/gene_count.csv",
-  cell_ranger_out = "/home/users/allstaff/you.yu/LongBench/analysis/illumina_sc_sn/result/cellranger/ill_sc/outs/filtered_feature_bc_matrix",
-  output_figures = "/home/users/allstaff/you.yu/LongBench/analysis/lr_sc_sn/result/figures/test_clustering_annotation.pdf"
-)
-```
 ```{r setup, include=FALSE}
 color_palette <- c(
   PacBio = "#df1995",
@@ -368,6 +357,43 @@ so_ill$cell_line <- barcode_tibble$merged_cellline_anno[match(colnames(so_ill), 
 
 
 
+## QC plot
+```{r QC plot after annotation (high.conf.cells)}
+
+# filter by annotation
+so_ont.filt <- so_ont[,high.conf.cells]
+so_pb.filt <-  so_pb[,high.conf.cells]
+so_ill.filt <- so_ill[,high.conf.cells]
+
+# Feature plot
+plot_d <- bind_rows(
+  lapply(c(so_ont.filt, so_pb.filt, so_ill.filt), function(so) {
+    FetchData(so, c(
+      "orig.ident",
+      "nFeature_Gene_quant",
+      "nCount_Gene_quant",
+      "percent.mt",
+      "percent.ribo"
+    ))
+  })
+) 
+# Order the factor levels
+plot_d$orig.ident <- factor(plot_d$orig.ident, levels = c("ill_sc", "ont_sc", "pb_sc" ))
+# violin plot
+library(ggplot2)
+map(
+  c("nFeature_Gene_quant", "nCount_Gene_quant", "percent.mt", "percent.ribo"),
+  function(x){
+    ggplot(plot_d, aes(x = orig.ident, y = !!sym(x))) + # Corrected this line
+      geom_violin(aes(fill = orig.ident), color = "black") + # Corrected fill to use the column dynamically
+      geom_boxplot(width = 0.1, position = position_dodge(0.9)) +  
+      scale_fill_manual(values = color_palette[c("Illumina", "ONT", "PacBio")] %>% unname) + 
+        theme_minimal() +
+        labs(title = "Violin Plot", x = "Protocols", y = x)
+  }
+) %>% patchwork::wrap_plots()
+
+```
 
 
 
