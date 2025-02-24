@@ -24,6 +24,7 @@ params:
   ont_drnd_oarfish_dir: "/vast/projects/LongBench/analysis/lr_bulk/result/oarfish_cov_output/dRNA_bulk"
   ill_bulk_salmon_dir: "/vast/projects/LongBench//analysis/sr_bulk/result/salmon/salmon_quant"
   bulk_meta: "/vast/projects/LongBench/sequencing_data/illumina_bulk/metadata.txt"
+  fig.path: NULL
 ---
 
 # Setup: Create DGE from input
@@ -647,7 +648,7 @@ get_ercc_scatter_plot <- function(dge, figure_name, tx_len_norm = TRUE) {
       sample_correlation = per_sample_cor,
       merged_correlation = correlation
     )
-    return(list(plot1 = p1,  plot2 = p2, table = t))
+    return(list( plot2 = p2, table = t))
 }
 get_ercc_quartiled_states <- function(dge, sample_name, tx_len_norm = TRUE) {
   dge.ercc <- dge[is.sirv_or_ercc(dge) & !is.sirv_all(dge), ]
@@ -1330,10 +1331,10 @@ myMDS(bulk.gene.dge_sirv.merge, mds) + ggtitle("SIRV gene counts") +
 
 #### Sequins
 ```{r Sequins transcript MDS}
-mds <- norm_and_mds(bulk.tx.dge.merge[is.sequins(bulk.tx.dge.merge),])
-p1 <- myMDS(bulk.tx.dge.merge[is.sequins(bulk.tx.dge.merge), ], mds) + ggtitle("Sequins transcript counts") +
+mds <- norm_and_mds(bulk.txi.dge_sequins.merge)
+p1 <- myMDS(bulk.txi.dge_sequins.merge, mds) + ggtitle("Sequins transcript counts") +
   aes(color = Sequins.mix, shape = Data.type)
-p2 <- myMDS(bulk.tx.dge.merge[is.sequins(bulk.tx.dge.merge), ], mds) + ggtitle("Sequins transcript counts") +
+p2 <- myMDS(bulk.txi.dge_sequins.merge, mds) + ggtitle("Sequins transcript counts") +
   aes(color =  Data.type , shape = Sequins.mix) + 
   scale_color_manual(values = color_palette[c("Illumina", "ONT_1", "ONT_2", "PacBio")] %>% unname())
 
@@ -1342,8 +1343,8 @@ p1 | p2
 
 #### SIRV
 ```{r SIRV transcript MDS}
-mds <- norm_and_mds(bulk.tx.dge.merge[is.sirv_or_ercc(bulk.tx.dge.merge),])
-myMDS(bulk.tx.dge.merge[is.sirv_or_ercc(bulk.tx.dge.merge), ], mds) + ggtitle("SIRV transcript counts") +
+mds <- norm_and_mds(bulk.txi.dge_sirv.merge)
+myMDS(bulk.txi.dge_sirv.merge, mds) + ggtitle("SIRV transcript counts") +
   aes(color = Data.type, shape = Cancer.type) + 
   scale_color_manual(values = color_palette[c("Illumina", "ONT_1", "ONT_2", "PacBio")] %>% unname())
 ```
@@ -1462,7 +1463,7 @@ compare_sequins_gene_logFC <- function(glm.test.rst, fig.title){
 
 
 ### DGE sequins 
-```{r upset and scater plot dge sequins, fig.width=8, fig.height=6}
+```{r upset and scater plot dge sequins 2, fig.width=8, fig.height=6}
 # Upset plot
 ## A vs B
 lst <- list(

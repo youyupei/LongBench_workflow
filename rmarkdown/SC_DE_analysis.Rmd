@@ -741,7 +741,7 @@ complex_upset_plot <- function(lst, bulk.any = NULL, bulk.all = NULL) {
 }
 ```
 
-```{r upset plot dge human, fig.width=8, fig.height=12}
+```{r upset plot dge human,  fig.height=10, fig.width=8}
 # Upset plot
 
 bulk_rst <- readRDS("/home/users/allstaff/you.yu/LongBench/analysis/workflow/rmarkdown/DEG_DTE.rds")
@@ -835,7 +835,7 @@ pb_sn.scl_dte_human.list <- DTE.edgeR_human(pb_sn.tx.scale_dge)
 
 ### Upset plot
 ### DTE Upset plot (human transcript)
-```{r upset plot dte human edgeR with scaling, fig.width=8, fig.height=12}
+```{r upset plot dte human edgeR with scaling, fig.height=10, fig.width=8}
 
 # Upset plot
 ## SCLC_A vs LUAD (AvsL)

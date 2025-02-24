@@ -101,7 +101,7 @@ combined_tx2gene <- rbind(human.G.Tx.map, sequins.G.Tx.map, SIRV.G.Tx.map)[, c("
 
 # single process
 
-single_process_oarfish <- function(quant_dir, method = "oarfish", length_interval=c(0,500,1000,2000, 4000, Inf)) {
+single_process_oarfish <- function(quant_dir, method = "oarfish", length_interval=c(0,500,1000,2000, 3000, Inf)) {
     if (method == "oarfish") {
         tx.dge <- get_dge_from_oarfish(quant_dir, ".*/")
         gene.dge <- get_dge_from_txi(file.path(quant_dir %>% list.dirs(full.names = TRUE, recursive = FALSE), ".quant"), ".*/", "oarfish", dropInfReps=TRUE)
@@ -124,13 +124,13 @@ single_process_oarfish <- function(quant_dir, method = "oarfish", length_interva
 
     rst <- data.frame(
       file = quant_dir,
-      total.tx.ident = filterByExpr(tx.dge, group = tx.dge$samples$sample) %>% sum(),
-      total.gene.ident = filterByExpr(gene.dge, group = gene.dge$samples$sample) %>% sum()
+      total.tx.ident = colSums(tx.dge$counts >= 5) %>% mean,
+      total.gene.ident = colSums(gene.dge$counts >= 10) %>% mean
     )
     # add count by length bins
     for (x in labels) {
-      rst[glue("{x}.tx.ident")] <- filterByExpr(tx.dge[tx.length == x, ], group = tx.dge$samples$sample) %>% sum()
-      rst[glue("{x}.gene.ident")] <- filterByExpr(gene.dge[gene.length == x, ], group = gene.dge$samples$sample) %>% sum()
+      rst[glue("{x}.tx.ident")] <- colSums(tx.dge[tx.length == x, ]$counts >= 5) %>% mean
+      rst[glue("{x}.gene.ident")] <- colSums(gene.dge[gene.length == x, ]$counts >= 10) %>% mean
     }
     return(rst)
 }
