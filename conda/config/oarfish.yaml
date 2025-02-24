@@ -3,4 +3,4 @@ channels:
   - bioconda
   - conda-forge  # It's good to include conda-forge for dependencies
 dependencies:
-  - oarfish
+  - oarfish=0.6.2
