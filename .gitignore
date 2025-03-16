@@ -6,3 +6,4 @@ conda/envs
 
 # Do not ignore .Rmd files
 !**/rmarkdown/*.Rmd
+singularity/*

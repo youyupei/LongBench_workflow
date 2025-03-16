@@ -1,0 +1,578 @@
+---
+title: "QC plots from AlignQC"
+author: "Yupei"
+date: '2024-03-04'
+version: "v1.0"
+output:
+  html_document:
+    code_folding: hide
+    toc: yes
+    toc_float: yes
+    number_sections: yes
+    toc_depth: 4
+  pdf_document:
+    toc: yes
+    toc_depth: '4'
+params:
+  random_seed: 2024
+  cache_dir: NULL
+  fig.path: NULL
+---
+
+```{r}
+knitr::opts_chunk$set(echo = FALSE)
+knitr::opts_chunk$set(cache = FALSE, cache.path = params$cache_dir)
+knitr::opts_chunk$set(
+  cache = !is.null(params$cache_dir),  # Enable caching only if cache_dir is provided
+  fig.width = 15,                     # Set default figure width
+  fig.height = 10,                    # Set default figure height
+  warning = FALSE,                    # Suppress warnings in the output
+  fig.path = params$fig.path,         # Set figure path (NULL if not provided)
+  dev = if (!is.null(params$fig.path)) c("png", "svg") else NULL  # Set output devices if fig.path is provided
+)
+
+# Set cache.path only if params$cache_dir is not NULL
+if (!is.null(params$cache_dir)) {
+  knitr::opts_chunk$set(cache.path = params$cache_dir)
+}
+
+
+library(tidyr)
+library(dplyr)
+library(purrr)
+library(readr)
+library(tibble)
+library(stringr)
+library(ggplot2)
+```
+
+```{r input dir}
+
+color_palette <- c(
+  PacBio = "#df1995",
+  ONT = "#00789b",
+  ONT_1 = "#04476c",
+  ONT_2 = "#24cdcd",
+  Illumina = "#e88b20"
+)
+```
+
+
+# Alignment stats
+```{r alignment stats}
+# LR
+dirs <- list.dirs('/vast/projects/LongBench/analysis/lr_bulk/result/qc/AlignQC/', recursive = TRUE, full.names = TRUE)
+# Find all alignment stats files
+stats_files <- list.files(dirs, pattern = "alignment.stats.txt", full.names = TRUE)
+
+# SR
+dirs <- list.dirs("/vast/projects/LongBench/analysis/sr_bulk/result/qc/AlignQC/", recursive = TRUE, full.names = TRUE)
+stats_files <- c(stats_files, list.files(dirs, pattern = "alignment.stats.txt", full.names = TRUE))
+
+
+# Function to parse each file
+parse_stats <- function(file) {
+  # Extract platform and type from file path
+  parts <- strsplit(file, "/")[[1]]
+  platform <- parts[length(parts) - 2]
+  
+  # Read file and convert to tibble
+  stats <- read.table(file, sep = "\t", col.names = c("metric", "value"), fill = TRUE)
+  
+  # Add platform and type columns
+  stats <- stats %>%
+    mutate(platform = platform) %>%
+    pivot_wider(names_from = metric, values_from = value)
+  
+  return(stats)
+}
+
+# Parse all files and combine into a single tibble
+alignment.stats <- map_dfr(stats_files, parse_stats)
+
+# split the platform column into two columns
+alignment.stats <- alignment.stats %>%
+  mutate(
+    Platform = case_when(
+      str_detect(platform, "dRNA") ~ "ONT dRNA",
+      str_detect(platform, "ont_bulk") ~ "ONT cDNA",
+      str_detect(platform, "pb") ~ "PacBio",
+      TRUE ~ "Illumina",
+    ),
+    # remove *_
+    Cell_line = gsub(".*_", "", platform)
+  ) %>% select(-platform)
+
+
+
+# Scale UNALIGNED_READS ALIGNED_READS SINGLE_ALIGN_READS GAPPED_ALIGN_READS CHIMERA_ALIGN_READS TRANSCHIMERA_ALIGN_READS SELFCHIMERA_ALIGN_READS by TOTAL_READS
+alignment.stats <- alignment.stats %>%
+  mutate_at(
+    vars(UNALIGNED_READS:SELFCHIMERA_ALIGN_READS), ~ . / TOTAL_READS * 100
+  ) %>%
+  mutate_at(
+    vars(UNALIGNED_BASES:SELFCHIMERA_ALIGN_BASES), ~ . / TOTAL_BASES * 100
+  )
+
+# remove TOTAL_READS and TOTAL_BASES
+alignment.stats <- alignment.stats %>%
+  select(-c(TOTAL_READS, TOTAL_BASES))
+```
+
+
+```{r alignment stats read, fig.height=6, fig.width=10}
+# generate ggplot for each column, facet by different columns, x is dataset, y is value
+library(ggplot2)
+df_long <- alignment.stats %>%
+  select(c(Platform,Cell_line, ALIGNED_READS, GAPPED_ALIGN_READS, CHIMERA_ALIGN_READS, TRANSCHIMERA_ALIGN_READS, SELFCHIMERA_ALIGN_READS)) %>%
+  pivot_longer(cols = -c(Platform, Cell_line), names_to = "Metric", values_to = "Value")
+
+df_summary <- df_long %>%
+  group_by(Platform, Metric) %>%
+  summarise(
+    Mean_Value = mean(Value, na.rm = TRUE),
+    SD = sd(Value, na.rm = TRUE),  # Standard deviation
+    .groups = "drop"
+  )
+
+ggplot() +
+  # Bars for the mean
+  geom_bar(data = df_summary, aes(x = Platform, y = Mean_Value, fill = Platform), 
+           stat = "identity", position = "dodge", alpha = 0.7) +
+  # Error bars (Mean ± SD)
+  geom_errorbar(data = df_summary, aes(x = Platform, ymin = Mean_Value - SD, ymax = Mean_Value + SD), 
+                width = 0.2, position = position_dodge(0.9)) +
+  # Dots for individual values
+  geom_point(data = df_long, aes(x = Platform, y = Value, color = Platform), 
+             position = position_jitter(width = 0.2), size = 2) +
+  facet_wrap(~Metric, scales = "free_y") +  # Facet by Metric
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +  # Rotate x-axis labels
+  labs(x = "Platform", y = "Percentage") +
+  scale_fill_manual(values = color_palette[c("Illumina", "ONT", "ONT_1", "PacBio")] %>% unname) +
+  scale_color_manual(values = color_palette[c("Illumina", "ONT", "ONT_1", "PacBio")] %>% unname)  # Match dot color to fill
+```
+
+
+```{r alignment stats base,fig.height=6, fig.width=10}
+df_long <- alignment.stats %>% select(c(Platform,Cell_line,ALIGNED_BASES,GAPPED_ALIGN_BASES,CHIMERA_ALIGN_BASES,TRANSCHIMERA_ALIGN_BASES,SELFCHIMERA_ALIGN_BASES)) %>%
+  pivot_longer(cols = -c(Platform, Cell_line), names_to = "Metric", values_to = "Value")
+df_summary <- df_long %>%
+  group_by(Platform, Metric) %>%
+  summarise(
+    Mean_Value = mean(Value, na.rm = TRUE),
+    SD = sd(Value, na.rm = TRUE),  # Standard deviation
+    .groups = "drop"
+  )
+
+ggplot() +
+  # Bars for the mean
+  geom_bar(data = df_summary, aes(x = Platform, y = Mean_Value, fill = Platform), 
+           stat = "identity", position = "dodge", alpha = 0.7) +
+  # Error bars (Mean ± SD)
+  geom_errorbar(data = df_summary, aes(x = Platform, ymin = Mean_Value - SD, ymax = Mean_Value + SD), 
+                width = 0.2, position = position_dodge(0.9)) +
+  # Dots for individual values
+  geom_point(data = df_long, aes(x = Platform, y = Value, color = Platform), 
+             position = position_jitter(width = 0.2), size = 2) +
+  facet_wrap(~Metric, scales = "free_y") +  # Facet by Metric
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +  # Rotate x-axis labels
+  labs(x = "Platform", y = "Percentage") +
+  scale_fill_manual(values = color_palette[c("Illumina", "ONT", "ONT_1", "PacBio")] %>% unname) +
+  scale_color_manual(values = color_palette[c("Illumina", "ONT", "ONT_1", "PacBio")] %>% unname)  # Match dot color to fill
+
+```
+
+# Error state
+```{r load error state}
+
+# LR
+dirs <- list.dirs('/vast/projects/LongBench/analysis/lr_bulk/result/qc/AlignQC/', recursive = TRUE, full.names = TRUE)
+# Find all alignment stats files
+stats_files <- list.files(dirs, pattern = "error_stats.txt", full.names = TRUE)
+
+# SR
+dirs <- list.dirs("/vast/projects/LongBench/analysis/sr_bulk/result/qc/AlignQC/", recursive = TRUE, full.names = TRUE)
+stats_files <- c(stats_files, list.files(dirs, pattern = "error_stats.txt", full.names = TRUE))
+
+# Parse all files and combine into a single tibble
+error.stats <- map_dfr(stats_files, parse_stats)
+# split the platform column into two columns
+error.stats <- error.stats %>%
+  mutate(
+    Platform = case_when(
+      str_detect(platform, "dRNA") ~ "ONT dRNA",
+      str_detect(platform, "ont_bulk") ~ "ONT cDNA",
+      str_detect(platform, "pb") ~ "PacBio",
+      TRUE ~ "Illumina",
+    ),
+    # remove *_
+    Cell_line = gsub(".*_", "", platform)
+  ) %>% select(-platform)
+
+error.stats <- error.stats %>%
+  mutate(
+    ANY_ERROR = ANY_ERROR / ALIGNMENT_BASES * 100,
+    MISMATCHES = MISMATCHES / ALIGNMENT_BASES * 100,
+    ANY_DELETION = ANY_DELETION / ALIGNMENT_BASES * 100,
+    ANY_INSERTION = ANY_INSERTION / ALIGNMENT_BASES * 100
+  )
+
+df_long <- error.stats %>%
+  select(c(
+    Platform,
+    Cell_line,
+    ANY_ERROR,
+    MISMATCHES,
+    ANY_DELETION,
+    ANY_INSERTION
+  )) %>%
+  pivot_longer(cols = -c(Platform, Cell_line), names_to = "Metric", values_to = "Value")
+
+df_summary <- df_long %>%
+  group_by(Platform, Metric) %>%
+  summarise(
+    Mean_Value = mean(Value, na.rm = TRUE),
+    SD = sd(Value, na.rm = TRUE),  # Standard deviation
+    .groups = "drop"
+  )
+
+ggplot() +
+  # Bars for the mean
+  geom_bar(data = df_summary, aes(x = Platform, y = Mean_Value, fill = Platform), 
+           stat = "identity", position = "dodge", alpha = 0.7) +
+  # Error bars (Mean ± SD)
+  geom_errorbar(data = df_summary, aes(x = Platform, ymin = Mean_Value - SD, ymax = Mean_Value + SD), 
+                width = 0.2, position = position_dodge(0.9)) +
+  # Dots for individual values
+  geom_point(data = df_long, aes(x = Platform, y = Value, color = Platform), 
+             position = position_jitter(width = 0.2), size = 2) +
+  facet_wrap(~Metric, scales = "free_y") +  # Facet by Metric
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +  # Rotate x-axis labels
+  labs(x = "Platform", y = "Percentage") +
+  scale_fill_manual(values = color_palette[c("Illumina", "ONT", "ONT_1", "PacBio")] %>% unname) +
+  scale_color_manual(values = color_palette[c("Illumina", "ONT", "ONT_1", "PacBio")] %>% unname)  # Match dot color to fill
+```
+
+# Junction shift
+```{r load junction shift}
+# LR
+dirs <- list.dirs('/vast/projects/LongBench/analysis/lr_bulk/result/qc/AlignQC/', recursive = TRUE, full.names = TRUE)
+# Find all alignment stats files
+stats_files <- list.files(dirs, pattern = "junvar.txt", full.names = TRUE)
+
+# SR
+dirs <- list.dirs("/vast/projects/LongBench/analysis/sr_bulk/result/qc/AlignQC/", recursive = TRUE, full.names = TRUE)
+stats_files <- c(stats_files, list.files(dirs, pattern = "junvar.txt", full.names = TRUE))
+
+# Parse all files and combine into a single tibble
+junc.var <- map_dfr(stats_files, parse_stats)
+# split the platform column into two columns
+junc.var <- junc.var %>%
+  mutate(
+    Platform = case_when(
+      str_detect(platform, "dRNA") ~ "ONT dRNA",
+      str_detect(platform, "ont_bulk") ~ "ONT cDNA",
+      str_detect(platform, "pb") ~ "PacBio",
+      TRUE ~ "Illumina",
+    ),
+    # remove *_
+    Cell_line = gsub(".*_", "", platform)
+  ) %>%
+  select(-platform)
+
+# update all NA to 0
+junc.var[is.na(junc.var)] <- 0
+
+junc.var <- junc.var %>% mutate(
+  # scales all integer columns by the sum of all integer columns per row
+  across(where(is.integer), ~ . / rowSums(across(where(is.integer))) * 100)
+)
+```
+
+
+```{r Perfect junction proportion}
+# Perfect junction
+df_long <- junc.var %>%
+  select(c(
+    Platform,
+    Cell_line,
+    `0`
+  ))
+
+df_summary <- df_long %>%
+  group_by(Platform) %>%
+  summarise(
+    Mean_Value = mean(`0`, na.rm = TRUE),
+    SD = sd(`0`, na.rm = TRUE),  # Standard deviation
+    .groups = "drop"
+  )
+
+ggplot() +
+  # Bars for the mean
+  geom_bar(
+    data = df_summary, aes(x = Platform, y = Mean_Value, fill = Platform),
+    stat = "identity", position = "dodge", alpha = 0.7
+  ) +
+  # Error bars (Mean ± SD)
+  geom_errorbar(
+    data = df_summary, aes(x = Platform, ymin = Mean_Value - SD, ymax = Mean_Value + SD),
+    width = 0.2, position = position_dodge(0.9)
+  ) +
+  # Dots for individual values
+  geom_point(
+    data = df_long, aes(x = Platform, y = `0`, color = Platform),
+    position = position_jitter(width = 0.2), size = 2
+  ) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) + # Rotate x-axis labels
+  labs(x = "Platform", y = "Percentage") +
+  scale_fill_manual(values = color_palette[c("Illumina", "ONT", "ONT_1", "PacBio")] %>% unname()) +
+  scale_color_manual(values = color_palette[c("Illumina", "ONT", "ONT_1", "PacBio")] %>% unname()) + # Match dot color to fill    
+  coord_cartesian(ylim = c(95, 100))  + 
+  ggtitle("Percentage of annotated junction")
+```
+
+
+```{r Shifted junction proportion}
+# Other
+df_long <- junc.var %>%
+  select(-c(`0`)) %>%
+  pivot_longer(cols = -c(Platform, Cell_line), names_to = "Metric", values_to = "Value") %>%
+  mutate(Metric = as.numeric(Metric))
+
+df_summary <- df_long %>%
+  group_by(Platform, Metric) %>%
+  summarise(
+    Mean_Value = mean(Value, na.rm = TRUE),
+    SD = sd(Value, na.rm = TRUE),  # Standard deviation
+    .groups = "drop"
+  )
+
+ggplot() +
+  # Bars for the mean
+  geom_bar(
+    data = df_summary %>% filter(Metric != 0), aes(x = Metric, y = Mean_Value, fill = Platform),
+    stat = "identity", position = "dodge", alpha = 0.7
+  ) +
+  # Error bars (Mean ± SD)
+  geom_errorbar(
+    data = df_summary, aes(x = Metric, ymin = Mean_Value - SD, ymax = Mean_Value + SD),
+    width = 0.2, position = position_dodge(0.9)
+  ) +
+  # # Dots for individual values
+  # geom_point(data = df_long, aes(x = Metric, y = Value, color = Platform),
+  #            position = position_jitter(width = 0.2), size = 2) +
+  facet_wrap(~Platform, scales = "free_y") + # Facet by Metric
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) + # Rotate x-axis labels
+  labs(x = "Shift", y = "Percentage") +
+  scale_fill_manual(values = color_palette[c("Illumina", "ONT", "ONT_1", "PacBio")] %>% unname()) +
+  scale_color_manual(values = color_palette[c("Illumina", "ONT", "ONT_1", "PacBio")] %>% unname()) + # Match dot color to fill
+  coord_cartesian(ylim = c(0, 0.2)) 
+
+```
+
+
+# Genomic Feature
+```{r}
+# LR
+dirs <- list.dirs('/vast/projects/LongBench/analysis/lr_bulk/result/qc/AlignQC/', recursive = TRUE, full.names = TRUE)
+# Find all alignment stats files
+stats_files <- list.files(dirs, pattern = "read_genomic_features.txt.gz", full.names = TRUE)
+
+# SR
+dirs <- list.dirs("/vast/projects/LongBench/analysis/sr_bulk/result/qc/AlignQC/", recursive = TRUE, full.names = TRUE)
+stats_files <- c(stats_files, list.files(dirs, pattern = "read_genomic_features.txt.gz", full.names = TRUE))
+
+
+# Function to parse each file
+parse_stats <- function(file) {
+  # Extract platform and type from file path
+  parts <- strsplit(file, "/")[[1]]
+  platform <- parts[length(parts) - 2]
+  
+  # Read file and convert to tibble
+  stats <- read_tsv(file, col_names = c("Read_id", "Feature", "exon_count", "Aligned_length")) %>%
+    # change Aligned_length to bins 500, 1000, 1500, 2000, 2500, 3000, 3500, 4000, 4000+
+    mutate(
+      Aligned_length = cut(Aligned_length, breaks=c(seq(0, 4000, by=500), Inf), labels = c("0-500", "500-1000", "1000-1500", "1500-2000", "2000-2500", "2500-3000", "3000-3500", "3500-4000", "4000+")),
+      Platform = case_when(
+        str_detect(platform, "dRNA") ~ "ONT dRNA",
+        str_detect(platform, "ont_bulk") ~ "ONT cDNA",
+        str_detect(platform, "pb") ~ "PacBio",
+        TRUE ~ "Illumina",
+        ),
+      Cell_line = gsub(".*_", "", platform)
+    ) %>% 
+    group_by(Aligned_length, Feature, Cell_line, Platform ) %>%
+    summarise(
+      count = n(),
+      .groups = "drop"
+    ) 
+    
+    
+  
+
+  # # Add platform and type columns
+  # stats <- stats %>%
+  #   pivot_wider(names_from = metric, values_from = value)
+  # Get the proportion of each unique feature
+  # stats <- stats %>%
+  #   group_by(Feature) %>%
+  #   summarise(
+  #     count = n(),
+  #     .groups = "drop"
+  #   ) %>%
+  #   mutate(
+  #     proportion = count / sum(count) * 100,
+  #     platform = platform
+  #   ) %>%
+  #   arrange(desc(proportion))
+  return(stats)
+}
+
+# Parse all files and combine into a single tibble
+genoemic.feature <- map_dfr(stats_files, parse_stats)
+genoemic.feature$Feature <- factor(genoemic.feature$Feature, levels=c("intergenic", "intron","exon"))
+
+
+```
+
+
+```{r genomic feature overall proportion}
+# Compute average proportions per platform
+summary_data <- genoemic.feature %>%
+  group_by(Platform, Feature) %>%
+  summarise(count = sum(count), .groups = "drop") %>%
+  group_by(Platform) %>%
+  mutate(
+      proportion = count / sum(count),
+  )
+# Create stacked bar plot
+ggplot(summary_data, aes(x = Platform, y = proportion, fill = Feature)) +
+  geom_bar(stat = "identity") +
+  theme_minimal() +
+  labs(x = "Platform", y = "Proportion", fill = "Feature") +
+  scale_fill_brewer(palette = "Set2") # Adjust color scheme
+```
+
+
+
+```{r genomic feature proportion stratified by aligned length}
+# Compute average proportions per platform
+summary_data <- genoemic.feature %>% 
+  group_by(Platform) %>%
+  mutate(platform_total = sum(count)) %>% 
+  mutate(proportion=count/platform_total) 
+        
+
+ggplot(summary_data, aes(x = Aligned_length, y = proportion, fill = Feature)) +
+  # Bars for the mean
+    geom_bar(stat = "identity") +
+  # Error bars (Mean ± SD)
+  # geom_errorbar(data = df_summary, aes(x = Platform, ymin = Mean_Value - SD, ymax = Mean_Value + SD), 
+  #               width = 0.2, position = position_dodge(0.9)) +
+  # # Dots for individual values
+  # geom_point(data = df_long, aes(x = Platform, y = Value, color = Platform), 
+  #            position = position_jitter(width = 0.2), size = 2) +
+  facet_wrap(~Platform, scales = "free_y") +  # Facet by Metric
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +  # Rotate x-axis labels
+  labs(x = "Aligned read length", y = "Proportion") +
+  scale_fill_brewer(palette = "Set2") # Adjust color scheme
+```
+
+
+# Exon count and transcript completeness
+```{r, include=F, eval=F}
+# # LR
+# dirs <- list.dirs('/vast/projects/LongBench/analysis/lr_bulk/result/qc/AlignQC/', recursive = TRUE, full.names = TRUE)
+# # Find all alignment stats files
+# stats_files <- list.files(dirs, pattern = "annotbest.txt.gz", full.names = TRUE)
+# 
+# # SR
+# dirs <- list.dirs("/vast/projects/LongBench/analysis/sr_bulk/result/qc/AlignQC/", recursive = TRUE, full.names = TRUE)
+# stats_files <- c(stats_files, list.files(dirs, pattern = "annotbest.txt.gz", full.names = TRUE))
+# 
+# 
+# # Function to parse each file
+# parse_stats <- function(file) {
+#   # Extract platform and type from file path
+#   parts <- strsplit(file, "/")[[1]]
+#   platform <- parts[length(parts) - 2]
+#   
+#   # Read file and convert to tibble
+#   stats <- read_tsv(file, col_names = c(
+#     "id",
+#     "Read_id",
+#     "tx_id",
+#     "g_id",
+#     "completeness",
+#     "exon_count_read1",
+#     "exon_count_read2",
+#     "exon_count_read3",
+#     "exon_count_anno",
+#     "align_length_read1",
+#     "align_length_read2",
+#     "align_length_anno",
+#     "tx_id_1",
+#     "tx_id_2",
+#     "unknown_number"
+#   )) %>%
+#     select(completeness, exon_count_anno) %>%
+#     mutate(
+#       Platform = case_when(
+#         str_detect(platform, "dRNA") ~ "ONT dRNA",
+#         str_detect(platform, "ont_bulk") ~ "ONT cDNA",
+#         str_detect(platform, "pb") ~ "PacBio",
+#         TRUE ~ "Illumina",
+#       ),
+#       # remove *_
+#       Cell_line = gsub(".*_", "", platform)
+#     )
+#   
+#   # count the number of reads with different completeness and different exon count
+#   stats <- stats %>%
+#     group_by(Platform, Cell_line, completeness, exon_count_anno) %>%
+#     summarise(
+#       count = n(),
+#       .groups = "drop"
+#     )
+# 
+#   return(stats)
+# }
+# 
+# # Parse all files and combine into a single tibble
+# annotation.stat <- map_dfr(stats_files, parse_stats)
+# 
+# overall.completeness <- annotation.stat %>%
+#   group_by(Platform, Cell_line, completeness) %>%
+#   summarise(
+#     count = sum(count),
+#     .groups = "drop"
+#   )  %>% group_by(Platform, Cell_line) %>%
+#   mutate(
+#     proportion = count / sum(count) * 100
+#   ) %>% group_by(Platform,completeness) %>%
+#   summarise(avg_proportion = mean(proportion), .groups = "drop")
+# 
+# # Create stacked bar plot
+# ggplot(overall.completeness, aes(x = Platform, y = avg_proportion, fill = completeness)) +
+#   geom_bar(stat = "identity") +
+#   theme_minimal() +
+#   labs(x = "Platform", y = "Average Proportion (%)", fill = "Feature") +
+#   scale_fill_brewer(palette = "Set2") # Adjust color scheme
+# 
+
+```
+
+
+TODO
+
+1. Read align percentage -> alignment_stats.txt
+2. Aligned length per read -> lengths.txt.gz
+3. Exon counts per reads -> read_genomic_features.txt.gz
+4. Exon counts per transcript
+5. Read to transcript mapping
+6. Percentage of intronic reads -> read_genomic_features.txt.gz
+7. Percentage of intergenic reads -> read_genomic_features.txt.gz
+8. Percentage of Exonic reads -> read_genomic_features.txt.gz
+9. junction shift -> junvar.txt
+10. Error rate -> error_stats.txt
