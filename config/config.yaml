@@ -21,7 +21,7 @@ conda_config: # the parser will convert it to absolute path will be accessible a
   # LongReadSum: "conda/config/LongReadSum.yaml"
   NanoPlot: "conda/config/NanoPlot.yaml"
   RSeQC: "conda/config/RSeQC.yaml"
-  sqanti3: "conda/config/SQANTI3.conda_env.yml"
+  sqanti3: "conda/config/sqanti3.yaml"
   oarfish: "conda/config/oarfish.yaml"
   fastp: "conda/config/fastp.yaml"
   AlignQC: "conda/config/AlignQC.yaml"
@@ -40,7 +40,7 @@ sub_wf_config:
 
 # software
 software:
-  sqanti3_dir: "/home/users/allstaff/you.yu/LongBench/software/SQANTI3/"
+  sqanti3_dir: "/home/users/allstaff/you.yu/LongBench/software/SQANTI3_v5.3.5/"
   demuxlet: "/home/users/allstaff/you.yu/LongBench/software/demuxlet/demuxlet/bin/demuxlet"
   minimap2: "/home/users/allstaff/you.yu/LongBench/software/minimap2-2.28_x64-linux/minimap2" # require the exisitence of k8 in the same directory
   kallisto: "/vast/projects/LongBench/software/kallisto/build/src/kallisto"
