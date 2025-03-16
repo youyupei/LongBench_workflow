@@ -10,17 +10,18 @@ rule lr_bam_downsample:
     input:
         lr_bulk_config['output_path'] + "/TranscriptAlignment/{sample}_{cell_line}.bam"
     output:
-        join(main_wf_config['tmp_dir'] , "TranscriptAlignment/{sample}_{cell_line}.read_id_subsampled.{subsample_rate}.bam")
+        join(main_wf_config['tmp_dir'] , "TranscriptAlignment/{sample}_{cell_line}.read_id_subsampled.{subsample_size}.bam")
     resources:
         cpus_per_task=1,
         mem_mb=32000
     params:
-        tmp_dir = main_wf_config['tmp_dir']
+        tmp_dir = main_wf_config['tmp_dir'],
+        seed = config['random_seed']
     shell:
         """
         mkdir -p $(dirname {output})
         samtools view {input} | cut -f1 | sort | uniq > {output}.read_ids
-        awk 'BEGIN {{srand()}} {{if (rand() < {wildcards.subsample_rate}) print $0}}' {output}.read_ids > {output}.read_ids.subsampled
+        shuf -n $(numfmt --from=si  {wildcards.subsample_size}) --random-source=<(yes {params.seed}) {output}.read_ids  > {output}.read_ids.subsampled
         rm {output}.read_ids
         samtools view -b -N {output}.read_ids.subsampled {input} > {output}
         """
@@ -31,7 +32,7 @@ rule oarfish_cov_rare_fraction_analysis:
         bam = rules.lr_bam_downsample.output,
         ref = lr_bulk_config["reference"]["transcript"]
     output:
-        out_dir_cov = directory(os.path.join(main_wf_config['output_path'],"rarefraction_analysis/oarfish/{sample}/{subsample_rate,0.*}/{cell_line}"))
+        out_dir_cov = directory(os.path.join(main_wf_config['output_path'],"rarefraction_analysis/oarfish/{sample}/{subsample_size,.*M}/{cell_line}"))
     conda:
         join(config['main_wf_dir'], config["conda_config"]["oarfish"])
     resources:
@@ -51,10 +52,11 @@ rule link_lr_bulk_oarfish_cov_full:
     input:
         rules.lr_bulk_oarfish_cov.output # directory(os.path.join(results_dir,"oarfish_cov_output/{sample}/{cell_line}"))
     output:
-        directory(os.path.join(main_wf_config['output_path'],"rarefraction_analysis/oarfish/{sample}/1.0/{cell_line}"))
+        directory(os.path.join(main_wf_config['output_path'],"rarefraction_analysis/oarfish/{sample}/full/{cell_line}"))
     localrule: True
     shell:
         """
+        sleep 5
         ln -s {input} {output}
         """
 
@@ -66,7 +68,7 @@ rule salmon_quant_downsample:
         R2 = rules.sr_bulk_fastp.output.R2,
         index = rules.sr_bulk_salmon_index.output
     output:
-         directory(join(main_wf_config['output_path'], "rarefraction_analysis/salmon/{subsample_rate,0.*}/{cell_line}"))
+         directory(join(main_wf_config['output_path'], "rarefraction_analysis/salmon/{subsample_size,.*M}/{cell_line}"))
     conda:
         join(config['main_wf_dir'], config["conda_config"]["main"])
     resources:
@@ -78,19 +80,19 @@ rule salmon_quant_downsample:
         """
         mkdir -p {output}
         # subsample the fastq files
-        seqtk sample -s100 {input.R1} {wildcards.subsample_rate} > {input.R1}.subsampled.{wildcards.subsample_rate}.fastq
-        seqtk sample -s100 {input.R2} {wildcards.subsample_rate} > {input.R2}.subsampled.{wildcards.subsample_rate}.fastq
+        seqtk sample -s100 {input.R1} $(numfmt --from=si  {wildcards.subsample_size})> {input.R1}.subsampled.{wildcards.subsample_size}.fastq
+        seqtk sample -s100 {input.R2} $(numfmt --from=si  {wildcards.subsample_size}) > {input.R2}.subsampled.{wildcards.subsample_size}.fastq
 
         salmon quant -i {input.index} \
                     -l A \
-                    -1 {input.R1}.subsampled.{wildcards.subsample_rate}.fastq \
-                    -2 {input.R2}.subsampled.{wildcards.subsample_rate}.fastq \
+                    -1 {input.R1}.subsampled.{wildcards.subsample_size}.fastq \
+                    -2 {input.R2}.subsampled.{wildcards.subsample_size}.fastq \
                     --validateMappings \
                     -o {output} \
                     -p 8
         
-        rm {input.R1}.subsampled.{wildcards.subsample_rate}.fastq
-        rm {input.R2}.subsampled.{wildcards.subsample_rate}.fastq
+        rm {input.R1}.subsampled.{wildcards.subsample_size}.fastq
+        rm {input.R2}.subsampled.{wildcards.subsample_size}.fastq
         """
 
 rule link_sr_bulk_salmon_full:
@@ -101,6 +103,7 @@ rule link_sr_bulk_salmon_full:
     localrule: True
     shell:
         """
+        sleep 5
         ln -s {input} {output}
         """
 
@@ -118,7 +121,7 @@ rule rarefraction_analysis:
             ],
             cell_line = sr_bulk_config['cell_lines'],
             sample = lr_bulk_config['sample_id'],
-            subsample_rate = main_wf_config['rarefaction_rate']
+            subsample_size =  main_wf_config['rarefaction_size']
         )
     output:
         touch(join(config['flag_dir'], "rarefraction_analysis.done"))
