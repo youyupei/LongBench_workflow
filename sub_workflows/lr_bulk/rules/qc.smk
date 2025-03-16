@@ -167,7 +167,7 @@ rule flame_coverage_plot:
         """
 
 
-## SQANTI3
+# # SQANTI3
 # rule sqanti3:
 #     input:
 #         reads=os.path.join(results_dir, "qc/subsample_fq/{sample}_{cell_line}_subsampled1M.fastq"),
@@ -262,7 +262,7 @@ rule alignQC_analysis_subsample:
     resources:
         cpus_per_task=16,
         mem_mb=300000,
-        slurm_extra="--mail-type=FAIL --mail-user=you.yu@wehi.edu.au --qos=bonus" # tmp use bonus qos
+        slurm_extra="--mail-type=FAIL --mail-user=you.yu@wehi.edu.au" #
     output:
         output = directory(os.path.join(results_dir, "qc/AlignQC/{sample}_{cell_line}/")),
         tmp_dir = temp(directory(os.path.join(scratch_dir, "alignQC_tmp","{sample}_{cell_line}")))
@@ -345,3 +345,13 @@ rule all_alignQC_analysis_full:
         )
     output:
         touch(os.path.join(config['flag_dir'], "lr_bulk_alginQC_full.done"))
+
+# rule all_sqanti3:
+#     input:
+#         expand(
+#             rules.sqanti3.output.dir, 
+#             sample=config["sample_id"],
+#             cell_line = cell_line_to_barcode.keys()
+#         )
+#     output:
+#         touch(os.path.join(config['flag_dir'], "lr_bulk_sqanti3.done"))
