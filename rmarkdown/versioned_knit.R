@@ -5,6 +5,9 @@ input_file <- commandArgs(trailingOnly = TRUE)[1]
 
 # get the base name of the input file
 base_name <- tools::file_path_sans_ext(basename(input_file))
+out_dir <- paste0(base_name, "_outdir")
+if (!dir.exists(out_dir)) dir.create(out_dir)
+base_name <- paste(out_dir,base_name,sep = '/')
 
 # get the version from the yaml front matter
 version <- rmarkdown::yaml_front_matter(input_file)$version
