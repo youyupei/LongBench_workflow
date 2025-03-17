@@ -45,7 +45,7 @@ rule oarfish_cov_rare_fraction_analysis:
     shell:
         """
         mkdir -p {output.out_dir_cov}
-        oarfish --alignments {input.bam} --threads {resources.cpus_per_task} --output {output.out_dir_cov}/ --model-coverage  -d . --filter-group no-filters
+        oarfish --alignments {input.bam} --threads {resources.cpus_per_task} --output {output.out_dir_cov}/ --model-coverage  -d . --filter-group no-filters --num-bootstraps 50
         """
 
 rule link_lr_bulk_oarfish_cov_full:
@@ -89,7 +89,8 @@ rule salmon_quant_downsample:
                     -2 {input.R2}.subsampled.{wildcards.subsample_size}.fastq \
                     --validateMappings \
                     -o {output} \
-                    -p 8
+                    -p 8 \
+                    --numBootstraps 50
         
         rm {input.R1}.subsampled.{wildcards.subsample_size}.fastq
         rm {input.R2}.subsampled.{wildcards.subsample_size}.fastq
