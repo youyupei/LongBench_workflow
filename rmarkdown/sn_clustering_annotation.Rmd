@@ -16,6 +16,7 @@ output:
 params:
   random_seed: 2024
   cache_dir: NULL
+  fig.path: NULL
   sc_long_preprocessing_script:  '/home/users/allstaff/you.yu/LongBench/analysis/workflow/sub_workflows/lr_sc_sn/rmarkdown/sc_long_preprocessing.R'
   vireo_out_ont:  '/home/users/allstaff/you.yu/LongBench/analysis/lr_sc_sn/result/vireo/ont_sn_vireo'
   vireo_out_pb: '/home/users/allstaff/you.yu/LongBench/analysis/lr_sc_sn/result/vireo/pb_sn_vireo'
@@ -80,6 +81,10 @@ knitr::opts_chunk$set(
 if (!is.null(params$cache_dir)) {
   knitr::opts_chunk$set(cache.path = params$cache_dir)
 }
+
+rename <- dplyr::rename
+select <- dplyr::select
+
 ```
 
 ```{r, all input files}
@@ -215,7 +220,7 @@ barcode_tibble_post_qc <- tibble(
 )
 ```
 
-```{r}
+```{r barcode_overlap_upset, fig.height=4, fig.width=8}
 
 ComplexUpset::upset(
   barcode_tibble,
@@ -231,7 +236,7 @@ ComplexUpset::upset(
 
 
 ## Agreement of the Cell Line Identification
-```{r}
+```{r sankey plot, fig.height=6, fig.width=10}
 
 # Plot the alluvial diagram
     # open a new svg device
@@ -239,18 +244,13 @@ ComplexUpset::upset(
 library(ggalluvial)
 library(ggplot2)
 
-svg("/home/users/allstaff/you.yu/LongBench/analysis/figures/sc_sn_annotation/sn_overlap_cell_barcodes.svg", width = 5, height = 5)
+svg("/home/users/allstaff/you.yu/LongBench/analysis/figures/sc_sn_annotation/sn_overlap_cell_barcodes.svg", width = 5, height = 3)
 custom_colors <- c(
-  "unidentified BCs" = "#ffffff",
+  "unidentified CBs" = "#f0eadd",
   "unassigned to cell line" = "gray",
-  "HCC827" = "#440154FF",  # Default Viridis colors for other categories
-  "H211" = "#482777FF",
-  "H1975" = "#3E4A89FF",
-  "H146" = "#31688EFF",
-  "H2228" = "#26828EFF",
-  "H526" = "#1F9E89FF",
-  "SHP77" = "#35B779FF",
-  "H69" = "#6DCD59FF"
+  "H146" = "#004d1a", "H69" = "#1cad1c", "SHP77" = "#a3d830",  # sclc_a (Greens)
+  "H526" = "#a08544", "H211" = "#efca11",                      # sclc_p (Browns)
+  "H1975" = "#5d4075", "H2228" = "#5c39c4", "HCC827" = "#dd0de4"  # luad (Purple-Gold)
 )
 
 
@@ -258,38 +258,42 @@ custom_colors <- c(
 # Reshape the data for ggalluvial
 long_df <- reshape2::melt(barcode_tibble %>% select(barcode, PacBio_ident, Illumina_ident, ONT_ident), id.vars = "barcode")
 # change NA to "unidentified BC"
-long_df$value[is.na(long_df$value)] <- "unidentified BCs"
+long_df$value[is.na(long_df$value)] <- "unidentified CBs"
 long_df$value[long_df$value %in% c("doublet", "unassigned")] <- "unassigned to cell line"
-long_df$value <- factor(long_df$value, levels = c("unidentified BCs", "unassigned to cell line",  "HCC827", "H211", "H1975", "H146", "H2228", "H526", "SHP77", "H69"))
+long_df$value <- factor(long_df$value, levels = c("unidentified CBs", "unassigned to cell line",  "H1975", "H2228", "HCC827", "H146", "H69", "SHP77", "H526", "H211"))
 long_df$variable <- factor(long_df$variable, levels = c("Illumina_ident",  "PacBio_ident",  "ONT_ident"))
+levels(long_df$variable) <- c("Illumina", "PacBio", "ONT")
 
 # Plot the alluvial diagram
 ggplot(long_df, aes(x = variable, stratum = value, alluvium = barcode, fill = value)) +
-  geom_flow(stat = "alluvium", lode.guidance = "frontback") +
+  geom_flow(stat = "alluvium", curve_type='arctangent') +
   geom_stratum() +
   theme_minimal() +
   scale_fill_manual(values = custom_colors) +  # Apply custom colors
-  labs(x = "Methods", y = "Count")
+  labs(x = "Methods", y = "# of CBs")
+
 
 dev.off()
 
 # after filtering
-svg("/home/users/allstaff/you.yu/LongBench/analysis/figures/sc_sn_annotation/sn_overlap_cell_barcodes_post_qc.svg", width = 5, height = 5)
+svg("/home/users/allstaff/you.yu/LongBench/analysis/figures/sc_sn_annotation/sn_overlap_cell_barcodes_post_qc.svg", width = 5, height = 3)
 # Reshape the data for ggalluvial
 long_df <- reshape2::melt(barcode_tibble_post_qc %>% select(barcode, PacBio_ident, Illumina_ident, ONT_ident), id.vars = "barcode")
 # change NA to "unidentified BC"
-long_df$value[is.na(long_df$value)] <- "unidentified BCs"
+long_df$value[is.na(long_df$value)] <- "unidentified CBs"
 long_df$value[long_df$value %in% c("doublet", "unassigned")] <- "unassigned to cell line"
-long_df$value <- factor(long_df$value, levels = c("unidentified BCs", "unassigned to cell line",  "HCC827", "H211", "H1975", "H146", "H2228", "H526", "SHP77", "H69"))
+long_df$value <- factor(long_df$value, levels = c("unidentified CBs", "unassigned to cell line",  "HCC827", "H211", "H1975", "H146", "H2228", "H526", "SHP77", "H69"))
 long_df$variable <- factor(long_df$variable, levels = c("Illumina_ident",  "PacBio_ident",  "ONT_ident"))
+levels(long_df$variable) <- c("Illumina", "PacBio", "ONT")
+
 
 # Plot the alluvial diagram
 ggplot(long_df, aes(x = variable, stratum = value, alluvium = barcode, fill = value)) +
-  geom_flow(stat = "alluvium", lode.guidance = "frontback") +
+  geom_flow(stat = "alluvium", curve_type='arctangent') +
   geom_stratum() +
   theme_minimal() +
   scale_fill_manual(values = custom_colors) +  # Apply custom colors
-  labs(x = "Methods", y = "Count")
+  labs(x = "Methods", y = "# of CBs")
 
 dev.off()
 ```
@@ -333,8 +337,6 @@ barcode_tibble_post_qc$merged_cellline_anno %>% table
 
 write.csv(barcode_tibble, "/home/users/allstaff/you.yu/LongBench/analysis/figures/sc_sn_annotation/sn_cell_line_annotation.csv", row.names = F)
 write.csv(barcode_tibble_post_qc, "/home/users/allstaff/you.yu/LongBench/analysis/figures/sc_sn_annotation/sn_cell_line_annotation_post_qc.csv", row.names = F)
-
-
 
 
 ```

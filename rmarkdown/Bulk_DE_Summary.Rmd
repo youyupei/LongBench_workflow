@@ -2,7 +2,7 @@
 title: "DE analysis"
 author: "Yupei & Ash"
 date: '`r Sys.Date()`'
-version: 'v3.0_lfc0'
+version: 'v3.1_lfc0'
 output:
   html_document:
     code_folding: hide
@@ -27,7 +27,8 @@ params:
   ont_drnd_oarfish_dir: "/vast/projects/LongBench/analysis/lr_bulk/result/oarfish_cov_output/dRNA_bulk"
   ill_bulk_salmon_dir: "/vast/projects/LongBench/analysis/sr_bulk/result/salmon/salmon_quant"
   bulk_meta: "/vast/projects/LongBench/sequencing_data/illumina_bulk/metadata.txt"
-  gene_info_dir: "/vast/scratch/users/solano.a/LongBench/DEG_summary/gene_info.rds"
+  output_rds: "/vast/projects/LongBench/analysis/workflow/rmarkdown/RDS/Bulk_identification_DE.rds"  
+  expected_de_table: '/vast/projects/LongBench/reference_files/Expected_DE.csv'
   log2FC_cutoff: 0
 
 ---
@@ -84,6 +85,7 @@ library(UpSetR)
 library(ggtree)
 library(aplot)
 source("/vast/projects/LongBench/analysis/workflow/scripts/Rfunctions.R")
+output_list <- list() # used to store result for downstream analysis
 
 # setup some conflict functions
 rename <- dplyr::rename
@@ -270,6 +272,8 @@ ont_bulk.gene.dge <- ont_bulk.gene.dge[keep, ]
 pb_bulk.gene.dge <- pb_bulk.gene.dge[keep, ]
 drna_bulk.gene.dge <- drna_bulk.gene.dge[keep, ]
 
+output_list[["gene_discovery"]] <- common_genes[keep]
+
 ```
 
 ```{r transcript filtering for DE, echo=TRUE, message=FALSE, warning=FALSE, results='hide'}
@@ -283,16 +287,18 @@ pb_bulk.dge.oarfish <- pb_bulk.dge.oarfish[common_tx, ]
 ont_drna.dge.oarfish <- ont_drna.dge.oarfish[common_tx, ]
 
 ## 2. filter by expression
-keep <- filterByExpr(ill_bulk.dge, group = ill_bulk.dge$samples$group) &
-          filterByExpr(ont_bulk.dge.oarfish, group = ont_bulk.dge.oarfish$samples$group) &
-          filterByExpr(pb_bulk.dge.oarfish, group = pb_bulk.dge.oarfish$samples$group) &
-          filterByExpr(ont_drna.dge.oarfish, group = ont_drna.dge.oarfish$samples$group)
+keep <- filterByExpr(ill_bulk.dge, group = ill_bulk.dge$samples$group, min.count=5) &
+          filterByExpr(ont_bulk.dge.oarfish, group = ont_bulk.dge.oarfish$samples$group, min.count=5) &
+          filterByExpr(pb_bulk.dge.oarfish, group = pb_bulk.dge.oarfish$samples$group, min.count=5) &
+          filterByExpr(ont_drna.dge.oarfish, group = ont_drna.dge.oarfish$samples$group, min.count=5)
 #table(keep)
 
 ill_bulk.dge <- ill_bulk.dge[keep, ]
 ont_bulk.dge.oarfish <- ont_bulk.dge.oarfish[keep, ]
 pb_bulk.dge.oarfish <- pb_bulk.dge.oarfish[keep, ]
 ont_drna.dge.oarfish <- ont_drna.dge.oarfish[keep, ]
+
+output_list[["txi_discovery"]] <- common_tx[keep]
 ```
 
 ## Normalise the gene and transcript counts using `calcNormFactors` with `TMM` methods for each dataset, separately for human
@@ -367,7 +373,7 @@ myMDS <- function(dge, mds) {
 
   p <- ggplot(mds_data, aes(x = Dim1, y = Dim2, color = Cancer.type, shape = Data.type, label=cell.line)) +
     geom_point(size = 3, alpha = 0.6) + # Plot points
-    geom_text_repel(size = 3) +
+    #geom_text_repel(size = 3) +
     labs(title = "MDS plot", 
         x = paste0("Dimension 1 (", round(mds$var.explained[1]*100, 2), "%)" ) , 
         y = paste0("Dimension 2 (", round(mds$var.explained[2]*100, 2), "%)" )) +
@@ -385,7 +391,7 @@ Here are key observations from the gene-level MDS plots:
 2.  **Platform type impact:** sequencing platforms (**Illumina, ONT cDNA, ONT dRNA, PacBio)** show slight variability but largely preserve cancer type clustering, indicating that the biological variation observed is largely due to cancer cell-type.
 3.  **Variance explained:** The first two dimensions explain **19.25%** and **9.84%** of the variation, respectively, effectively separating sample groups.
 
-```{r echo=FALSE, message=FALSE, warning=FALSE, fig.width=15 }
+```{r echo=FALSE, message=FALSE, warning=FALSE, fig.height=3, fig.width=8 }
 mds <- norm_and_mds(bulk.gene.dge.merge[is.human(bulk.gene.dge.merge),])
 p1 <- myMDS(bulk.gene.dge.merge[is.human(bulk.gene.dge.merge), ], mds) + ggtitle("Human gene counts")
 p2 <- myMDS(bulk.gene.dge.merge[is.human(bulk.gene.dge.merge), ], mds) + ggtitle("Human gene counts")  + 
@@ -402,7 +408,7 @@ Here are key observations from the transcript-level MDS plots:
 2.  **Platform type impact**: Different sequencing platforms (**Illumina, ONT cDNA, ONT dRNA, PacBio**) show more variability at the transcript-level as samples seem to cluster largely based on sequencing platform for transcript-level analysis compared to gene-level analysis.
 3.  **Variance explained**: The first two dimensions explain 11.07% and 9.85% of the variation, respectively.
 
-```{r echo=FALSE, fig.width=15, message=FALSE, warning=FALSE}
+```{r echo=FALSE, fig.width=15, message=FALSE, warning=FALSE, fig.height=3, fig.width=8 }
 mds <- norm_and_mds(bulk.tx.dge.merge[is.human(bulk.tx.dge.merge),])
 p1 <- myMDS(bulk.tx.dge.merge[is.human(bulk.tx.dge.merge), ], mds) + ggtitle("Human transcript counts") + 
   aes(color = Data.type, shape = Cancer.type) + 
@@ -410,7 +416,7 @@ p1 <- myMDS(bulk.tx.dge.merge[is.human(bulk.tx.dge.merge), ], mds) + ggtitle("Hu
 
 p2 <- myMDS(bulk.tx.dge.merge[is.human(bulk.tx.dge.merge), ], mds) + ggtitle("Human transcript counts")
 
-p1 | p2
+p2 | p1
 ```
 
 # Differential gene expression
@@ -515,6 +521,12 @@ complex_upset_plot <- function(lst) {
   p <- ComplexUpset::upset(
     binary_matrix %>% select(-values) %>% as.data.frame(),
     intersect = names(lst),
+    base_annotations=list(
+        'Intersection size'=ComplexUpset::intersection_size(
+            counts=TRUE,
+            text=element_text(size = 3, vjust=-0.2)
+        )
+    ),
     wrap = TRUE
   )
 
@@ -525,7 +537,7 @@ complex_upset_plot <- function(lst) {
 }
 ```
 
-```{r upset plot dge human, echo=FALSE, fig.height=10, fig.width=8}
+```{r upset plot dge human, echo=FALSE, fig.height=9, fig.width=8}
 # Upset plot
 lst <- list(
   "Illumina" = ill_bulk.dge_human.list$AvsL.DE,
@@ -560,8 +572,87 @@ mat.AvsP.DE <- complex_upset_plot(lst)$matrix
 )
 ```
 
-## More inspection on DEG human
+```{r gene: platform specific detection summary, fig.height=2, fig.width=13}
+# Pivot to long format
+platform_specific_gene_summary <- function(df) {
+  df_long <- df %>%
+  pivot_longer(-Gene, names_to = "Platform", values_to = "Detected") %>%
+  group_by(Gene) %>%
+  mutate(TotalDetected = sum(Detected)) %>%
+  ungroup() %>%
+  mutate(
+    Category = case_when(
+      Detected == 1 & TotalDetected == 1 ~ "Platform-Specific Detection",  # Only detected by this platform
+      Detected == 0 & TotalDetected == 3 ~ "Platform-Specific Absence",      # Not detected by this platform but present elsewhere
+      Detected == 1 & TotalDetected > 1 ~ "Common Detection (also detected in >0 other platform)",
+      Detected == 0 & TotalDetected < 3 ~ "Common Absence (also absent in >0 other platform)" # Detected by this platform + at least one other
+    )
+  ) %>%
+  count(Platform, Category)
 
+# Convert to factor for proper ordering in plot
+df_long$Category <- factor(df_long$Category, 
+                           levels = c(
+                                      "Platform-Specific Absence", 
+                                      "Common Absence (also absent in >0 other platform)",
+                                      "Platform-Specific Detection", 
+                                      "Common Detection (also detected in >0 other platform)"
+                                      ))
+
+# Stacked bar plot
+df_long %>%
+  mutate(n = case_when(
+    Category %in% c("Platform-Specific Absence", "Common Absence (also absent in >0 other platform)") ~ -n,
+    TRUE ~ n
+  )) %>%
+  ggplot(aes(x = Platform, y = n, fill = Category)) +
+  geom_bar(stat = "identity") +
+  labs(
+    y = "Number of Genes",
+    x = "Platform",
+    fill = "Category"
+  ) +
+  theme_minimal() +
+  scale_fill_manual(
+    values = c(
+      "Platform-Specific Detection" = "#0072B2",  # Blue (color-blind friendly)
+      "Platform-Specific Absence" = "#E69F00",    # Orange (color-blind friendly)
+      "Common Detection (also detected in >0 other platform)" = "#009E73",  # Green
+      "Common Absence (also absent in >0 other platform)" = "#999999"  # Gray
+    )
+  ) +
+  coord_flip() +  # Flip axes for horizontal bars
+  theme(
+    axis.text.x = element_text(angle = 0, hjust = 0.5, vjust = 0.5),  # Ensure x-axis labels are readable
+    axis.title.x = element_text(size = 12),  # Adjust x-axis title size
+    axis.text.y = element_text(size = 10)   # Adjust y-axis text size if needed
+  )
+}
+
+
+map(list(mat.AvsL.DE, mat.PvsL.DE, mat.AvsP.DE), platform_specific_gene_summary) %>% do.call(patchwork::wrap_plots, .) +
+  patchwork::plot_layout(guides = 'collect')
+```
+
+```{r}
+# Save the de gene list to output_list
+output_list[["AvsP.DEG.all"]] <- mat.AvsP.DE %>% 
+  filter(rowSums(select(., where(is.numeric))) == 4) %>% pull(Gene)
+output_list[["AvsP.DEG.any"]] <- mat.AvsP.DE %>% 
+  filter(rowSums(select(., where(is.numeric))) > 0) %>% pull(Gene)
+
+output_list[["AvsL.DEG.all"]] <- mat.AvsL.DE %>% 
+  filter(rowSums(select(., where(is.numeric))) == 4) %>% pull(Gene)
+output_list[["AvsL.DEG.any"]] <- mat.AvsL.DE %>% 
+  filter(rowSums(select(., where(is.numeric))) > 0) %>% pull(Gene)
+
+output_list[["PvsL.DEG.all"]] <- mat.PvsL.DE %>% 
+  filter(rowSums(select(., where(is.numeric))) == 4) %>% pull(Gene)
+output_list[["PvsL.DEG.any"]] <- mat.PvsL.DE %>% 
+  filter(rowSums(select(., where(is.numeric))) > 0) %>% pull(Gene)
+```
+
+## More inspection on DEG human
 ```{r echo=TRUE, message=FALSE, warning=FALSE, results='hide'}
 # Get gene annotations and information
 library(biomaRt)
@@ -570,7 +661,6 @@ ensembl <- useEnsembl(biomart = "genes", dataset = "hsapiens_gene_ensembl")
 # Query Ensembl for gene symbols and chromosome information
 gene_info <- getBM(attributes = c("ensembl_gene_id", "hgnc_symbol", "chromosome_name"),
                    mart = ensembl)
-#gene_info <- readRDS(params$gene_info_dir)
 
 ```
 
@@ -578,7 +668,7 @@ gene_info <- getBM(attributes = c("ensembl_gene_id", "hgnc_symbol", "chromosome_
 
 Here we explore the overlap of gene sets across different sequencing platforms (Illumina, ONT cDNA, PacBio, ONT dRNA) alongside average transcript length and biotype information. From this we note that for DEGs detected across all platforms the majority are protein-coding genes- thus this subset of overlapping genes should be considered ***high-confidence DEGs***.
 
-```{r Biotype and transcript length, echo=TRUE, fig.height=15, fig.width=20}
+```{r Biotype and transcript length on DEG, echo=TRUE, fig.height=9, fig.width=15}
 library(patchwork)
 # Function to preprocess the data and create an upset plot
 my_complexUpset <- function(data, gene_length_lookup, ensembl, title) {
@@ -609,23 +699,48 @@ my_complexUpset <- function(data, gene_length_lookup, ensembl, title) {
   
   # Generate the upset plot
   upset_plot <- ComplexUpset::upset(
-    plot_d,
-    intersect = c('Illumina', "ONT cDNA", "PacBio", "ONT dRNA"),
-    annotations = list(
-      "Average transcript length" = list(
-        aes = aes(x = intersection, y = `Gene length`),
-        geom = geom_boxplot(na.rm = TRUE, outliers = FALSE)
-      ),
-      "BioType" = list(
-        aes = aes(x = intersection, fill = biotype),
-        geom = geom_bar(position = "fill")
-      )
+  plot_d %>% mutate(
+    biotype = case_when(
+      biotype =="protein_coding" ~ "Protein-coding",
+      TRUE ~ "Non-protein-coding"
+    )
+  ),
+  intersect = c('Illumina', "ONT cDNA", "PacBio", "ONT dRNA"),
+  annotations = list(
+        # 1st method - passing list:
+        "Gene length" = list(
+          aes = aes(x = intersection, y = `Gene length`),
+          # provide a list if you wish to add several geoms
+          geom = geom_boxplot(na.rm = TRUE, outliers = FALSE)
+        )
+        # ,
+        # "BioType" = list(
+        #   aes = aes(x = intersection, fill = biotype),
+        #   geom = geom_bar(position = "fill")
+        # )
+  ),
+  base_annotations=list(
+        'Intersection size'=ComplexUpset::intersection_size(
+            counts=TRUE,
+            mapping=aes(fill=biotype),
+            text=element_text(size = 3, vjust=-0.2)
+        ) + scale_fill_manual(values = c("Non-protein-coding"="#BAC5CB",
+                              "Protein-coding"='#B5C952'))
     ),
-    set_sizes = ComplexUpset::upset_set_size(
-      geom = geom_bar(aes(fill = biotype), width = 0.8)
-    ) + theme(legend.position = "none"),
-    wrap = TRUE
-  ) + ggtitle(title)
+  set_sizes=(
+        ComplexUpset::upset_set_size(
+            geom=geom_bar(
+                aes(fill=biotype),
+                width=0.8
+            ) ,
+            position='right'
+        )+ scale_fill_manual(values = c("Non-protein-coding"="#BAC5CB",
+                              "Protein-coding"='#B5C952')) + 
+          theme(legend.position = "none")
+  ),
+  guides='over',
+  wrap = TRUE
+)
   
   return(upset_plot)
 }
@@ -655,7 +770,6 @@ plot3 <- my_complexUpset(mat.AvsP.DE, gene_length_lookup, ensembl, "SCLC_A vs SC
 # Combine plots in a 2x2 grid with one empty space
 final_plot <- (plot1 + plot2) / (plot3 + plot_spacer()) + plot_layout(nrow = 2)
 final_plot
-
 ```
 
 ## Inspect High-confidence DGE
@@ -710,8 +824,6 @@ DEG_results_AvsL <- get_DEGs(mat.AvsL.DE)
 DEG_results_PvsL <- get_DEGs(mat.PvsL.DE)
 # Using mat.AvsP.DE
 DEG_results_AvsP <- get_DEGs(mat.AvsP.DE)
-
-
 ```
 
 ```{r High-confidence DGE tables, include=FALSE}
@@ -981,6 +1093,57 @@ table_AvsP
 
 ```
 
+
+# Check Expected DE
+```{r}
+expected_DE <- read_csv(params$expe)
+
+add_FC <- function(x){
+  x %>% 
+  left_join(ill_bulk.dge_human.list$AvsL.DE$table %>% 
+              rownames_to_column('Gene')  %>% 
+              select(Gene, logFC) %>%
+              mutate(
+                Gene = sub("\\..*", "", Gene)
+                ) %>%
+              rename(
+                Illumina_logFC = logFC
+              ), by = "Gene") %>% 
+    left_join(ont_bulk.dge_human.list$AvsL.DE$table %>% 
+              rownames_to_column('Gene')  %>% 
+              select(Gene, logFC) %>%
+              mutate(
+                Gene = sub("\\..*", "", Gene)
+                ) %>%
+              rename(
+                ONT_cDNA_logFC = logFC
+              ), by = "Gene") %>%
+    left_join(pb_bulk.dge_human.list$AvsL.DE$table %>% 
+              rownames_to_column('Gene')  %>% 
+              select(Gene, logFC) %>%
+              mutate(
+                Gene = sub("\\..*", "", Gene)
+                ) %>%
+              rename(
+                Pacbio_logFC = logFC
+              ), by = "Gene") %>% 
+    left_join(drna_bulk.deg_human.list$AvsL.DE$table %>% 
+              rownames_to_column('Gene')  %>% 
+              select(Gene, logFC) %>%
+              mutate(
+                Gene = sub("\\..*", "", Gene)
+                ) %>%
+              rename(
+                ONT_dRNA_logFC = logFC
+              ), by = "Gene")
+}
+
+expected_DE %>%  left_join(mat.AvsL.DE %>% mutate(Gene = sub("\\..*", "", Gene)), by="Gene") %>% add_FC
+expected_DE %>% left_join(mat.PvsL.DE %>% mutate(Gene = sub("\\..*", "", Gene)), by="Gene") %>% add_FC
+expected_DE %>% left_join(mat.AvsP.DE %>% mutate(Gene = sub("\\..*", "", Gene)), by="Gene") %>% add_FC
+
+```
+
 # Enrichment Analysis (Clusterprofiler)
 
 In this section, **GO and KEGG enrichment analyses** are performed to identify key biological functions and pathways for differential expressed genes (DEGs).
@@ -995,7 +1158,7 @@ In this section, **GO and KEGG enrichment analyses** are performed to identify k
 
 Here GO analysis will be preformed on common DEGs as well as PacBio specific DEGs (top platform specific in this comparison)
 
-```{r GO SCLC_A vs LUCA, echo=TRUE, fig.height=15, fig.width=10, message=FALSE, warning=FALSE}
+```{r GO SCLC_A vs LUCA, echo=TRUE, fig.height=7, fig.width=5, message=FALSE, warning=FALSE}
 library(clusterProfiler)
 
 # SCLC_A vs LUAD
@@ -1169,7 +1332,7 @@ DEG_results_AvsP$platform_DEGs$Illumina_only <- sub("\\..*", "", DEG_results_Avs
 go_AvsP_illumina <- enrichGO(DEG_results_AvsP$platform_DEGs$Illumina_only, "org.Hs.eg.db", pvalueCutoff = 0.05, keyType = "ENSEMBL", pAdjustMethod = "BH", qvalueCutoff = 0.05, ont="ALL")
 plot_go_AvsP_illumina <- dotplot(go_AvsP_illumina, showCategory = 15) + ggtitle("GO Enrichment for Illumina-Specific DEGs")
 
-plot_go_AvsP_illumina + plot_layout(nrow = 2)
+# plot_go_AvsP_illumina + plot_layout(nrow = 2)
 
 # Save the GO enrichment results for Illumina-specific DEGs as a CSV
 #write.csv(as.data.frame(go_AvsP_illumina), "go_AvsP_illumina_DEGs_enrichment.csv", row.names = FALSE)
@@ -1191,8 +1354,6 @@ go_AvsP_downreg <- enrichGO(AvsP_DEG_split$downregulated_genes$ensembl_gene_id, 
 plot_go_AvsP_downregulated <- dotplot(go_AvsP_downreg, showCategory = 15) + ggtitle("SCLC_A vs SCLC_P GO Shared DEGs (Downregulated)")
 
 plot_go_AvsP_upregulated + plot_layout(nrow = 2)
-
-
 ```
 
 
@@ -1303,7 +1464,7 @@ plot_kegg_PvsL_upregulated <- dotplot(kegg_PvsL_upreg, showCategory = 15) +
 plot_kegg_PvsL_downregulated <- dotplot(kegg_PvsL_downreg, showCategory = 15) +
   ggtitle("SCLC_P vs LUAD KEGG Shared DEGs (Downregulated)")
 
-plot_kegg_PvsL_downregulated + plot_layout(nrow = 2)
+# plot_kegg_PvsL_downregulated + plot_layout(nrow = 2)
 
 #write.csv(as.data.frame(kegg_PvsL_upreg), "kegg_upreg_PvsL_DEGs_enrichment.csv", row.names = FALSE)
 #write.csv(as.data.frame(kegg_PvsL_downreg), "kegg_downreg_PvsL_pacbio_DEGs_enrichment.csv", row.names = FALSE)
@@ -1427,7 +1588,7 @@ DTE analysis is performed on subsets for human genes and sequins, each with pote
 ```{r echo=TRUE, message=FALSE, warning=FALSE}
 DTE.edgeR_human <- function(dge, norm.method="TMM") {
   # QC and normalisation:
-  filter <- filterByExpr(dge, group=dge$samples$group)
+  filter <- filterByExpr(dge, group=dge$samples$group, min.count=5)
   dge <- dge[filter, , keep.lib.sizes = FALSE]
 
   if (!is.null(norm.method)) {
@@ -1550,6 +1711,91 @@ p1 / p2 / p3 + patchwork::plot_annotation(
   title = "DTE Human (with scaling)",
   theme = theme(plot.title = element_text(size =25))
 )
+```
+
+```{r transcript: platform specific detection summary, fig.height=2, fig.width=13}
+# Pivot to long format
+platform_specific_gene_summary <- function(df) {
+  df_long <- df %>%
+  pivot_longer(-Gene, names_to = "Platform", values_to = "Detected") %>%
+  group_by(Gene) %>%
+  mutate(TotalDetected = sum(Detected)) %>%
+  ungroup() %>%
+  mutate(
+    Category = case_when(
+      Detected == 1 & TotalDetected == 1 ~ "Platform-Specific Detection",  # Only detected by this platform
+      Detected == 0 & TotalDetected == 3 ~ "Platform-Specific Absence",      # Not detected by this platform but present elsewhere
+      Detected == 1 & TotalDetected > 1 ~ "Common Detection (also detected in >0 other platform)",
+      Detected == 0 & TotalDetected < 3 ~ "Common Absence (also absent in >0 other platform)" # Detected by this platform + at least one other
+    )
+  ) %>%
+  count(Platform, Category)
+
+# Convert to factor for proper ordering in plot
+df_long$Category <- factor(df_long$Category, 
+                           levels = c(
+                                      "Platform-Specific Absence", 
+                                      "Common Absence (also absent in >0 other platform)",
+                                      "Platform-Specific Detection", 
+                                      "Common Detection (also detected in >0 other platform)"
+                                      ))
+
+# Stacked bar plot
+df_long %>%
+  mutate(n = case_when(
+    Category %in% c("Platform-Specific Absence", "Common Absence (also absent in >0 other platform)") ~ -n,
+    TRUE ~ n
+  )) %>%
+  ggplot(aes(x = Platform, y = n, fill = Category)) +
+  geom_bar(stat = "identity") +
+  labs(
+    y = "Number of Transcripts",
+    x = "Platform",
+    fill = "Category"
+  ) +
+  theme_minimal() +
+  scale_fill_manual(
+    values = c(
+      "Platform-Specific Detection" = "#0072B2",  # Blue (color-blind friendly)
+      "Platform-Specific Absence" = "#E69F00",    # Orange (color-blind friendly)
+      "Common Detection (also detected in >0 other platform)" = "#009E73",  # Green
+      "Common Absence (also absent in >0 other platform)" = "#999999"  # Gray
+    )
+  ) +
+  coord_flip() +  # Flip axes for horizontal bars
+  theme(
+    axis.text.x = element_text(angle = 0, hjust = 0.5, vjust = 0.5),  # Ensure x-axis labels are readable
+    axis.title.x = element_text(size = 12),  # Adjust x-axis title size
+    axis.text.y = element_text(size = 10)   # Adjust y-axis text size if needed
+  )
+}
+
+
+map(list(mat.AvsL.DTE, mat.PvsL.DTE, mat.AvsP.DTE), platform_specific_gene_summary) %>% do.call(patchwork::wrap_plots, .) +
+  patchwork::plot_layout(guides = 'collect')
+```
+
+```{r}
+# Save the de gene list to output_list
+output_list[["AvsP.DTE.all"]] <- mat.AvsP.DTE %>% 
+  filter(rowSums(select(., where(is.numeric))) == 4) %>% pull(Gene)
+output_list[["AvsP.DTE.any"]] <- mat.AvsP.DTE %>% 
+  filter(rowSums(select(., where(is.numeric))) > 0) %>% pull(Gene)
+
+output_list[["AvsL.DTE.all"]] <- mat.AvsL.DTE %>% 
+  filter(rowSums(select(., where(is.numeric))) == 4) %>% pull(Gene)
+output_list[["AvsL.DTE.any"]] <- mat.AvsL.DTE %>% 
+  filter(rowSums(select(., where(is.numeric))) > 0) %>% pull(Gene)
+
+output_list[["PvsL.DTE.all"]] <- mat.PvsL.DTE %>% 
+  filter(rowSums(select(., where(is.numeric))) == 4) %>% pull(Gene)
+output_list[["PvsL.DTE.any"]] <- mat.PvsL.DTE %>% 
+  filter(rowSums(select(., where(is.numeric))) > 0) %>% pull(Gene)
+#
+
+# output the rds
+dir.create(dirname(params$output_rds), recursive = TRUE, showWarnings = FALSE)
+saveRDS(output_list, params$output_rds)
 ```
 
 ## Inspect High-confidence DTE

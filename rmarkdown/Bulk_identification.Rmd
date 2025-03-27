@@ -1,6 +1,8 @@
 ---
-title: "Bulk gene/transcript identification analysis"
+
+title: "Bulk gene transcript identification analysis"
 author: "Yupei & Ash"
+date: '`r Sys.Date()`'
 version: "v2.0"
 output:
   html_document:
@@ -28,6 +30,7 @@ params:
   fig.path: 'figures/'
   out.rds: '/vast/projects/LongBench/analysis/reports/RDS/bulk_de_human_summary.rds'
 ---
+
 # Setup
 ```{r Input filename setup, include=FALSE, eval=F}
 # This chunk is used only when running the file chunk by chunk manually
@@ -343,8 +346,9 @@ ComplexUpset::upset(
   ),
   base_annotations=list(
         'Intersection size'=ComplexUpset::intersection_size(
-            counts=FALSE,
-            mapping=aes(fill=biotype)
+            counts=TRUE,
+            mapping=aes(fill=biotype),
+            text=element_text(size = 3, vjust=-0.2)
         ) + scale_fill_manual(values = c("Non-protein-coding"="#BAC5CB",
                               "Protein-coding"='#B5C952'))
     ),
@@ -356,7 +360,8 @@ ComplexUpset::upset(
             ) ,
             position='right'
         )+ scale_fill_manual(values = c("Non-protein-coding"="#BAC5CB",
-                              "Protein-coding"='#B5C952'))
+                              "Protein-coding"='#B5C952')) + 
+          theme(legend.position = "none")
   ),
   guides='over',
   wrap = TRUE
@@ -418,11 +423,12 @@ ComplexUpset::upset(
                 width=0.8
             ) ,
             position='right'
-        )
+        ) + theme(legend.position = "none")
   ),
    base_annotations=list(
         'Intersection size'=ComplexUpset::intersection_size(
-            counts=FALSE
+            counts=TRUE,
+            text=element_text(size = 3, vjust=-0.2)
         )
     ),
   guides='over',
@@ -513,7 +519,66 @@ map(cell_lines,
 ```
 
 ### Expression of the intronic gene and single-exon genes
-```{r,  Expression of the intronic and single-exon gene}
+```{r}
+library(GenomicRanges)
+library(rtracklayer)
+library(dplyr)
+library(purrr)
+library(pbapply)
+gtf_file <- "/home/users/allstaff/you.yu/LongBench/reference_files/GRCh38/gencode.v44.annotation.gtf"
+annotations <- rtracklayer::import(gtf_file)
+
+# Filter for gene and exon annotations
+genes <- annotations[annotations$type == "gene"]
+exons <- annotations[annotations$type == "exon"]
+
+# for each gene, get the introns
+exon_split <- split(exons, exons$gene_id)
+library(furrr)
+# Set up parallel processing with future_map (e.g., using all available cores)
+plan(multisession)
+options(future.globals.maxSize = 1024 * 1024 * 1024)  # 1 GB
+
+introns  <- exon_split %>% names %>% 
+    future_map(~ {
+        intr <- gaps(exon_split[[.x]])
+        if (length(intr) == 1) {
+            return(NULL)
+        } else {
+            intr$gene_name <- .x
+            return(intr[-1])
+        }
+    }, .progress = TRUE)
+
+merged_introns <- do.call(c, introns)
+overlaps <- findOverlaps(exons, merged_introns, ignore.strand=TRUE, type='within',  select="all", minoverlap =50)
+overlaps_tibble <- tibble(
+    exon_gene = exons$gene_id[queryHits(overlaps)],
+    intron_gene = merged_introns$gene_name[subjectHits(overlaps)],
+) %>%
+    filter(exon_gene != intron_gene) %>%
+    distinct()
+
+# output the results
+write.table(overlaps_tibble, file = "gene_introns.tsv", sep = "\t", quote = FALSE, row.names = FALSE)
+
+overlaps_tibble$exon_gene <- sub("\\..*","", overlaps_tibble$exon_gene)
+overlaps_tibble$intron_gene <- sub("\\..*","", overlaps_tibble$intron_gene)
+
+# Sanity check:"ENSG00000271204.1" %in% overlaps_tibble$exon_gene
+# 'ENSG00000231721.8' %in%  overlaps_tibble$intron_gene
+```
+
+
+```{r exon count per gene}
+exons_count <-  exon_split %>% future_map(length,  .progress = TRUE) %>% unlist %>% enframe(name = "Gene", value = "Exon_Count")
+exons_count <- exons_count %>% mutate(Gene = sub("\\..*", "", Gene))
+gene_discovery<- gene_discovery %>% 
+  left_join(exons_count, by = c("gene_id" = "Gene"))
+```
+
+
+```{r,  Expression of the intronic and single-exon gene, fig.height=6, fig.width=8}
 plot_df <- gene_discovery %>% mutate(
   "Intronic Gene" = gene_discovery$gene_id %in% overlaps_tibble[overlaps_tibble$intron_gene %in% gene_discovery$gene_id,]$exon_gene,
   "Single exon" = gene_discovery$Exon_Count == 1
@@ -576,65 +641,6 @@ pb_specific_gene <-  gene_discovery %>% mutate(
 pb_bulk.gene.dge$counts[pb_specific_gene,] %>%
   as_tibble(rownames="gene_id") %>% 
   arrange(desc(H1975))
-```
-
-
-```{r}
-library(GenomicRanges)
-library(rtracklayer)
-library(dplyr)
-library(purrr)
-library(pbapply)
-gtf_file <- "/home/users/allstaff/you.yu/LongBench/reference_files/GRCh38/gencode.v44.annotation.gtf"
-annotations <- rtracklayer::import(gtf_file)
-
-# Filter for gene and exon annotations
-genes <- annotations[annotations$type == "gene"]
-exons <- annotations[annotations$type == "exon"]
-
-# for each gene, get the introns
-exon_split <- split(exons, exons$gene_id)
-library(furrr)
-# Set up parallel processing with future_map (e.g., using all available cores)
-plan(multisession)
-options(future.globals.maxSize = 1024 * 1024 * 1024)  # 1 GB
-
-introns  <- exon_split %>% names %>% 
-    future_map(~ {
-        intr <- gaps(exon_split[[.x]])
-        if (length(intr) == 1) {
-            return(NULL)
-        } else {
-            intr$gene_name <- .x
-            return(intr[-1])
-        }
-    }, .progress = TRUE)
-
-merged_introns <- do.call(c, introns)
-overlaps <- findOverlaps(exons, merged_introns, ignore.strand=TRUE, type='within',  select="all", minoverlap =50)
-overlaps_tibble <- tibble(
-    exon_gene = exons$gene_id[queryHits(overlaps)],
-    intron_gene = merged_introns$gene_name[subjectHits(overlaps)],
-) %>%
-    filter(exon_gene != intron_gene) %>%
-    distinct()
-
-# output the results
-write.table(overlaps_tibble, file = "gene_introns.tsv", sep = "\t", quote = FALSE, row.names = FALSE)
-
-overlaps_tibble$exon_gene <- sub("\\..*","", overlaps_tibble$exon_gene)
-overlaps_tibble$intron_gene <- sub("\\..*","", overlaps_tibble$intron_gene)
-
-# Sanity check:"ENSG00000271204.1" %in% overlaps_tibble$exon_gene
-# 'ENSG00000231721.8' %in%  overlaps_tibble$intron_gene
-```
-
-
-```{r exon count per gene}
-exons_count <-  exon_split %>% future_map(length,  .progress = TRUE) %>% unlist %>% enframe(name = "Gene", value = "Exon_Count")
-exons_count <- exons_count %>% mutate(Gene = sub("\\..*", "", Gene))
-gene_discovery<- gene_discovery %>% 
-  left_join(exons_count, by = c("gene_id" = "Gene"))
 ```
 
 ```{r, include=F, eval=F}
@@ -844,8 +850,9 @@ ComplexUpset::upset(
   ),
   base_annotations=list(
         'Intersection size'=ComplexUpset::intersection_size(
-            counts=FALSE,
-            mapping=aes(fill=biotype)
+            counts=TRUE,
+            mapping=aes(fill=biotype),
+            text=element_text(size = 3, vjust=-0.2)
         ) + scale_fill_manual(values = c("Non-protein-coding"="#BAC5CB",
                               "Protein-coding"='#B5C952'))
     ),
@@ -857,7 +864,8 @@ ComplexUpset::upset(
             ) ,
             position='right'
         )+ scale_fill_manual(values = c("Non-protein-coding"="#BAC5CB",
-                              "Protein-coding"='#B5C952'))
+                              "Protein-coding"='#B5C952')) + 
+          theme(legend.position = "none")
   ),
   guides='over',
   wrap = TRUE

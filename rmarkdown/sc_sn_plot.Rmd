@@ -16,6 +16,8 @@ params:
     fig.path: NULL
     cache_dir: NULL
 ---
+The cellline annotation is after outlier removal and then filter using vireo result
+
 
 ```{r setup, include=FALSE}
 library(tidyverse)
@@ -31,6 +33,9 @@ knitr::opts_chunk$set(
   cache.path = ifelse(is.null(params$cache_dir), 
                       paste0(tools::file_path_sans_ext(knitr::current_input()), "_cache/"), 
                       params$cache_dir))
+
+rename <- dplyr::rename
+select <- dplyr::select
 ```
 
 ```{r}
@@ -42,7 +47,7 @@ color_palette <- c(
   ONT_2 = "#24cdcd",
   Illumina = "#e88b20"
 )
-options(future.globals.maxSize = 5 * 1024 * 1024 * 1024)
+options(future.globals.maxSize = 10 * 1024 * 1024 * 1024)
 library(dplyr)
 library(tidyverse)
 library(Seurat)
@@ -153,7 +158,7 @@ rm(so_ont,  so_pb, so_ill)
 
 
 # Plot1: Read counts and feature counts distribution of filtered objects
-```{r, fig.width=20, fig.height=10}
+```{r, fig.width=8, fig.height=6}
 # Feature plot
 plot_d <- bind_rows(
   lapply(c(so_ont.sc, so_pb.sc, so_ill.sc, so_ont.sn, so_pb.sn, so_ill.sn), function(so) {
@@ -173,18 +178,20 @@ plot_d <- bind_rows(
 
 # violin plot
 library(ggplot2)
-map(
-  c("nFeature_Gene_quant", "nCount_Gene_quant", "percent.mt", "percent.ribo"),
+plot_d$log10_counts <- log10(plot_d$nCount_Gene_quant)
+plots <- map(
+  c("nFeature_Gene_quant", "log10_counts", "percent.mt", "percent.ribo"),
   function(x){
-    ggplot(plot_d, aes(x = Library.Type, y = !!sym(x))) + # Corrected this line
-      geom_violin(aes(fill = Sequencer), color = "black") + # Corrected fill to use the column dynamically
-      geom_boxplot(aes(fill = Sequencer), width = 0.1, position = position_dodge(0.9)) +  
+    ggplot(plot_d, aes(x = Library.Type, y = !!sym(x))) +  
+      geom_boxplot(aes(fill = Sequencer), width = 0.5, position = position_dodge(0.9), 
+                   outlier.size = 0.5) +  # Set smaller outlier dots
       scale_fill_manual(values = color_palette[c("Illumina", "ONT", "PacBio")] %>% unname) + 
-        theme_minimal() +
-        labs(title = "Violin Plot", x = "Protocols", y = x)
+      theme_minimal() +
+      labs(title = "Box Plot", x = "Protocols", y = x)
   }
-) %>% patchwork::wrap_plots(guides="collect")
+)
 
+wrap_plots(plots, guides = "collect")
 ```
 
 
@@ -197,20 +204,39 @@ so_pb.sc <- so_pb.sc %>% get_clusters(ndim = 30, res = 0.5, seed = params$random
 so_pb.sn <- so_pb.sn %>% get_clusters(ndim = 30, res = 0.5, seed = params$random_seed)
 so_ill.sc <- so_ill.sc %>% get_clusters(ndim = 30, res = 0.5, seed = params$random_seed)
 so_ill.sn <- so_ill.sn %>% get_clusters(ndim = 30, res = 0.5, seed = params$random_seed)
+```
 
 
-map(
-  list(so_ont.sc, so_ont.sn, so_pb.sc, so_pb.sn, so_ill.sc, so_ill.sn),
-  function(x){
-    DimPlot(
-      x,
-      group.by = "cell_line",
-      reduction = "umap.Gene_quant",
-      combine = FALSE, label.size = 5,
-      label = FALSE
+```{r, echo=F}
+# Define custom colors
+# Define custom colors
+cell_line_color_palette <- c(
+  "H146" = "#004d1a", "H69" = "#1cad1c", "SHP77" = "#a3d830",  # sclc_a (Greens)
+  "H526" = "#a08544", "H211" = "#efca11",                      # sclc_p (Browns)
+  "H1975" = "#5d4075", "H2228" = "#5c39c4", "HCC827" = "#dd0de4"  # luad (Purple-Gold)
 )
-  }
-) %>% flatten %>% patchwork::wrap_plots(guides="collect")
+# Plotting with dynamic titles
+so_list <- list(
+  'ONT SC' = so_ont.sc, 
+  'ONT SN' =so_ont.sn, 
+  'PacBio SC' =so_pb.sc, 
+  'PacBio SN' =so_pb.sn, 
+  'Illumina SC' =so_ill.sc, 
+  'Illumina SN' =so_ill.sn)
+# Plotting with dynamic titles
+
+
+map(names(so_list), ~ {
+  DimPlot(
+    so_list[[.x]],
+    group.by = "cell_line",
+    reduction = "umap.Gene_quant",
+    combine = FALSE,  # Returns a list
+    label.size = 5,
+    label = FALSE,
+    cols = cell_line_color_palette
+  )[[1]] + ggtitle(.x)
+}) %>% patchwork::wrap_plots(plots, guides = "collect")
 ```
 
 
