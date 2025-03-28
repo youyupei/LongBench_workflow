@@ -17,7 +17,7 @@ if (is.null(version)) {
     fig.path <- paste0(base_name, "_", Sys.Date(), "_figures/")
 } else {
     output_name <- paste0(base_name, "_", version, "_", Sys.Date(), ".html")
-    cachedir <- paste0(base_name, "_", version, "_", Sys.Date(), "_cache/")
+    cachedir <- paste0(base_name, "_", version, "_cache/")
     fig.path <- paste0(base_name, "_", version, "_", Sys.Date(), "_figures/")
 }
 
