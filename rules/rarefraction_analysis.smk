@@ -122,7 +122,7 @@ rule rarefraction_analysis:
             ],
             cell_line = sr_bulk_config['cell_lines'],
             sample = lr_bulk_config['sample_id'],
-            subsample_size =  main_wf_config['rarefaction_size']
+            subsample_size =  main_wf_config['rarefaction_size_bulk']
         )
     output:
         touch(join(config['flag_dir'], "rarefraction_analysis.done"))

@@ -1,7 +1,7 @@
 ---
 title: "LongBench Single-cell Sing-cell DE analysis"
 author: "Yupei"
-version: "v1.0"
+version: "v1.1"
 output:
   html_document:
     code_folding: hide
@@ -96,6 +96,7 @@ color_palette <- c(
   Illumina = "#e88b20"
 )
 ```
+
 
 ```{r, get number of transcripts gene from gtf}
 calcTxNum <- function(G.Tx.map){
@@ -232,6 +233,41 @@ p.gene <- ggplot(plot_df, aes(x = Dataset, y = `Total Count` / 1000000, fill = D
 patchwork::wrap_plots(p.gene, p.tx) + 
   patchwork::plot_layout(guides = 'collect')
 ```
+
+# Pseudobulk read count distribution:
+```{r pseudobulked read count, fig.height=4, fig.width=10}
+merged_data <- read_csv("/vast/projects/LongBench/analysis/lr_sc_sn/result/PseudoBulkQC/pseudo_bulk_read_count.csv")
+```
+
+
+```{r pseudobulked read count, fig.height=4, fig.width=10}
+merged_data %>%
+  ggplot(aes(x = sample, y = Count, fill = platform, colour = protocol)) +
+  geom_bar(stat = "identity") +
+  geom_text(aes(label = paste0(round(Count/1000000, 2), 'M')), hjust = 0, size = 4, angle = 90) +  # Add labels
+  theme(axis.text.x = element_text(angle = 60, hjust = 1)) +
+  labs(title = "Read count comparison", x = "Datasets", y = "Read counts")  +
+  scale_fill_manual(values = color_palette[c("ONT", "PacBio")] %>% unname) +
+  scale_color_manual(values = c('#a2b346', '#565750')) + ylim(0, 4.2e7)
+```
+
+
+```{r pseudobulked read count total, fig.height=4, fig.width=6}
+merged_data %>%
+  group_by(protocol, platform) %>%
+  summarise(Count = sum(Count), .groups = "drop") %>%
+  mutate(sample = paste(platform, protocol, sep = "_")) %>% 
+  ggplot(aes(x = sample, y = Count, fill = platform, colour = protocol)) +
+  geom_bar(stat = "identity") +
+  geom_text(aes(label = paste0(round(Count/1000000, 2), 'M')), hjust = 0.5, vjust = -1, size = 4, angle = 0) +  # Add labels
+  #theme(axis.text.x = element_text(angle = 0, hjust = 1)) +
+  labs(title = "Read count comparison", x = "Datasets", y = "Read counts")  +
+  scale_fill_manual(values = color_palette[c("ONT", "PacBio")] %>% unname) +
+  scale_color_manual(values = c('#a2b346', '#565750')) + ylim(0, 1.5e8)
+```
+
+
+
 # Identification analysis:
 ## Gene level 
 Gene identification: Filter out lowly expressed genes and transcript using `filterByExpr` for each dataset, using default parameters

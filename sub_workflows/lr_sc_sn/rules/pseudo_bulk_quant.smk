@@ -54,8 +54,32 @@ rule get_cell_line_pseudo_bulk_fq:
         rm -rf "$TMP"
         """
 
+rule _pseudobulk_read_count_single_run:
+    input:
+        fastq = results_dir + "/PseudoBulkAlignment/{sample}_{cell_line}_pseudo_bulk.fastq"
+    output:
+        txt = temp(results_dir + "/PseudoBulkQC/{sample}_{cell_line}_pseudo_bulk_read_count.txt")
+    resources:
+        cpus_per_task=1
+    shell:
+        """
+        mkdir -p $(dirname {output.txt})
+        expr $(( $(wc -l < {input.fastq}) / 4 )) > {output.txt}
+        """
 
-rule lr_bulk_minimap2_transcript:
+rule pseudobulk_read_count:
+    input:
+        expand(rules._pseudobulk_read_count_single_run.output[0], 
+            cell_line = config['cell_line_list'],
+            sample = config['sample_id']) 
+    output:
+        results_dir + "/PseudoBulkQC/pseudo_bulk_read_count.csv"
+    resources:
+        cpus_per_task=1
+    script:
+        "../scripts/combine_read_count.R"
+
+rule pseudobulk_minimap2_transcript:
     priority: 10
     input:
         fastq = results_dir + "/PseudoBulkAlignment/{sample}_{cell_line}_pseudo_bulk.fastq",
@@ -75,27 +99,27 @@ rule lr_bulk_minimap2_transcript:
         """
 
 
-rule run_salmon:
-    input:
-        bam = results_dir + "/PseudoBulkAlignment/{sample}_{cell_line}.bam",
-        ref = config["reference"]["transcript"]
-    output:
-        out_dir = directory(os.path.join(results_dir,"PseudoBulkSalmon/{sample}/{cell_line}"))
-    priority: 1
-    conda:
-        main_conda
-    resources:
-        cpus_per_task=32,
-        mem_mb=32000,
-        slurm_extra="--mail-type=FAIL --mail-user=you.yu@wehi.edu.au"
-    params:
-        lib_type = "A", # auto
-        numBootstraps = 50
-    shell:
-        """
-        mkdir -p {output.out_dir}
-        salmon quant -t {input.ref} -l {params.lib_type} -a {input.bam} -p {resources.cpus_per_task}  -o {output.out_dir} --ont --numBootstraps {params.numBootstraps}
-        """
+# rule run_salmon:
+#     input:
+#         bam = results_dir + "/PseudoBulkAlignment/{sample}_{cell_line}.bam",
+#         ref = config["reference"]["transcript"]
+#     output:
+#         out_dir = directory(os.path.join(results_dir,"PseudoBulkSalmon/{sample}/{cell_line}"))
+#     priority: 1
+#     conda:
+#         main_conda
+#     resources:
+#         cpus_per_task=32,
+#         mem_mb=32000,
+#         slurm_extra="--mail-type=FAIL --mail-user=you.yu@wehi.edu.au"
+#     params:
+#         lib_type = "A", # auto
+#         numBootstraps = 50
+#     shell:
+#         """
+#         mkdir -p {output.out_dir}
+#         salmon quant -t {input.ref} -l {params.lib_type} -a {input.bam} -p {resources.cpus_per_task}  -o {output.out_dir} --ont --numBootstraps {params.numBootstraps}
+#         """
 
 rule run_oarfish_cov:
     priority: 10
@@ -118,11 +142,14 @@ rule run_oarfish_cov:
         oarfish --alignments {input.bam} --threads {resources.cpus_per_task} --output {output.out_dir}/ --model-coverage  -d . --filter-group no-filters --num-bootstraps 50
         """
 
+
+
 rule pseudo_bulk_oarfish_quant:
     input: 
-        expand(os.path.join(results_dir,"PseudoBulkOarfishCov/{sample}/{cell_line}"), 
+        expand([os.path.join(results_dir,"PseudoBulkOarfishCov/{sample}/{cell_line}")], 
                                                     cell_line = config['cell_line_list'],
-                                                    sample = config['sample_id']) 
+                                                    sample = config['sample_id']) ,
+        rules.pseudobulk_read_count.output[0]
     output:
         touch(os.path.join(results_dir, ".flag/pseudo_bulk_oarfish_quant.done"))
 
