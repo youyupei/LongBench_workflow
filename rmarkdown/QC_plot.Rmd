@@ -1,5 +1,5 @@
 ---
-title: "QC plots from AlignQC"
+title: "QC plots from AlignQC and internal priming analysis"
 author: "Yupei"
 date: '2024-03-04'
 version: "v1.0"
@@ -17,6 +17,8 @@ params:
   random_seed: 2024
   cache_dir: NULL
   fig.path: NULL
+  
+  
 ---
 
 ```{r}
@@ -57,8 +59,8 @@ color_palette <- c(
 )
 ```
 
-
-# Alignment stats
+# AlignQC
+## Alignment stats
 ```{r alignment stats}
 # LR
 dirs <- list.dirs('/vast/projects/LongBench/analysis/lr_bulk/result/qc/AlignQC/', recursive = TRUE, full.names = TRUE)
@@ -182,7 +184,7 @@ ggplot() +
 
 ```
 
-# Error state
+## Error state
 ```{r load error state}
 
 # LR
@@ -253,7 +255,7 @@ ggplot() +
   scale_color_manual(values = color_palette[c("Illumina", "ONT", "ONT_1", "PacBio")] %>% unname)  # Match dot color to fill
 ```
 
-# Junction shift
+## Junction shift
 ```{r load junction shift}
 # LR
 dirs <- list.dirs('/vast/projects/LongBench/analysis/lr_bulk/result/qc/AlignQC/', recursive = TRUE, full.names = TRUE)
@@ -371,7 +373,7 @@ ggplot() +
 ```
 
 
-# Genomic Feature
+## Genomic Feature
 ```{r}
 # LR
 dirs <- list.dirs('/vast/projects/LongBench/analysis/lr_bulk/result/qc/AlignQC/', recursive = TRUE, full.names = TRUE)
@@ -480,7 +482,7 @@ ggplot(summary_data, aes(x = Aligned_length, y = proportion, fill = Feature)) +
 ```
 
 
-# Exon count and transcript completeness
+## Exon count and transcript completeness
 ```{r, include=F, eval=F}
 # # LR
 # dirs <- list.dirs('/vast/projects/LongBench/analysis/lr_bulk/result/qc/AlignQC/', recursive = TRUE, full.names = TRUE)
@@ -564,7 +566,7 @@ ggplot(summary_data, aes(x = Aligned_length, y = proportion, fill = Feature)) +
 ```
 
 
-TODO
+## TODO
 
 1. Read align percentage -> alignment_stats.txt
 2. Aligned length per read -> lengths.txt.gz
@@ -576,3 +578,71 @@ TODO
 8. Percentage of Exonic reads -> read_genomic_features.txt.gz
 9. junction shift -> junvar.txt
 10. Error rate -> error_stats.txt
+
+# INTERNAL PRIMING
+```{r internal_priming_proportion, fig.height=3, fig.width=4}
+dirs <- list.dirs("/vast/projects/LongBench/analysis/lr_bulk/result/int_prim_analysis", recursive = TRUE, full.names = TRUE)
+# Find all alignment stats files
+stats_files <- list.files(dirs, pattern = "*summary.txt", full.names = TRUE)
+
+
+# Function to parse each file
+parse_stats <- function(file) {
+  # Extract platform and type from file path
+  parts <- strsplit(file, "/")[[1]]
+  platform <- parts[length(parts)]
+  
+  # Read file and convert to tibble
+  stats <- read.table(file, sep = ":", col.names = c("metric", "value"), fill = TRUE)
+  
+  # Add platform and type columns
+  stats <- stats %>%
+    mutate(platform = platform) %>%
+    pivot_wider(names_from = metric, values_from = value)
+  
+  return(stats)
+}
+
+# Parse all files and combine into a single tibble
+int.prim.stats <- map_dfr(stats_files, parse_stats)
+
+# split the platform column into two columns
+int.prim.stats <- int.prim.stats %>%
+  mutate(
+    Platform = case_when(
+      str_detect(platform, "dRNA") ~ "ONT dRNA",
+      str_detect(platform, "ont_bulk") ~ "ONT cDNA",
+      str_detect(platform, "pb") ~ "PacBio",
+      TRUE ~ "Illumina"
+    ),
+    # remove *_
+    Cell_line = gsub(".*_", "", platform),
+    `Internally primed reads percentage (%)` = `Proportion of internal priming reads` * 100
+  ) %>% dplyr::select(-platform)
+
+
+df_summary <- int.prim.stats %>%
+  group_by(Platform) %>%
+  summarise(
+    Mean_Value = mean(`Internally primed reads percentage (%)`, na.rm = TRUE),
+    SD = sd(`Internally primed reads percentage (%)`, na.rm = TRUE),  # Standard deviation
+    .groups = "drop"
+  )
+
+ggplot() +
+  # Bars for the mean
+  geom_bar(data = df_summary, aes(x = Platform, y = Mean_Value, fill = Platform), 
+           stat = "identity", position = "dodge", alpha = 0.7) +
+  # Error bars (Mean ± SD)
+  geom_errorbar(data = df_summary, aes(x = Platform, ymin = Mean_Value - SD, ymax = Mean_Value + SD), 
+                width = 0.2, position = position_dodge(0.9)) +
+  # Dots for individual values
+  geom_point(data = int.prim.stats, aes(x = Platform, y = `Internally primed reads percentage (%)`, color = Platform), 
+             position = position_jitter(width = 0.2), size = 2) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +  # Rotate x-axis labels
+  labs(x = "Protocols", y = "Internally primed reads percentage (%)") +
+  scale_fill_manual(values = color_palette[c("ONT", "ONT_1", "PacBio")] %>% unname) +
+  scale_color_manual(values = color_palette[c("ONT", "ONT_1", "PacBio")] %>% unname) +  # Match dot color to fill + 
+  theme_minimal()
+```
+

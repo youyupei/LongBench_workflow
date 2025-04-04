@@ -25,6 +25,7 @@ conda_config: # the parser will convert it to absolute path will be accessible a
   oarfish: "conda/config/oarfish.yaml"
   fastp: "conda/config/fastp.yaml"
   AlignQC: "conda/config/AlignQC.yaml"
+  PrimeSpotter: "conda/config/PrimeSpotter.yaml"
 
 conda:
   sqanti3: "SQANTI3" # prebuilt conda env name

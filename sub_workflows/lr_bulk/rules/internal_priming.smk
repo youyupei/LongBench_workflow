@@ -1,5 +1,6 @@
 import textwrap, os
-results_dir = config["output_path"]
+from  os.path import  join
+
 
 rule run_internal_priming_analysis:
     input:
@@ -7,31 +8,30 @@ rule run_internal_priming_analysis:
     output:
         touch(".flag/{x}_internal_priming.done")
 
-rule _internal_priming_identifier:
+rule _internal_priming_identifier_single_run:
     input: 
-        bam = os.path.join(results_dir, "flames_out/{x}/align2genome.bam"),
-        bai = os.path.join(results_dir, "flames_out/{x}/align2genome.bam.bai"),
-        github = ".flag/gitrepo_youyupei_PrimeSpotter.commit",
-        gtf = config['reference']['gtf'],
+        bam = os.path.join(scratch_dir,"subsample_data/{sample}_{cell_line}/genome_map_subsample_rate_0.05.bam"),
+        bai = os.path.join(scratch_dir,"subsample_data/{sample}_{cell_line}/genome_map_subsample_rate_0.05.bam.bai"),
+        gtf = config['reference']['gtf_hunman'],
         genome = config['reference']['genome']
     output:
-        flag=touch(".flag/{x}_run_primspotter.done"),
-        summary=os.path.join(results_dir, "int_prim_analysis/{x}_summary.txt"),
-        bam = os.path.join(results_dir, "int_prim_analysis/{x}_IP_tag_added.bam"),
-        bai = os.path.join(results_dir, "int_prim_analysis/{x}_IP_tag_added.bam.bai")
+        summary=join(results_dir, "int_prim_analysis/{sample}_{cell_line}_summary.txt"),
+        bam = join(scratch_dir, "int_prim_analysis/{sample}_{cell_line}_IP_tag_added.bam"),
+        bai = join(scratch_dir, "int_prim_analysis/{sample}_{cell_line}_IP_tag_added.bam.bai")
     resources:
         cpus_per_task=32,
-        mem_mb=32000,
-        slurm_extra="--mail-type=FAIL --mail-user=you.yu@wehi.edu.au"
+        mem_mb=32000
     params:
-        python_script="git_repo/PrimeSpotter/PrimeSpotter/PrimeSpotter.py",
-        python_dir="/stornext/Home/data/allstaff/y/you.yu/.cache/R/basilisk/1.14.0/FLAMES/1.9.1/flames_env/bin/python3"
+        python_script="/home/users/allstaff/you.yu/github/PrimeSpotter/PrimeSpotter/PrimeSpotter.py"
+    conda:
+        config["conda"]["PrimeSpotter"]
     shell:
         """
         mkdir -p $(dirname {output.summary})
+        mkdir -p $(dirname {output.bam})
         # module load samtools
         
-        {params.python_dir} {params.python_script} --bam_file {input.bam} \
+        python3 {params.python_script} --bam_file {input.bam} \
                                         --gtf_file {input.gtf} \
                                         --output-summary {output.summary} \
                                         --genome-ref {input.genome} \
@@ -40,33 +40,38 @@ rule _internal_priming_identifier:
         """
 
 
+rule internal_priming_identifier:
+    input:
+        expand(join(results_dir, "int_prim_analysis/{sample}_{cell_line}_summary.txt"),
+                sample = config['sample_id'],
+                cell_line = config['cell_lines'])
+
 # rule internal_priming_site_analysis:
 #     """
 #     Find the potential internal priming sites using Genome and annotation
 #     """
 #     output:
-#         #".flag/{y}_{x}_internal_priming.done",
-#         os.path.join(results_dir, "int_prim_analysis/internal_priming_site_analysis/int_prim_site_summary.csv")
+#         join(results_dir, "int_prim_analysis/internal_priming_site_analysis/int_prim_site_summary.csv")
 #     resources:
 #         cpus_per_task=1,
-#         mem_mb=32000,
-#         slurm_extra="--mail-type=FAIL --mail-user=you.yu@wehi.edu.au"
+#         mem_mb=32000
+#     conda:
+#         main_conda
 #     params:
-#         python_script="scripts/internal_priming_site_analysis.py",
-#         python_dir="/stornext/Home/data/allstaff/y/you.yu/.cache/R/basilisk/1.14.0/FLAMES/1.9.1/flames_env/bin/python3"
+#         python_script="/home/users/allstaff/you.yu/github/PrimeSpotter/PrimeSpotter/internal_priming_site_analysis.py"
 #     shell:
 #         """
 #         mkdir -p $(dirname {output[0]})
-#         {params.python_dir} {params.python_script} 
+#         python3 {params.python_script} 
 #         """
 
 
 # rule internal_priming_gene_count:
 #     input:
-#         os.path.join(results_dir, "int_prim_analysis/{sample}/{sample}_{y}.bam"),
-#         os.path.join(results_dir, "int_prim_analysis/{sample}/{sample}_{y}.bam.bai")
+#         join(results_dir, "int_prim_analysis/{sample}/{sample}_{y}.bam"),
+#         join(results_dir, "int_prim_analysis/{sample}/{sample}_{y}.bam.bai")
 #     output:
-#         os.path.join(results_dir, "int_prim_analysis/{sample}/{sample}_{y}_gene_count.csv")
+#         join(results_dir, "int_prim_analysis/{sample}/{sample}_{y}_gene_count.csv")
 #     params:
 #         python_dir="/stornext/Home/data/allstaff/y/you.yu/.cache/R/basilisk/1.14.0/FLAMES/1.9.1/flames_env/bin/python3",
 #         flames_module_dir = "/home/users/allstaff/you.yu/github/FLAMES/inst/python"

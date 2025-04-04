@@ -6,6 +6,7 @@ reference:
   gtf_gz: "/home/users/allstaff/you.yu/LongBench/reference_files/GRCh38.add.spikein/gencode.v44.transcripts.add.spikein.gtf.gz"
   genePred: "/home/users/allstaff/you.yu/LongBench/reference_files/GRCh38.add.spikein/gencode.v44.transcripts.add.spikein.gtf.genePred"
   bed_human: "/home/users/allstaff/you.yu/LongBench/reference_files/GRCh38/gencode.v44.annotation.gtf.bed"
+  gtf_hunman: "/home/users/allstaff/you.yu/LongBench/reference_files/GRCh38/gencode.v44.annotation.gtf"
   transcript: "/home/users/allstaff/you.yu/LongBench/reference_files/GRCh38.add.spikein/gencode.v44.transcripts.add.spikein.fa"
   picard_reference: '/home/users/allstaff/you.yu/LongBench/reference_files/GRCh38/refFlat.txt'
   bed_housekeeping_genes: '/home/users/allstaff/you.yu/LongBench/reference_files/GRCh38/hg38.HouseKeepingGenes.bed'

@@ -30,6 +30,7 @@ results_dir = config["output_path"]
 scratch_dir = config["scratch_dir"]
 barcode_list = config['barcode_list']
 sub_wf_dir = config['sub_wf_dir']
+flag_dir = config['flag_dir']
 
 
 include: "rules/minimap2.smk"
@@ -54,6 +55,7 @@ rule all:
       rules.run_all_mapping.output,
       rules.run_quantification.output,
       rules.qc.output,
+      rules.internal_priming_identifier.input
       #rules.run_kallisto.output
    output:
       touch(os.path.join(results_dir, ".flag/all.done"))
