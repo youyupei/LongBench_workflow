@@ -18,5 +18,5 @@ include: "rules/rmarkdown.smk"
 rule all:
     input:
         rules.cellranger.output,
-        rules.demuxlet.output,
-        rules.run_all_rmarkdown.input
+        # rules.demuxlet.output,
+        # rules.run_all_rmarkdown.input

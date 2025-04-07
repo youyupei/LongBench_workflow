@@ -5,7 +5,18 @@ input_file <- commandArgs(trailingOnly = TRUE)[1]
 
 # get the base name of the input file
 base_name <- tools::file_path_sans_ext(basename(input_file))
-out_dir <- paste0(base_name, "_outdir")
+
+# if a second positional argument is provided, use it as the output directory
+if (length(commandArgs(trailingOnly = TRUE)) > 1) {
+    out_dir <- commandArgs(trailingOnly = TRUE)[2]
+    if (!dir.exists(out_dir)) dir.create(out_dir)
+    out_dir <- paste0(out_dir, '/', base_name,  "_outdir")
+} else {
+    out_dir <- paste0(base_name, "_outdir")
+}
+
+
+
 if (!dir.exists(out_dir)) dir.create(out_dir)
 base_name <- paste(out_dir,base_name,sep = '/')
 

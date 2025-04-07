@@ -51,10 +51,12 @@ for sub_wf in ['lr_sc_sn', 'lr_bulk', 'sr_bulk', "sr_sc_sn"]:
         sub_wf_name = sub_wf)
 
 include: "rules/qc_plot.smk"
-include: "rules/DE_analysis.smk"
+# include: "rules/DE_analysis.smk"
 include: "rules/sc_cell_line_anno.smk"
 include: "rules/rarefraction_analysis.smk"
+include: "rules/rarefraction_analysis_sc.smk"
 include: "rules/annotation_redundency_analysis.smk"
+include: "rules/rmarkdown.smk"
 
 
 rule all:
@@ -65,5 +67,7 @@ rule all:
         rules.sr_bulk_all.input,
         rules.main_qc_plot.output,
         rules.run_cell_line_annotation_pipeline.output,
-        rules.rmd_bulk_de_human.output
+        # rules.rmd_bulk_de_human.output,
+        rules.knit_rmarkdown.input,
+        rules.lr_sc_rarefraction_analysis.output
     default_target: True
