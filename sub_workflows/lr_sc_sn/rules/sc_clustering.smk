@@ -36,7 +36,7 @@ rule rmd_clustering_and_annotation:
 
 rule run_all_rmarkdown:
     input:
-        expand(os.path.join(results_dir,  "reports/RDS/{sample}_annotated.rds"),
+        files=expand(os.path.join(results_dir,  "reports/RDS/{sample}_annotated.rds"),
                sample=config["sample_id"])
     output:
         touch(os.path.join(results_dir,  ".flag/clustering_and_annotation_done"))

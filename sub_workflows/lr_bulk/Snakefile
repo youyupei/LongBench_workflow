@@ -36,8 +36,7 @@ flag_dir = config['flag_dir']
 include: "rules/minimap2.smk"
 include: "rules/internal_priming.smk"
 include: "rules/qc.smk"
-include: "rules/quantification_salmon_oarfish.smk"
-include: "rules/quantification_kallisto.smk"
+include: "rules/quantification.smk"
 include: config['main_wf_dir'] + "/modules/utilities.smk"
 
 # make sure the results_dir exists

@@ -209,7 +209,7 @@ rule RSeQC_junction_saturation:
         report(os.path.join(results_dir, "qc/RSeQC/{sample}.junctionSaturation_plot.pdf"))
     resources:
         cpus_per_task=1,
-        mem_mb=8000
+        mem_mb=32000
     conda:
         config['conda']['RSeQC']
     shell:
