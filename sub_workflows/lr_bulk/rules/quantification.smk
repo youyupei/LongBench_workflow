@@ -17,14 +17,14 @@ rule featureCounts_gene_quant:
         #slurm_extra="--mail-type=FAIL --mail-user=you.yu@wehi.edu.au"
     shell:
         """
-        mkdir -p $(os.path.dirname{output.rds})
-        out_dir=$(dirname {input.fastq})
+        mkdir -p $(dirname {output.rds})
         Rscript -e "
-            fc_SE <- featureCounts('{input.bam}',annot.ext='{input.gtf}', 
+            fc_SE <- Rsubread::featureCounts('{input.bam}',annot.ext='{input.gtf}', 
                 isGTFAnnotationFile=TRUE, 
                 GTF.featureType='gene', 
                 GTF.attrType='gene_id', 
                 useMetaFeatures=TRUE, 
+                isLongRead=TRUE,
                 nthreads={resources.cpus_per_task})
             saveRDS(fc_SE, file='{output.rds}')
             "

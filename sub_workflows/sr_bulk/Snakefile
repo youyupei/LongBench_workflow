@@ -19,7 +19,7 @@ sub_wf_dir = config['sub_wf_dir']
 include: "rules/mapping.smk"
 include: "rules/mapping_masked_genome.smk"
 include: "rules/qc.smk"
-include: "rules/salmon.smk"
+include: "rules/quantification.smk"
 #include: config['main_wf_dir'] + "/modules/utilities.smk"
 
 # make sure the results_dir exists
@@ -33,7 +33,7 @@ wildcard_constraints:
 # Main rule
 rule all:
    input:
-      rules.salmon.output,
+      rules.quantification.output,
       rules.qc.output,
       rules.mapping.output
    output:

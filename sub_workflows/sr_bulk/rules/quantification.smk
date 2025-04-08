@@ -1,4 +1,32 @@
-# Step 2: Run salmon on the trimmed reads
+
+# Geme quantification with featureCounts
+rule featureCounts_gene_quant:
+    input:
+        bam = join(config["output_path"], "subjunc/bam/{cell_line}.sorted.bam"),
+        gtf = config['reference']['gtf']
+    output:
+        rds = results_dir + "/featureCounts/{cell_line}_featureCounts.rds"
+    resources:
+        cpus_per_task=4,
+        mem_mb=16000
+        #slurm_extra="--mail-type=FAIL --mail-user=you.yu@wehi.edu.au"
+    shell:
+        """
+        mkdir -p $(dirname {output.rds})
+        Rscript -e "
+            fc_SE <- Rsubread::featureCounts('{input.bam}',annot.ext='{input.gtf}', 
+                isGTFAnnotationFile=TRUE, 
+
+                GTF.featureType='gene', 
+                GTF.attrType='gene_id', 
+                useMetaFeatures=TRUE, ,
+                isPairedEnd=TRUE,
+                nthreads={resources.cpus_per_task})
+            saveRDS(fc_SE, file='{output.rds}')
+            "
+        """
+
+# Run salmon on the trimmed reads
 ## Step 2.1: Index the transcriptome
 rule salmon_index:
     input: config['reference']['transcript']
@@ -35,12 +63,13 @@ rule salmon_quant:
                     --numBootstraps 50
         """
 
-# Entire quantification worflow head
-rule salmon:
+# Entire quantification workflow head
+rule quantification:
     input:
         expand(
             [
-                rules.salmon_quant.output[0]
+                rules.salmon_quant.output[0],
+                rules.featureCounts_gene_quant.output[0],
             ],
             cell_line = config['cell_lines']
         )
