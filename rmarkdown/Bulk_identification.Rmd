@@ -28,7 +28,7 @@ params:
   bulk_meta: '/vast/projects/LongBench/sequencing_data/illumina_bulk/metadata.txt'
   cache_dir: NULL
   fig.path: 'figures/'
-  out.rds: '/vast/projects/LongBench/analysis/reports/RDS/bulk_de_human_summary.rds'
+  out.rds: '/vast/projects/LongBench/analysis/workflow/rmarkdown/RDS/bulk_identification.rds'
 ---
 
 # Setup
@@ -47,7 +47,7 @@ params <- list(
   ont_drnd_oarfish_dir = "/vast/projects/LongBench/analysis/lr_bulk/result/oarfish_cov_output/dRNA_bulk",
   ill_bulk_salmon_dir = "/vast/projects/LongBench//analysis/sr_bulk/result/salmon/salmon_quant",
   bulk_meta = "/vast/projects/LongBench/sequencing_data/illumina_bulk/metadata.txt",
-  out.rds= '/vast/projects/LongBench/analysis/reports/RDS/bulk_de_human_summary.rds'
+  out.rds= '/vast/projects/LongBench/analysis/workflow/rmarkdown/RDS/bulk_identification.rds'
 )
 ```
 
@@ -98,6 +98,9 @@ color_palette <- c(
   ONT_2 = "#24cdcd",
   Illumina = "#e88b20"
 )
+
+
+output_list <- list() # used to store result for downstream analysis
 ```
 
 ```{r function for splitting the transcript origin}
@@ -318,6 +321,8 @@ gene_discovery <- gene_discovery %>%
 
 
 gene_discovery$biotype <- factor(gene_discovery$biotype, levels = c(sort(unique(gene_discovery$biotype)) %>% setdiff("Others"), "Others"))
+
+output_list[["gene_discovery"]] <- gene_discovery # save for downstream analysis
 ```
 
 ####  Main Upset plot
@@ -366,6 +371,67 @@ ComplexUpset::upset(
   guides='over',
   wrap = TRUE
 )
+```
+
+
+```{r GENE: Agreement plot, fig.height=3, fig.width=8}
+# Pivot to long format
+agreement_plot <- function(df){
+  df_long <- df %>% select(gene_id, Illumina, `ONT cDNA`, PacBio, `ONT dRNA`) %>%
+  pivot_longer(-gene_id, names_to = "Platform", values_to = "Detected") %>%
+  group_by(gene_id) %>%
+  mutate(TotalDetected = sum(Detected)) %>%
+  ungroup() %>%
+  mutate(
+    Category = case_when(
+      Detected == 1 & TotalDetected == 1 ~ "Platform-Specific Detection",  # Only detected by this platform
+      Detected == 0 & TotalDetected == 3 ~ "Platform-Specific Absence",      # Not detected by this platform but present elsewhere
+      Detected == 1 & TotalDetected > 1 ~ "Common Detection (also detected in >0 other platform)",
+      Detected == 0 & TotalDetected < 3 ~ "Common Absence (also absent in >0 other platform)" # Detected by this platform + at least one other
+    )
+  ) %>%
+  count(Platform, Category)
+
+# Convert to factor for proper ordering in plot
+df_long$Category <- factor(df_long$Category, 
+                           levels = c(
+                                      "Platform-Specific Absence", 
+                                      "Common Absence (also absent in >0 other platform)",
+                                      "Platform-Specific Detection", 
+                                      "Common Detection (also detected in >0 other platform)"
+                                      ))
+
+# Stacked bar plot
+df_long %>%
+  mutate(n = case_when(
+    Category %in% c("Platform-Specific Absence", "Common Absence (also absent in >0 other platform)") ~ -n,
+    TRUE ~ n
+  )) %>%
+  ggplot(aes(x = Platform, y = n, fill = Category)) +
+  geom_bar(stat = "identity") +
+  labs(
+    y = "Number of Genes",
+    x = "Platform",
+    fill = "Category"
+  ) +
+  theme_minimal() +
+  scale_fill_manual(
+    values = c(
+      "Platform-Specific Detection" = "#0072B2",  # Blue (color-blind friendly)
+      "Platform-Specific Absence" = "#E69F00",    # Orange (color-blind friendly)
+      "Common Detection (also detected in >0 other platform)" = "#009E73",  # Green
+      "Common Absence (also absent in >0 other platform)" = "#999999"  # Gray
+    )
+  ) +
+  coord_flip() +  # Flip axes for horizontal bars
+  theme(
+    axis.text.x = element_text(angle = 0, hjust = 0.5, vjust = 0.5),  # Ensure x-axis labels are readable
+    axis.title.x = element_text(size = 12),  # Adjust x-axis title size
+    axis.text.y = element_text(size = 10)   # Adjust y-axis text size if needed
+  )
+}
+
+gene_discovery %>% agreement_plot
 ```
 
 #### Gene identification Jaccard similarity
@@ -434,6 +500,15 @@ ComplexUpset::upset(
   guides='over',
   wrap = TRUE
 )
+```
+
+
+```{r GENE: Sup agreement plot gene, fig.height=3, fig.width=12}
+(
+  (agreement_plot(gene_discovery %>% filter(biotype=="protein_coding")) + ggtitle("Protein-coding")) |
+  (agreement_plot(gene_discovery %>% filter(biotype!="protein_coding")) + ggtitle("Non-Protein-coding")) 
+) + 
+patchwork::plot_layout(guides = "collect")
 ```
 
 #### Discovered gene length distribution
@@ -578,7 +653,7 @@ gene_discovery<- gene_discovery %>%
 ```
 
 
-```{r,  Expression of the intronic and single-exon gene, fig.height=6, fig.width=8}
+```{r,  Expression of the intronic and single-exon gene, fig.height=7, fig.width=8}
 plot_df <- gene_discovery %>% mutate(
   "Intronic Gene" = gene_discovery$gene_id %in% overlaps_tibble[overlaps_tibble$intron_gene %in% gene_discovery$gene_id,]$exon_gene,
   "Single exon" = gene_discovery$Exon_Count == 1
@@ -598,13 +673,13 @@ ComplexUpset::upset(
           ggplot(mapping=aes(fill = `Single exon`)) +
             geom_bar(position = "fill")+
             scale_fill_manual(values = c("#BAC5CB",'#B5C952')) + 
-            ylab('Single-exon gene proportion')
+            ylab('Single-exon gene \n proportion')
         ),
         "Intronic Genes" = (
           ggplot(mapping=aes(fill = `Intronic Gene`)) +
             geom_bar(position = "fill")+
             scale_fill_manual(values = c("#BAC5CB",'#B5C952')) + 
-            ylab('Intronic gene proportion')
+            ylab('Intronic gene \n proportion')
         )
   ),
   set_sizes=(
@@ -613,6 +688,14 @@ ComplexUpset::upset(
                 width=0.8
             ) 
         )+ theme(legend.position = "none")
+    ),
+   base_annotations=list(
+        'Intersection size'=ComplexUpset::intersection_size(
+            counts=TRUE,
+            mapping=aes(fill=biotype),
+            text=element_text(size = 3, vjust=-0.2)
+        ) + scale_fill_manual(values = c("Non-protein-coding"="#BAC5CB",
+                              "Protein-coding"='#B5C952'))
     ),
   wrap = TRUE
 )
@@ -822,6 +905,10 @@ tx_discovery <- tx_discovery %>%  mutate(
 tx_discovery <- tx_discovery %>% mutate(biotype = ifelse(biotype %in% 
             names(sort(table(biotype), decreasing = TRUE)[1:6]), 
             biotype, "Others"))
+
+
+output_list[["tx_discovery"]] <- tx_discovery # save for downstream analysis
+saveRDS(output_list, params$out.rds)
 ```
 
 ## Main upset plot
@@ -870,6 +957,29 @@ ComplexUpset::upset(
   guides='over',
   wrap = TRUE
 )
+```
+
+
+```{r Transcript: Main agreement plot, fig.height=3, fig.width=8}
+agreement_plot_tx <- function(d){
+  # the agreement_plot function take gene_id columns by default. Modify to work on tx_discovery
+  p <- d  %>% mutate(gene_id=tx_id) %>% agreement_plot()
+  p + labs(y = "Number of Transcripts")
+}
+
+ tx_discovery %>% mutate(
+    biotype = case_when(
+      biotype =="protein_coding" ~ "Protein-coding",
+      TRUE ~ "Non-protein-coding"
+    )) %>% agreement_plot_tx
+```
+
+
+```{r Transcript: Sup agreement plot, fig.height=3, fig.width=12}
+(
+  ( tx_discovery %>% filter(biotype =="protein_coding") %>% agreement_plot_tx + ggtitle("Protein-coding") ) |
+  ( tx_discovery %>% filter(biotype !="protein_coding") %>% agreement_plot_tx+ ggtitle("Non-protein-coding")) 
+) + patchwork::plot_layout(guides = "collect")
 ```
 ## Jaccard similary
 ```{r transcript identification Jaccard similarity, fig.height=3, fig.width=4.5}

@@ -272,6 +272,34 @@ rule alignQC_analysis:
             --specific_tempdir {output.tmp_dir}
         """
 
+# Pseudobulk QC
+rule _pseudobulk_read_count_single_run:
+    input:
+        fastq = results_dir + "/PseudoBulkAlignment/{sample}_{cell_line}_pseudo_bulk.fastq"
+    output:
+        txt = temp(results_dir + "/PseudoBulkQC/{sample}_{cell_line}_pseudo_bulk_read_count.txt")
+    resources:
+        cpus_per_task=1
+    shell:
+        """
+        mkdir -p $(dirname {output.txt})
+        expr $(( $(wc -l < {input.fastq}) / 4 )) > {output.txt}
+        """
+
+rule pseudobulk_read_count:
+    input:
+        expand(rules._pseudobulk_read_count_single_run.output[0], 
+            cell_line = config['cell_line_list'],
+            sample = config['sample_id']) 
+    output:
+        results_dir + "/PseudoBulkQC/pseudo_bulk_read_count.csv"
+    resources:
+        cpus_per_task=1
+    script:
+        "../scripts/combine_read_count.R"
+
+
+
 
 # # Commented out as sqanti3 provides similar information
 #     # Read length related
@@ -416,7 +444,7 @@ rule qc:
     input:
         expand(
             [
-                os.path.join(results_dir, "qc/coverage/{sample}.flame.coverage_plot.{flames_cov_plot_suffix}"),
+                #os.path.join(results_dir, "qc/coverage/{sample}.flame.coverage_plot.{flames_cov_plot_suffix}"),
                 #os.path.join(results_dir, "qc/sqanti3/{sample}"),
                 os.path.join(results_dir, "qc/NanoPlot/{sample}/NanoPlot-data.tsv.gz"),
                 os.path.join(results_dir, "qc/RSeQC/{sample}.geneBodyCoverage.curves.pdf"),

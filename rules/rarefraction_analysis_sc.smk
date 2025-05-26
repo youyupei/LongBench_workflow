@@ -35,7 +35,7 @@ rule lr_sc_oarfish_cov_rare_fraction_analysis:
         bam = rules.lr_sc_bam_downsample.output,
         ref = lr_sc_sn_config["reference"]["transcript"]
     output:
-        out_dir_cov = directory(os.path.join(main_wf_config['output_path'],"rarefraction_analysis/oarfish/{sample}/{subsample_size,.*M}/{cell_line}"))
+        out_dir_cov = directory(os.path.join(main_wf_config['output_path'],"rarefraction_analysis/oarfish/sc_sn/{sample}/{subsample_size,.*M}/{cell_line}"))
     conda:
         join(config['main_wf_dir'], config["conda_config"]["oarfish"])
     resources:
@@ -55,12 +55,14 @@ rule lr_sc_link_oarfish_cov_full:
     input:
         rules.lr_sc_sn_run_oarfish_cov.output
     output:
-        directory(os.path.join(main_wf_config['output_path'],"rarefraction_analysis/oarfish/{sample}/full/{cell_line}"))
+        directory(os.path.join(main_wf_config['output_path'],"rarefraction_analysis/oarfish/sc_sn/{sample}/full/{cell_line}"))
     localrule: True
     shell:
         """
-        sleep 5
+        mkdir -p {output}
         ln -s {input} {output}
+        sleep 1
+        touch -h {output}
         """
 
 # Entire quantification worflow head
@@ -70,7 +72,7 @@ rule lr_sc_rarefraction_analysis:
             [
                 rules.lr_sc_oarfish_cov_rare_fraction_analysis.output[0],
                 rules.lr_sc_bam_downsample.output[0],
-                rules.link_lr_bulk_oarfish_cov_full.output[0]
+                rules.lr_sc_link_oarfish_cov_full.output[0]
             ],
             cell_line = lr_sc_sn_config['cell_line_list'],
             sample = [x for x in lr_sc_sn_config['sample_id'] if "sc" in x],
@@ -80,7 +82,7 @@ rule lr_sc_rarefraction_analysis:
             [
                 rules.lr_sc_oarfish_cov_rare_fraction_analysis.output[0],
                 rules.lr_sc_bam_downsample.output[0],
-                rules.link_lr_bulk_oarfish_cov_full.output[0]
+                rules.lr_sc_link_oarfish_cov_full.output[0]
             ],
             cell_line = lr_sc_sn_config['cell_line_list'],
             sample = [x for x in lr_sc_sn_config['sample_id'] if "sn" in x],

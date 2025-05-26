@@ -27,7 +27,7 @@ params:
   ont_drnd_oarfish_dir: "/vast/projects/LongBench/analysis/lr_bulk/result/oarfish_cov_output/dRNA_bulk"
   ill_bulk_salmon_dir: "/vast/projects/LongBench/analysis/sr_bulk/result/salmon/salmon_quant"
   bulk_meta: "/vast/projects/LongBench/sequencing_data/illumina_bulk/metadata.txt"
-  output_rds: "/vast/projects/LongBench/analysis/workflow/rmarkdown/RDS/Bulk_identification_DE.rds"  
+  output_rds: "/vast/projects/LongBench/analysis/workflow/rmarkdown/RDS/bulk_DE.rds"  
   expected_de_table: '/vast/projects/LongBench/reference_files/Expected_DE.csv'
   log2FC_cutoff: 0
 
@@ -84,6 +84,7 @@ library(scales)
 library(UpSetR)
 library(ggtree)
 library(aplot)
+library(patchwork)
 source("/vast/projects/LongBench/analysis/workflow/scripts/Rfunctions.R")
 output_list <- list() # used to store result for downstream analysis
 
@@ -271,9 +272,6 @@ ill_bulk.gene.dge <- ill_bulk.gene.dge[keep, ]
 ont_bulk.gene.dge <- ont_bulk.gene.dge[keep, ]
 pb_bulk.gene.dge <- pb_bulk.gene.dge[keep, ]
 drna_bulk.gene.dge <- drna_bulk.gene.dge[keep, ]
-
-output_list[["gene_discovery"]] <- common_genes[keep]
-
 ```
 
 ```{r transcript filtering for DE, echo=TRUE, message=FALSE, warning=FALSE, results='hide'}
@@ -297,8 +295,6 @@ ill_bulk.dge <- ill_bulk.dge[keep, ]
 ont_bulk.dge.oarfish <- ont_bulk.dge.oarfish[keep, ]
 pb_bulk.dge.oarfish <- pb_bulk.dge.oarfish[keep, ]
 ont_drna.dge.oarfish <- ont_drna.dge.oarfish[keep, ]
-
-output_list[["txi_discovery"]] <- common_tx[keep]
 ```
 
 ## Normalise the gene and transcript counts using `calcNormFactors` with `TMM` methods for each dataset, separately for human
@@ -488,6 +484,101 @@ pb_bulk.dge_human.list <- DGE.edgeR_human(pb_bulk.gene.dge[is.human(pb_bulk.gene
     -   [PacBio](./DGE_summary/DGE_Glimma_HTML/PacBio_AvsP_volcano_plot.html)
     -   [ONT cDNA](./DGE_summary/DGE_Glimma_HTML/ONT_AvsP_volcano_plot.html)
     -   [ONT dRNA](./DGE_summary/DGE_Glimma_HTML/dRNA_AvsP_volcano_plot.html)
+
+
+##Check Expected DE
+```{r}
+expected_DE <- read_csv(params$expected_de_table)
+
+add_FC <- function(x){
+  x %>% 
+  left_join(ill_bulk.dge_human.list$AvsL.DE$table %>% 
+              rownames_to_column('Gene')  %>% 
+              select(Gene, logFC) %>%
+              mutate(
+                Gene = sub("\\..*", "", Gene)
+                ) %>%
+              rename(
+                Illumina_logFC = logFC
+              ), by = "Gene") %>% 
+    left_join(ont_bulk.dge_human.list$AvsL.DE$table %>% 
+              rownames_to_column('Gene')  %>% 
+              select(Gene, logFC) %>%
+              mutate(
+                Gene = sub("\\..*", "", Gene)
+                ) %>%
+              rename(
+                ONT_cDNA_logFC = logFC
+              ), by = "Gene") %>%
+    left_join(pb_bulk.dge_human.list$AvsL.DE$table %>% 
+              rownames_to_column('Gene')  %>% 
+              select(Gene, logFC) %>%
+              mutate(
+                Gene = sub("\\..*", "", Gene)
+                ) %>%
+              rename(
+                Pacbio_logFC = logFC
+              ), by = "Gene") %>% 
+    left_join(drna_bulk.deg_human.list$AvsL.DE$table %>% 
+              rownames_to_column('Gene')  %>% 
+              select(Gene, logFC) %>%
+              mutate(
+                Gene = sub("\\..*", "", Gene)
+                ) %>%
+              rename(
+                ONT_dRNA_logFC = logFC
+              ), by = "Gene")
+}
+
+# expected_DE %>%  left_join(mat.AvsL.DE %>% mutate(Gene = sub("\\..*", "", Gene)), by="Gene") %>% add_FC
+# expected_DE %>% left_join(mat.PvsL.DE %>% mutate(Gene = sub("\\..*", "", Gene)), by="Gene") %>% add_FC
+# expected_DE %>% left_join(mat.AvsP.DE %>% mutate(Gene = sub("\\..*", "", Gene)), by="Gene") %>% add_FC
+
+
+
+```
+
+### MA plots
+```{r MA plots, fig.height=3, fig.width=13}
+library(ggplot2)
+library(ggrepel)
+plot.my.ma <- function(dge){
+  # Get results and DE decisions
+  res <- dge$table %>% 
+    tibble::rownames_to_column("Gene") %>%
+    mutate(Gene=sub("\\..*", "", Gene))
+  
+  # Join with expected_DE
+  highlighted <- expected_DE %>%
+    filter(Symbol %in% c("HMGA2", "POU2F3", "ASCL1")) %>%
+    select(Gene, Symbol) %>%
+    inner_join(res, by = "Gene")
+  
+  dges <- decideTests(dge)
+  
+  # Add DE status to results
+  res$DE <- as.factor(dges[,1])  # Assuming single contrast
+  
+  # Subsets
+  res_nonDE <- res %>% filter(DE == 0)
+  res_DE <- res %>% filter(DE != 0)
+  # MA plot
+  ggplot() +
+    geom_point(data = res_nonDE, aes(x = logCPM, y = logFC), color = "gray", alpha = 0.4) +
+    geom_point(data = res_DE, aes(x = logCPM, y = logFC, color = DE), alpha = 0.6) +
+    scale_color_manual(values = c("-1" = "blue", "1" = "red")) +
+    geom_point(data = highlighted, aes(x = logCPM, y = logFC), color = "yellow", shape = 21, fill = NA, size = 2, stroke = 1) +
+    geom_text_repel(data = highlighted, aes(x = logCPM, y = logFC, label = Symbol), size = 3, max.overlaps = 100) +
+    geom_hline(yintercept = 0, linetype = "dashed", color = "gray") +
+    labs(x = "Average log CPM", y = "log₂ Fold Change", color = "DE Status") +
+    theme_minimal()x
+}
+ill_bulk.dge_human.list %>% map(plot.my.ma) %>% wrap_plots(ncol=3, guides='collect') +  plot_annotation(title = "Illumina")
+ont_bulk.dge_human.list %>% map(plot.my.ma) %>% wrap_plots(ncol=3, guides='collect') +  plot_annotation(title = "ONT cDNA")
+drna_bulk.deg_human.list %>% map(plot.my.ma) %>% wrap_plots(ncol=3, guides='collect') +  plot_annotation(title = "ONT dRNA")
+pb_bulk.dge_human.list %>% map(plot.my.ma) %>% wrap_plots(ncol=3, guides='collect') +  plot_annotation(title = "PacBio")
+```
+
 
 ## Cross-platform comparison DGE human (upset)
 
@@ -1090,60 +1181,7 @@ table_AvsP <- create_platform_colored_table(platform_specific_deg_tables$AvsP, "
 table_AvsL
 table_PvsL
 table_AvsP
-
 ```
-
-
-# Check Expected DE
-```{r}
-expected_DE <- read_csv(params$expe)
-
-add_FC <- function(x){
-  x %>% 
-  left_join(ill_bulk.dge_human.list$AvsL.DE$table %>% 
-              rownames_to_column('Gene')  %>% 
-              select(Gene, logFC) %>%
-              mutate(
-                Gene = sub("\\..*", "", Gene)
-                ) %>%
-              rename(
-                Illumina_logFC = logFC
-              ), by = "Gene") %>% 
-    left_join(ont_bulk.dge_human.list$AvsL.DE$table %>% 
-              rownames_to_column('Gene')  %>% 
-              select(Gene, logFC) %>%
-              mutate(
-                Gene = sub("\\..*", "", Gene)
-                ) %>%
-              rename(
-                ONT_cDNA_logFC = logFC
-              ), by = "Gene") %>%
-    left_join(pb_bulk.dge_human.list$AvsL.DE$table %>% 
-              rownames_to_column('Gene')  %>% 
-              select(Gene, logFC) %>%
-              mutate(
-                Gene = sub("\\..*", "", Gene)
-                ) %>%
-              rename(
-                Pacbio_logFC = logFC
-              ), by = "Gene") %>% 
-    left_join(drna_bulk.deg_human.list$AvsL.DE$table %>% 
-              rownames_to_column('Gene')  %>% 
-              select(Gene, logFC) %>%
-              mutate(
-                Gene = sub("\\..*", "", Gene)
-                ) %>%
-              rename(
-                ONT_dRNA_logFC = logFC
-              ), by = "Gene")
-}
-
-expected_DE %>%  left_join(mat.AvsL.DE %>% mutate(Gene = sub("\\..*", "", Gene)), by="Gene") %>% add_FC
-expected_DE %>% left_join(mat.PvsL.DE %>% mutate(Gene = sub("\\..*", "", Gene)), by="Gene") %>% add_FC
-expected_DE %>% left_join(mat.AvsP.DE %>% mutate(Gene = sub("\\..*", "", Gene)), by="Gene") %>% add_FC
-
-```
-
 # Enrichment Analysis (Clusterprofiler)
 
 In this section, **GO and KEGG enrichment analyses** are performed to identify key biological functions and pathways for differential expressed genes (DEGs).
@@ -1711,6 +1749,87 @@ p1 / p2 / p3 + patchwork::plot_annotation(
   title = "DTE Human (with scaling)",
   theme = theme(plot.title = element_text(size =25))
 )
+```
+
+
+```{r Biotype and transcript length on DTE, echo=TRUE, fig.height=9, fig.width=15}
+library(patchwork)
+# Function to preprocess the data and create an upset plot
+my_complexUpset <- function(data, tx_length_lookup, title) {
+  # Preprocess data
+  plot_d <- data %>%
+    left_join(tx_length_lookup, by = c("Gene" = "tx_id")) %>%
+    rename(`Tx length` = Length) %>%
+    mutate(Gene = sub("\\..*", "", Gene))
+
+  # Generate the upset plot
+  upset_plot <- ComplexUpset::upset(
+  plot_d %>% mutate(
+    biotype = case_when(
+      biotype =="protein_coding" ~ "Protein-coding",
+      TRUE ~ "Non-protein-coding"
+    )
+  ),
+  intersect = c('Illumina', "ONT cDNA", "PacBio", "ONT dRNA"),
+  annotations = list(
+        # 1st method - passing list:
+        "Gene length" = list(
+          aes = aes(x = intersection, y = `Tx length`),
+          # provide a list if you wish to add several geoms
+          geom = geom_boxplot(na.rm = TRUE, outliers = FALSE)
+        )
+        # ,
+        # "BioType" = list(
+        #   aes = aes(x = intersection, fill = biotype),
+        #   geom = geom_bar(position = "fill")
+        # )
+  ),
+  base_annotations=list(
+        'Intersection size'=ComplexUpset::intersection_size(
+            counts=TRUE,
+            mapping=aes(fill=biotype),
+            text=element_text(size = 3, vjust=-0.2)
+        ) + scale_fill_manual(values = c("Non-protein-coding"="#BAC5CB",
+                              "Protein-coding"='#B5C952'))
+    ),
+  set_sizes=(
+        ComplexUpset::upset_set_size(
+            geom=geom_bar(
+                aes(fill=biotype),
+                width=0.8
+            ) ,
+            position='right'
+        )+ scale_fill_manual(values = c("Non-protein-coding"="#BAC5CB",
+                              "Protein-coding"='#B5C952')) +
+          theme(legend.position = "none")
+  ),
+  guides='over',
+  wrap = TRUE
+)
+
+  return(upset_plot)
+}
+
+# Generate the Tx length lookup table
+tx_length_lookup <- ill_bulk.scale_dge$genes %>%
+  rownames_to_column("tx_id") %>%
+  select(tx_id, Length) %>%
+  tibble() %>%
+  mutate(
+    biotype = strsplit(tx_id, "\\|") %>% sapply(function(x) x[8]),
+    gene_id = strsplit(tx_id, "\\|") %>% sapply(function(x) x[2]),
+  )
+
+
+# Generate plots using the function
+plot1 <- my_complexUpset(mat.AvsL.DTE, tx_length_lookup, "SCLC_A vs LUAD")
+plot2 <- my_complexUpset(mat.PvsL.DTE, tx_length_lookup, "SCLC_P vs LUAD")
+plot3 <- my_complexUpset(mat.AvsP.DTE, tx_length_lookup, "SCLC_A vs SCLC_P")
+
+
+# Combine plots in a 2x2 grid with one empty space
+final_plot <- (plot1 + plot2) / (plot3 + plot_spacer()) + plot_layout(nrow = 2)
+final_plot
 ```
 
 ```{r transcript: platform specific detection summary, fig.height=2, fig.width=13}

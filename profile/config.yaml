@@ -13,4 +13,4 @@ keep-going: false
 shadow-prefix: "/vast/scratch/users/you.yu/LongBench/.shadow"
 benchmark-extended: true
 conda-frontend: conda
-rerun-triggers: ["code", "input", "mtime", "params"] # disable "software-env"
+rerun-triggers: [ "input", "mtime", "params"] # disable "software-env" "code",

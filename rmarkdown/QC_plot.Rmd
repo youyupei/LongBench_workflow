@@ -58,9 +58,9 @@ color_palette <- c(
   Illumina = "#e88b20"
 )
 ```
-
-# AlignQC
-## Alignment stats
+# BULK
+## AlignQC
+### Alignment stats
 ```{r alignment stats}
 # LR
 dirs <- list.dirs('/vast/projects/LongBench/analysis/lr_bulk/result/qc/AlignQC/', recursive = TRUE, full.names = TRUE)
@@ -184,7 +184,7 @@ ggplot() +
 
 ```
 
-## Error state
+### Error state
 ```{r load error state}
 
 # LR
@@ -255,7 +255,7 @@ ggplot() +
   scale_color_manual(values = color_palette[c("Illumina", "ONT", "ONT_1", "PacBio")] %>% unname)  # Match dot color to fill
 ```
 
-## Junction shift
+### Junction shift
 ```{r load junction shift}
 # LR
 dirs <- list.dirs('/vast/projects/LongBench/analysis/lr_bulk/result/qc/AlignQC/', recursive = TRUE, full.names = TRUE)
@@ -373,7 +373,7 @@ ggplot() +
 ```
 
 
-## Genomic Feature
+### Genomic Feature
 ```{r}
 # LR
 dirs <- list.dirs('/vast/projects/LongBench/analysis/lr_bulk/result/qc/AlignQC/', recursive = TRUE, full.names = TRUE)
@@ -482,7 +482,7 @@ ggplot(summary_data, aes(x = Aligned_length, y = proportion, fill = Feature)) +
 ```
 
 
-## Exon count and transcript completeness
+### Exon count and transcript completeness
 ```{r, include=F, eval=F}
 # # LR
 # dirs <- list.dirs('/vast/projects/LongBench/analysis/lr_bulk/result/qc/AlignQC/', recursive = TRUE, full.names = TRUE)
@@ -566,7 +566,7 @@ ggplot(summary_data, aes(x = Aligned_length, y = proportion, fill = Feature)) +
 ```
 
 
-## TODO
+### TODO
 
 1. Read align percentage -> alignment_stats.txt
 2. Aligned length per read -> lengths.txt.gz
@@ -579,7 +579,7 @@ ggplot(summary_data, aes(x = Aligned_length, y = proportion, fill = Feature)) +
 9. junction shift -> junvar.txt
 10. Error rate -> error_stats.txt
 
-# INTERNAL PRIMING
+## INTERNAL PRIMING
 ```{r internal_priming_proportion, fig.height=3, fig.width=4}
 dirs <- list.dirs("/vast/projects/LongBench/analysis/lr_bulk/result/int_prim_analysis", recursive = TRUE, full.names = TRUE)
 # Find all alignment stats files
@@ -645,4 +645,92 @@ ggplot() +
   scale_color_manual(values = color_palette[c("ONT", "ONT_1", "PacBio")] %>% unname) +  # Match dot color to fill + 
   theme_minimal()
 ```
+# SC/SN
+```{r}
+color_palette <- c(
+  PacBio = "#df1995",
+  ONT = "#00789b",
+  ONT_1 = "#04476c",
+  ONT_2 = "#24cdcd",
+  Illumina = "#e88b20"
+)
+```
 
+## AlignQC
+### Alignment stats
+```{r SC genomic feature}
+# LR
+dirs <- list.dirs('/vast/projects/LongBench/analysis/lr_sc_sn/result/PseudoBulkQC/AlignQC', recursive = TRUE, full.names = TRUE)
+# Find all alignment stats files
+stats_files <- list.files(dirs, pattern = "read_genomic_features.txt.gz", full.names = TRUE)
+
+# Function to parse each file
+parse_stats <- function(file) {
+  # Extract platform and type from file path
+  parts <- strsplit(file, "/")[[1]]
+  platform <- parts[length(parts) - 2]
+  
+  # Read file and convert to tibble
+  stats <- read_tsv(file, col_names = c("Read_id", "Feature", "exon_count", "Aligned_length")) %>%
+    # change Aligned_length to bins 500, 1000, 1500, 2000, 2500, 3000, 3500, 4000, 4000+
+    mutate(
+      Aligned_length = cut(Aligned_length, breaks=c(seq(0, 4000, by=500), Inf), labels = c("0-500", "500-1000", "1000-1500", "1500-2000", "2000-2500", "2500-3000", "3000-3500", "3500-4000", "4000+")),
+      Platform = case_when(
+        str_detect(platform, "ont_sc") ~ "ONT SC",
+        str_detect(platform, "ont_sn") ~ "ONT SN",
+        str_detect(platform, "pb_sc") ~ "PacBio SC",
+        str_detect(platform, "pb_sn") ~ "PacBio SN",
+
+        ),
+      Cell_line = gsub(".*_", "", platform)
+    ) %>% 
+    group_by(Aligned_length, Feature, Cell_line, Platform ) %>%
+    summarise(
+      count = n(),
+      .groups = "drop"
+    ) 
+    
+    
+  
+
+  # # Add platform and type columns
+  # stats <- stats %>%
+  #   pivot_wider(names_from = metric, values_from = value)
+  # Get the proportion of each unique feature
+  # stats <- stats %>%
+  #   group_by(Feature) %>%
+  #   summarise(
+  #     count = n(),
+  #     .groups = "drop"
+  #   ) %>%
+  #   mutate(
+  #     proportion = count / sum(count) * 100,
+  #     platform = platform
+  #   ) %>%
+  #   arrange(desc(proportion))
+  return(stats)
+}
+
+# Parse all files and combine into a single tibble
+genoemic.feature <- map_dfr(stats_files, parse_stats)
+genoemic.feature$Feature <- factor(genoemic.feature$Feature, levels=c("intergenic", "intron","exon"))
+
+
+```
+
+```{r SC SN genomic feature overall proportion}
+# Compute average proportions per platform
+summary_data <- genoemic.feature %>%
+  group_by(Platform, Feature) %>%
+  summarise(count = sum(count), .groups = "drop") %>%
+  group_by(Platform) %>%
+  mutate(
+      proportion = count / sum(count),
+  )
+# Create stacked bar plot
+ggplot(summary_data, aes(x = Platform, y = proportion, fill = Feature)) +
+  geom_bar(stat = "identity") +
+  theme_minimal() +
+  labs(x = "Platform", y = "Proportion", fill = "Feature") +
+  scale_fill_brewer(palette = "Set2") # Adjust color scheme
+```

@@ -1,7 +1,7 @@
 ---
 title: "LongBench Single-cell Sing-cell DE analysis"
 author: "Yupei"
-version: "v1.1"
+version: "v1.2"
 output:
   html_document:
     code_folding: hide
@@ -21,25 +21,13 @@ params:
   pb_sn_dir: "/vast/projects/LongBench/analysis/lr_sc_sn/result/PseudoBulkOarfishCov/pb_sn"
   human_gtf: '/vast/projects/LongBench/reference_files/GRCh38/gencode.v44.annotation.gtf'
   bulk_meta: "/vast/projects/LongBench/sequencing_data/illumina_bulk/metadata.txt"
-  bulk_rds: "/vast/projects/LongBench/analysis/workflow/rmarkdown/RDS/Bulk_identification_DE.rds"
-  fig.path: "/vast/projects/LongBench/analysis/figures/sc_sn_de"
+  bulk_ident_rds: "/vast/projects/LongBench/analysis/workflow/rmarkdown/RDS/bulk_identification.rds"
+  bulk_de_rds: "/vast/projects/LongBench/analysis/workflow/rmarkdown/RDS/bulk_DE.rds"
+  expected_de_table: '/vast/projects/LongBench/reference_files/Expected_DE.csv'
+  fig.path: NULL
 ---
 
 # Setup: Create DGE from input
-```{r Input filename setup, include=FALSE, eval=F}
-params <- list(
-  random_seed = 2024,
-  cache_dir = NULL,
-  human_gtf = '/vast/projects/LongBench/reference_files/GRCh38/gencode.v44.annotation.gtf',
-  ont_sc_dir= "/vast/projects/LongBench/analysis/lr_sc_sn/result/PseudoBulkOarfishCov/ont_sc",
-  ont_sn_dir= "/vast/projects/LongBench/analysis/lr_sc_sn/result/PseudoBulkOarfishCov/ont_sn",
-  pb_sc_dir= "/vast/projects/LongBench/analysis/lr_sc_sn/result/PseudoBulkOarfishCov/pb_sc",
-  pb_sn_dir= "/vast/projects/LongBench/analysis/lr_sc_sn/result/PseudoBulkOarfishCov/pb_sn",
-  bulk_meta = "/vast/projects/LongBench/sequencing_data/illumina_bulk/metadata.txt",
-  bulk_rds = '/vast/projects/LongBench/analysis/reports/RDS/bulk_de_human_summary.rds',
-  fig.path = "/vast/projects/LongBench/analysis/figures/sc_sn_de"
-)
-```
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(
   cache = !is.null(params$cache_dir),  # Enable caching only if cache_dir is provided
@@ -76,6 +64,7 @@ library(scales)
 library(UpSetR)
 library(ggtree)
 library(aplot)
+library(DTUrtle)
 source("/home/users/allstaff/you.yu/LongBench/analysis/workflow/scripts/Rfunctions.R")
 
 # setup some conflict functions
@@ -117,7 +106,8 @@ human.G.Tx.map$tx_count <- human.G.Tx.map %>% calcTxNum
 
 ```{r Create DGE from input, echo=F}
 bulk.meta <- read.csv(params$bulk_meta)
-bulk_rds <- readRDS(params$bulk_rds)
+bulk_ident_rds <- readRDS(params$bulk_ident_rds)
+bulk_de_rds <- readRDS(params$bulk_de_rds)
 rownames(bulk.meta) <- bulk.meta$sample
 
 # SR salmon
@@ -235,7 +225,7 @@ patchwork::wrap_plots(p.gene, p.tx) +
 ```
 
 # Pseudobulk read count distribution:
-```{r pseudobulked read count, fig.height=4, fig.width=10}
+```{r, fig.height=4, fig.width=10}
 merged_data <- read_csv("/vast/projects/LongBench/analysis/lr_sc_sn/result/PseudoBulkQC/pseudo_bulk_read_count.csv")
 ```
 
@@ -381,12 +371,12 @@ ComplexUpset::upset(
 ```
 
 ### Upset plots: Overlap with Bulk
-```{r Gene Upset plot Overlap with Bulk, fig.height=3, fig.width=8}
+```{r Gene Identification Upset plot Overlap with Bulk, fig.height=3, fig.width=8}
 library(ComplexUpset)
 
 df <- gene_discovery %>%
   left_join(
-    bulk_rds$gene_discovery %>%
+    bulk_ident_rds$gene_discovery %>%
       mutate(bulk.n = Illumina + `ONT cDNA` + PacBio + `ONT dRNA`) %>%
       select(gene_id, bulk.n),
     by = c("gene_id" = "gene_id")
@@ -394,12 +384,24 @@ df <- gene_discovery %>%
 
 # fill na as 0 in bulk.n
 df$bulk.n[is.na(df$bulk.n)] <- 0
-df <- df%>% mutate(bulk.n = as.factor(bulk.n))
+# df <- df%>% mutate(bulk.n = as.factor(bulk.n))
 
 
 # remove the bulk Bulk DE levels
 ComplexUpset::upset(
-  df %>% mutate("HC gene"= bulk.n==4) %>%filter(`ONT SC` | `ONT SN` | `PacBio SC` | `PacBio SN` | `HC gene` ),
+  df %>% 
+    mutate("HC gene"= case_when(
+                bulk.n == 4 ~ "High-confidence (shared by all 4 bulk protocols)",
+                bulk.n == 0 ~ "Low-confidence (not detected by any bulk protocol)",
+                TRUE ~ "Moderate-confidence (detected in some but not all protocols)"
+                )
+           ) %>%    
+    mutate(`HC gene` = factor(`HC gene`, levels = c(
+                "Low-confidence (not detected by any bulk protocol)",
+                "Moderate-confidence (detected in some but not all protocols)",
+                "High-confidence (shared by all 4 bulk protocols)"
+              )))  %>%
+    filter(`ONT SC` | `ONT SN` | `PacBio SC` | `PacBio SN` | bulk.n>0 ),
   intersect = c("ONT SC", "ONT SN", "PacBio SC", "PacBio SN"),
   wrap = TRUE,
   base_annotations=list(
@@ -408,6 +410,7 @@ ComplexUpset::upset(
       text=element_text(size = 3, vjust=-0.2)
     )  +  scale_fill_manual(
               values = c(
+                "red",
                 "grey",
                 "#1a4f07"
               )
@@ -422,6 +425,7 @@ ComplexUpset::upset(
           position = 'right',
       ) +  scale_fill_manual(
               values = c(
+                "red",
                 "grey",
                 "#1a4f07"
               )
@@ -431,6 +435,109 @@ ComplexUpset::upset(
   guides='over'
 )
 ```
+Sup figure: Separating protein coding and non-protein coding
+```{r SUP: Gene Identification Upset plot Overlap with Bulk, fig.height=3, fig.width=16}
+p1 <- ComplexUpset::upset(
+          df %>% 
+            filter(biotype=="protein_coding") %>% 
+            mutate("HC gene"= case_when(
+                        bulk.n == 4 ~ "High-confidence (shared by all 4 bulk protocols)",
+                        bulk.n == 0 ~ "Low-confidence (not detected by any bulk protocol)",
+                        TRUE ~ "Moderate-confidence (detected in some but not all protocols)"
+                        )
+                   ) %>%    
+            mutate(`HC gene` = factor(`HC gene`, levels = c(
+                        "Low-confidence (not detected by any bulk protocol)",
+                        "Moderate-confidence (detected in some but not all protocols)",
+                        "High-confidence (shared by all 4 bulk protocols)"
+                      )))  %>%
+            filter(`ONT SC` | `ONT SN` | `PacBio SC` | `PacBio SN` | bulk.n>0 ),
+          intersect = c("ONT SC", "ONT SN", "PacBio SC", "PacBio SN"),
+          wrap = TRUE,
+          base_annotations=list(
+            "Intersection size" = intersection_size(
+              mapping = aes(fill = `HC gene`),
+              text=element_text(size = 3, vjust=-0.2)
+            )  +  scale_fill_manual(
+                      values = c(
+                        "red",
+                        "grey",
+                        "#1a4f07"
+                      )
+                  )
+          ),
+          set_sizes=(
+              upset_set_size(
+                  geom=geom_bar(
+                      aes(fill=`HC gene`, x=group),
+                      width=0.8
+                  ),
+                  position = 'right',
+              ) +  scale_fill_manual(
+                      values = c(
+                        "red",
+                        "grey",
+                        "#1a4f07"
+                      )
+                  ) +
+                theme(legend.position = "none")
+          ),
+          guides='over'
+        )
+    ggtitle("Protein coding")
+
+p2 <- ComplexUpset::upset(
+        df %>% 
+          filter(biotype!="protein_coding") %>% 
+          mutate("HC gene"= case_when(
+                      bulk.n == 4 ~ "High-confidence (shared by all 4 bulk protocols)",
+                      bulk.n == 0 ~ "Low-confidence (not detected by any bulk protocol)",
+                      TRUE ~ "Moderate-confidence (detected in some but not all protocols)"
+                      )
+                 ) %>%    
+          mutate(`HC gene` = factor(`HC gene`, levels = c(
+                      "Low-confidence (not detected by any bulk protocol)",
+                      "Moderate-confidence (detected in some but not all protocols)",
+                      "High-confidence (shared by all 4 bulk protocols)"
+                    )))  %>%
+          filter(`ONT SC` | `ONT SN` | `PacBio SC` | `PacBio SN` | bulk.n>0 ),
+        intersect = c("ONT SC", "ONT SN", "PacBio SC", "PacBio SN"),
+        wrap = TRUE,
+        base_annotations=list(
+          "Intersection size" = intersection_size(
+            mapping = aes(fill = `HC gene`),
+            text=element_text(size = 3, vjust=-0.2)
+          )  +  scale_fill_manual(
+                    values = c(
+                      "#B67272",
+                      "grey",
+                      "#1a4f07"
+                    )
+                )
+        ),
+        set_sizes=(
+            upset_set_size(
+                geom=geom_bar(
+                    aes(fill=`HC gene`, x=group),
+                    width=0.8
+                ),
+                position = 'right',
+            ) +  scale_fill_manual(
+                    values = c(
+                      "#B67272",
+                      "grey",
+                      "#1a4f07"
+                    )
+                ) +
+              theme(legend.position = "none")
+        ),
+        guides='over'
+      )
+    ggtitle("Non protein coding")
+
+p1 | p2
+```
+
 ### Jaccard similarity
 ```{r gene Jaccard similarity, fig.height=3, fig.width=4.5}
 library(ComplexHeatmap)
@@ -481,10 +588,10 @@ pb_sn.dge <- pb_sn.dge[common_tx, ]
 
 tx_discovery <- tibble(
   tx_id = common_tx,
-  "ONT SC" = filterByExpr(ont_sc.dge, group = ont_sc.dge$samples$group),
-  "ONT SN" = filterByExpr(ont_sn.dge, group = ont_sn.dge$samples$group),
-  "PacBio SC" = filterByExpr(pb_sc.dge, group = pb_sc.dge$samples$group),
-  "PacBio SN" = filterByExpr(pb_sn.dge, group = pb_sn.dge$samples$group)
+  "ONT SC" = filterByExpr(ont_sc.dge, group = ont_sc.dge$samples$group, min.count=5),
+  "ONT SN" = filterByExpr(ont_sn.dge, group = ont_sn.dge$samples$group, min.count=5),
+  "PacBio SC" = filterByExpr(pb_sc.dge, group = pb_sc.dge$samples$group, min.count=5),
+  "PacBio SN" = filterByExpr(pb_sn.dge, group = pb_sn.dge$samples$group, min.count=5)
 ) %>% mutate(
   tx_id = strsplit(tx_id, "\\|") %>% sapply(function(x) x[1])
 ) %>% left_join(tx_ref_df, by = c("tx_id")) %>% 
@@ -546,11 +653,11 @@ ComplexUpset::upset(
 
 ### Overlap with Bulk discovery
 
-```{r transcriptUpset plot Overlap with Bulk, fig.height=3, fig.width=8}
+```{r transcript Upset plot Overlap with Bulk, fig.height=3, fig.width=8}
 # Transcript 
 df <- tx_discovery %>%
   left_join(
-    bulk_rds$txi_discovery %>%
+    bulk_ident_rds$tx_discovery %>%
       mutate(bulk.n = Illumina + `ONT cDNA` + PacBio + `ONT dRNA`) %>%
       select(tx_id, bulk.n),
     by = c("tx_id" = "tx_id")
@@ -558,12 +665,23 @@ df <- tx_discovery %>%
 
 # fill na as 0 in bulk.n
 df$bulk.n[is.na(df$bulk.n)] <- 0
-df <- df%>% mutate(bulk.n = as.factor(bulk.n))
+#df <- df%>% mutate(bulk.n = as.factor(bulk.n))
 
 
 # remove the bulk Bulk DE levels
 ComplexUpset::upset(
-  df %>% mutate("HC transcript"= bulk.n==4) %>%filter(`ONT SC` | `ONT SN` | `PacBio SC` | `PacBio SN` | `HC transcript` ),
+  df %>% 
+    mutate("HC transcript" = case_when(
+                bulk.n == 4 ~ "High-confidence (shared by all 4 bulk protocols)",
+                bulk.n == 0 ~ "Low-confidence (not detected by any bulk protocol)",
+                TRUE ~ "Moderate-confidence (detected in some but not all protocols)"
+                )) %>% 
+    mutate(`HC transcript` = factor(`HC transcript`, levels = c(
+                "Low-confidence (not detected by any bulk protocol)",
+                "Moderate-confidence (detected in some but not all protocols)",
+                "High-confidence (shared by all 4 bulk protocols)"
+              )))  %>%
+    filter(`ONT SC` | `ONT SN` | `PacBio SC` | `PacBio SN` | bulk.n > 0),
   intersect = c("ONT SC", "ONT SN", "PacBio SC", "PacBio SN"),
   wrap = TRUE,
   base_annotations=list(
@@ -572,6 +690,7 @@ ComplexUpset::upset(
       text=element_text(size = 3, vjust=-0.2)
     )  +  scale_fill_manual(
               values = c(
+                "#B67272",
                 "grey",
                 "#1a4f07"
               )
@@ -586,6 +705,7 @@ ComplexUpset::upset(
           position = 'right',
       ) +  scale_fill_manual(
               values = c(
+                "#B67272",
                 "grey",
                 "#1a4f07"
               )
@@ -596,12 +716,112 @@ ComplexUpset::upset(
 )
 ```
 
+Sup figure: Separating protein coding and non-protein coding
+```{r SUP: Tx Identification Upset plot Overlap with Bulk, fig.height=3, fig.width=16}
+p1 <- ComplexUpset::upset(
+          df %>% 
+            filter(biotype=="protein_coding")  %>%
+            mutate("HC transcript" = case_when(
+                bulk.n == 4 ~ "High-confidence (shared by all 4 bulk protocols)",
+                bulk.n == 0 ~ "Low-confidence (not detected by any bulk protocol)",
+                TRUE ~ "Moderate-confidence (detected in some but not all protocols)"
+                )) %>% 
+            mutate(`HC transcript` = factor(`HC transcript`, levels = c(
+                        "Low-confidence (not detected by any bulk protocol)",
+                        "Moderate-confidence (detected in some but not all protocols)",
+                        "High-confidence (shared by all 4 bulk protocols)"
+                      )))  %>%
+            filter(`ONT SC` | `ONT SN` | `PacBio SC` | `PacBio SN` | bulk.n > 0 ),
+          intersect = c("ONT SC", "ONT SN", "PacBio SC", "PacBio SN"),
+          wrap = TRUE,
+          base_annotations=list(
+            "Intersection size" = intersection_size(
+              mapping = aes(fill = `HC transcript`),
+              text=element_text(size = 3, vjust=-0.2)
+            )  +  scale_fill_manual(
+                      values = c(
+                        "#B67272",
+                        "grey",
+                        "#1a4f07"
+                      )
+                  )
+          ),
+          set_sizes=(
+              upset_set_size(
+                  geom=geom_bar(
+                      aes(fill=`HC transcript`, x=group),
+                      width=0.8
+                  ),
+                  position = 'right',
+              ) +  scale_fill_manual(
+                      values = c(
+                        "#B67272",
+                        "grey",
+                        "#1a4f07"
+                      )
+                  ) +
+                theme(legend.position = "none")
+          ),
+          guides='over'
+        ) +
+    ggtitle("Protain coding")
+
+p2 <- ComplexUpset::upset(
+          df %>% 
+            filter(biotype!="protein_coding")  %>% 
+            mutate("HC transcript" = case_when(
+                bulk.n == 4 ~ "High-confidence (shared by all 4 bulk protocols)",
+                bulk.n == 0 ~ "Low-confidence (not detected by any bulk protocol)",
+                TRUE ~ "Moderate-confidence (detected in some but not all protocols)"
+                )) %>% 
+            mutate(`HC transcript` = factor(`HC transcript`, levels = c(
+                        "Low-confidence (not detected by any bulk protocol)",
+                        "Moderate-confidence (detected in some but not all protocols)",
+                        "High-confidence (shared by all 4 bulk protocols)"
+                      )))  %>%
+            filter(`ONT SC` | `ONT SN` | `PacBio SC` | `PacBio SN` | bulk.n > 0 ),
+          intersect = c("ONT SC", "ONT SN", "PacBio SC", "PacBio SN"),
+          wrap = TRUE,
+          base_annotations=list(
+            "Intersection size" = intersection_size(
+              mapping = aes(fill = `HC transcript`),
+              text=element_text(size = 3, vjust=-0.2)
+            )  +  scale_fill_manual(
+                      values = c(
+                        "#B67272",
+                        "grey",
+                        "#1a4f07"
+                      )
+                  )
+          ),
+          set_sizes=(
+              upset_set_size(
+                  geom=geom_bar(
+                      aes(fill=`HC transcript`, x=group),
+                      width=0.8
+                  ),
+                  position = 'right',
+              ) +  scale_fill_manual(
+                      values = c(
+                        "#B67272",
+                        "grey",
+                        "#1a4f07"
+                      )
+                  ) +
+                theme(legend.position = "none")
+          ),
+          guides='over'
+        ) +
+    ggtitle("Non protain coding")
+
+p1 | p2
+```
 # Preprocess Gene and Transcript DGE for DE: Filtering, Normalisation
 ```{r Filtering}
 ## 2. filter by expression (Transcript)
 df <- gene_discovery %>%
   left_join(
-    bulk_rds$gene_discovery %>%
+    bulk_ident_rds$gene_discovery %>%
       mutate(bulk.n = Illumina + `ONT cDNA` + PacBio + `ONT dRNA`) %>%
       select(gene_id, bulk.n),
     by = c("gene_id" = "gene_id")
@@ -623,7 +843,7 @@ pb_sn.gene.dge <- pb_sn.gene.dge[keep, ]
 ## 2. filter by expression (Transcript)
 df <- tx_discovery %>%
   left_join(
-    bulk_rds$txi_discovery %>%
+    bulk_ident_rds$tx_discovery %>%
       mutate(bulk.n = Illumina + `ONT cDNA` + PacBio + `ONT dRNA`) %>%
       select(tx_id, bulk.n),
     by = c("tx_id" = "tx_id")
@@ -706,7 +926,7 @@ norm_and_mds <- function(dge) {
   mds <- plotMDS(dge, plot = FALSE)
   return(mds)
 }
-myMDS <- function(dge, mds) {
+myMDS <- function(dge, mds, label=F) {
   # normalisation
   mds_data <- tibble(
     Dim1 = mds$x,
@@ -724,30 +944,116 @@ myMDS <- function(dge, mds) {
         y = paste0("Dimension 2 (", round(mds$var.explained[2]*100, 2), "%)" )) +
     scale_color_viridis_d() + # Set color scale
     theme_minimal() 
+  if (label){
+p <- ggplot(mds_data, aes(x = Dim1, y = Dim2, color = `Cancer types`, label = `Cell lines`)) +
+  geom_text(vjust = 0.05, hjust = 0.05, size = 3) +
+  labs(
+    title = "MDS plot", 
+    x = paste0("Dimension 1 (", round(mds$var.explained[1]*100, 2), "%)"), 
+    y = paste0("Dimension 2 (", round(mds$var.explained[2]*100, 2), "%)")
+  ) +
+  scale_color_viridis_d() +
+  theme_minimal()
+  }
   return(p)
 }
+  
 ```
 ## Gene count MDS
-```{r}
+```{r Gene count MDS, fig.height=3, fig.width=8}
 mds <- norm_and_mds(gene.dge.merge) 
 p1 <- myMDS(gene.dge.merge, mds) + ggtitle("Human gene counts") +
   scale_shape_manual(values = c(7, 8, 9, 15, 16, 17, 18, 1))
 p2 <- myMDS(gene.dge.merge, mds) + ggtitle("Human gene counts")  + 
             aes(color = Platforms, shape = `Library types`) + 
             scale_color_manual(values = color_palette[c("ONT",  "PacBio")] %>% unname())
+
+
+
+p3 <- myMDS(gene.dge.merge, mds, label=T) + ggtitle("Human gene counts") +
+  scale_shape_manual(values = c(7, 8, 9, 15, 16, 17, 18, 1))
+p4 <- myMDS(gene.dge.merge, mds, label=T) + ggtitle("Human gene counts")  + 
+            aes(color = Platforms, shape = `Library types`) + 
+            scale_color_manual(values = color_palette[c("ONT",  "PacBio")] %>% unname())
 p1 | p2 
+p3 | p4
 ```
 
+
+
 ## Transcript count MDS
-### Human
-```{r}
+```{r Transcript count MDS, fig.height=3, fig.width=8}
 mds <- norm_and_mds(tx.dge.merge) 
 p1 <- myMDS(tx.dge.merge, mds) + ggtitle("Human transcript counts") +
   scale_shape_manual(values = c(7, 8, 9, 15, 16, 17, 18, 1))
 p2 <- myMDS(tx.dge.merge, mds) + ggtitle("Human transcript counts")  + 
             aes(color = Platforms, shape = `Library types`) + 
             scale_color_manual(values = color_palette[c("ONT",  "PacBio")] %>% unname())
+p3 <- myMDS(tx.dge.merge, mds, label=T) + ggtitle("Human transcript counts") +
+  scale_shape_manual(values = c(7, 8, 9, 15, 16, 17, 18, 1))
+p4 <- myMDS(tx.dge.merge, mds, label=T) + ggtitle("Human transcript counts")  + 
+            aes(color = Platforms, shape = `Library types`) + 
+            scale_color_manual(values = color_palette[c("ONT",  "PacBio")] %>% unname())
 p1 | p2 
+p3 | p4
+```
+
+# PVCA plots
+```{r PVCA plots, fig.height=3, fig.width=4}
+# Create a design matrix for covariates
+library(pvca)
+library(Biobase)
+
+
+# Gene
+log_cpm <- cpm(gene.dge.merge, log = TRUE, prior.count = 1) 
+# Run PVCA
+colnames(log_cpm) <- NULL
+expr_set <- ExpressionSet(
+  assayData = as.matrix(log_cpm),
+  phenoData = AnnotatedDataFrame(gene.dge.merge$samples %>% rename(Platforms=platform, `Cancer_types`=group,  `Library_types`=library))
+)
+pvca_result <- pvcaBatchAssess(
+  expr_set,
+  batch.factors = c("Platforms", "Cancer_types", "Library_types"),  # Specify the metadata columns to test
+  threshold = 0.1
+)
+
+# Transcript
+log_cpm <- cpm(tx.dge.merge, log = TRUE, prior.count = 1) 
+# Run PVCA
+colnames(log_cpm) <- NULL
+expr_set <- ExpressionSet(
+  assayData = as.matrix(log_cpm),
+  phenoData = AnnotatedDataFrame(tx.dge.merge$samples %>% rename(Platforms=platform, `Cancer_types`=group,  `Library_types`=library))
+)
+pvca_result2 <- pvcaBatchAssess(
+  expr_set,
+  batch.factors = c("Platforms", "Cancer_types", "Library_types"),  # Specify the metadata columns to test
+  threshold = 0.1
+)
+
+# Create a data frame from the pvca_result list
+plot_df <- as.data.frame(pvca_result$dat %>% t )
+rownames(plot_df) <- pvca_result$label
+plot_df <- plot_df %>% rownames_to_column("Variable") %>% rename("Value" = V1) %>% mutate(type="Gene-level")
+
+# Create a data frame from the pvca_result list
+plot_df2 <- as.data.frame(pvca_result2$dat %>% t )
+rownames(plot_df2) <- pvca_result2$label
+plot_df2$type <- "Transcript quantification"
+plot_df2 <- plot_df2 %>% rownames_to_column("Variable") %>% rename("Value" = V1) %>% mutate(type="Transcript-level")
+
+plot_df <- plot_df %>% bind_rows(plot_df2)
+
+# Create a bar plot using ggplot
+ggplot(plot_df, aes(x=type, y = Value, fill = Variable)) +
+  geom_bar(stat = "identity", position = "fill") +
+  labs( x = "", y = "Weighted average proportion variance") +
+  theme_minimal() +
+  scale_fill_brewer(palette = "Set3") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
 ```
 
 ### Heatmap （placeholder for potential plot）
@@ -756,10 +1062,6 @@ p1 | p2
 ## DGE edgeR (Salmon and Oarfish)
 ```{r}
 DGE.edgeR_human <- function(dge, norm.method = "TMM") {
-  # QC and normalization
-  filter <- filterByExpr(dge, group = dge$samples$sample)
-  dge <- dge[filter, , keep.lib.sizes = FALSE]
-  
   if (!is.null(norm.method)) {
     dge <- calcNormFactors(dge, method = norm.method)
   }
@@ -792,10 +1094,52 @@ pb_sc.dge_human.list <- DGE.edgeR_human(pb_sc.gene.dge)
 pb_sn.dge_human.list <- DGE.edgeR_human(pb_sn.gene.dge)
 ```
 
+## MA plot of expected DEG
+```{r SC MA Plots, fig.height=3, fig.width=13}
+
+expected_DE <- read_csv(params$expected_de_table)
+
+plot.my.ma <- function(dge){
+  # Get results and DE decisions
+  res <- dge$table %>% 
+    tibble::rownames_to_column("Gene") %>%
+    mutate(Gene=sub("\\..*", "", Gene))
+  
+  # Join with expected_DE
+  highlighted <- expected_DE %>%
+    filter(Symbol %in% c("HMGA2", "POU2F3", "ASCL1")) %>%
+    select(Gene, Symbol) %>%
+    inner_join(res, by = "Gene")
+  
+  dges <- decideTests(dge)
+  
+  # Add DE status to results
+  res$DE <- as.factor(dges[,1])  # Assuming single contrast
+  
+  # Subsets
+  res_nonDE <- res %>% filter(DE == 0)
+  res_DE <- res %>% filter(DE != 0)
+  # MA plot
+  ggplot() +
+    geom_point(data = res_nonDE, aes(x = logCPM, y = logFC), color = "gray", alpha = 0.4) +
+    geom_point(data = res_DE, aes(x = logCPM, y = logFC, color = DE), alpha = 0.6) +
+    scale_color_manual(values = c("-1" = "blue", "1" = "red")) +
+    geom_point(data = highlighted, aes(x = logCPM, y = logFC), color = "yellow", shape = 21, fill = NA, size = 2, stroke = 1) +
+    geom_text_repel(data = highlighted, aes(x = logCPM, y = logFC, label = Symbol), size = 3, max.overlaps = 100) +
+    geom_hline(yintercept = 0, linetype = "dashed", color = "gray") +
+    labs(x = "Average log CPM", y = "log₂ Fold Change", color = "DE Status") +
+    theme_minimal()
+}
+ont_sc.dge_human.list %>% map(plot.my.ma) %>% patchwork::wrap_plots(ncol=3, guides='collect')
+ont_sn.dge_human.list %>% map(plot.my.ma) %>% patchwork::wrap_plots(ncol=3, guides='collect')
+pb_sc.dge_human.list %>% map(plot.my.ma) %>% patchwork::wrap_plots(ncol=3, guides='collect')
+pb_sn.dge_human.list %>% map(plot.my.ma) %>% patchwork::wrap_plots(ncol=3, guides='collect')
+```
+
 ### Cross-platform comparison (upset)
 ```{r upset plot function}
 library(ComplexUpset)
-complex_upset_plot <- function(lst, bulk.any = NULL, bulk.all = NULL) {
+complex_upset_plot <- function(lst, bulk.any = NULL, bulk.all = NULL, retained_feature_set=NULL) {
   # apply decideTests to each list element
   DEGs <- lapply(lst, function(x) {
     x <- x %>% decideTests()
@@ -810,6 +1154,12 @@ complex_upset_plot <- function(lst, bulk.any = NULL, bulk.all = NULL) {
   binary_matrix <- long_df %>%
     mutate(present = 1) %>%
     pivot_wider(names_from = ind, values_from = present, values_fill = 0)
+  
+  if(!is.null(retained_feature_set)){
+    binary_matrix$values <- sub("\\..*", "", binary_matrix$values)
+    retained_feature_set <- sub("\\..*", "", retained_feature_set)
+    binary_matrix <- binary_matrix %>% filter(values %in% retained_feature_set)
+  }
   
   binary_matrix$`Bulk DE any` <- binary_matrix$`Bulk DE any` %>% as.logical()
   binary_matrix$`Bulk DE all` <- binary_matrix$`Bulk DE all` %>% as.logical()
@@ -834,9 +1184,9 @@ complex_upset_plot <- function(lst, bulk.any = NULL, bulk.all = NULL) {
         mapping = aes(fill = `Bulk DE`)
       ) + scale_fill_manual(
                 values = c(
-                  "Not DE in any bulk dataset" = "grey",
-                  "DE in any bulk dataset" = "#84d28e", 
-                  "DE in all bulk datasets" = "#27ca0b"
+                  "Not DE in any bulk dataset" = "#B67272",
+                  "DE in any bulk dataset" = "grey", 
+                  "DE in all bulk datasets" = "#1a4f07"
                 )
             ) + theme(legend.position = "none")
     ),
@@ -849,9 +1199,9 @@ complex_upset_plot <- function(lst, bulk.any = NULL, bulk.all = NULL) {
             position = 'right',
         )  + scale_fill_manual(
                 values = c(
-                  "Not DE in any bulk dataset" = "grey",
-                  "DE in any bulk dataset" = "#84d28e", 
-                  "DE in all bulk datasets" = "#27ca0b"
+                  "Not DE in any bulk dataset" = "#B67272",
+                  "DE in any bulk dataset" = "grey", 
+                  "DE in all bulk datasets" = "#1a4f07"
                 )
             ) 
     ),
@@ -867,17 +1217,28 @@ complex_upset_plot <- function(lst, bulk.any = NULL, bulk.all = NULL) {
 
 ```{r upset plot dge human,  fig.height=10, fig.width=8}
 # Upset plot
-
-bulk_rst <- readRDS("/home/users/allstaff/you.yu/LongBench/analysis/workflow/rmarkdown/DEG_DTE.rds")
 lst <- list(
   "ONT SC" = ont_sc.dge_human.list$AvsL.DE,
   "ONT SN" = ont_sn.dge_human.list$AvsL.DE,
   "PacBio SC" = pb_sc.dge_human.list$AvsL.DE,
   "PacBio SN" = pb_sn.dge_human.list$AvsL.DE
 )
-bulk.any <- bulk_rst$AvsL.DEG.any
-bulk.all <- bulk_rst$AvsL.DEG.all
-p1 <- complex_upset_plot(lst, bulk.any, bulk.all)$plot + ggtitle("SCLC_A vs LUAD") + theme(plot.title = element_text(size =20))
+bulk.any <- bulk_de_rds$AvsL.DEG.any
+bulk.all <- bulk_de_rds$AvsL.DEG.all
+retained_feature_set <- gene_discovery %>%
+      left_join(
+        bulk_ident_rds$gene_discovery %>%
+          mutate(bulk.n = Illumina + `ONT cDNA` + PacBio + `ONT dRNA`) %>%
+          select(gene_id, bulk.n),
+        by = c("gene_id" = "gene_id")
+      ) %>% 
+  filter(`ONT SC` & `ONT SN` & `PacBio SC` & `PacBio SN` & bulk.n==4) %>% 
+  pull(gene_id)
+
+# fill na as 0 in bulk.n
+df$bulk.n[is.na(df$bulk.n)] <- 0
+# df <- df%>% mutate(bulk.n = as.factor(bulk.n))
+p1 <- complex_upset_plot(lst, bulk.any, bulk.all, retained_feature_set)$plot + ggtitle("SCLC_A vs LUAD") + theme(plot.title = element_text(size =20))
 mat.AvsL.DGE <- complex_upset_plot(lst, bulk.any, bulk.all)$matrix
 
 lst <- list(
@@ -886,9 +1247,9 @@ lst <- list(
   "PacBio SC" = pb_sc.dge_human.list$PvsL.DE,
   "PacBio SN" = pb_sn.dge_human.list$PvsL.DE
 )
-bulk.any <- bulk_rst$PvsL.DEG.any
-bulk.all <- bulk_rst$PvsL.DEG.all
-p2 <- complex_upset_plot(lst, bulk.any, bulk.all)$plot + ggtitle("SCLC_P vs LUAD") + theme(plot.title = element_text(size = 20))
+bulk.any <- bulk_de_rds$PvsL.DEG.any
+bulk.all <- bulk_de_rds$PvsL.DEG.all
+p2 <- complex_upset_plot(lst, bulk.any, bulk.all, retained_feature_set)$plot + ggtitle("SCLC_P vs LUAD") + theme(plot.title = element_text(size = 20))
 mat.PvsL.DGE <- complex_upset_plot(lst, bulk.any, bulk.all)$matrix
 
 lst <- list(
@@ -897,21 +1258,155 @@ lst <- list(
   "PacBio SC" = pb_sc.dge_human.list$AvsP.DE,
   "PacBio SN" = pb_sn.dge_human.list$AvsP.DE
 )
-bulk.any <- bulk_rst$AvsP.DEG.any
-bulk.all <- bulk_rst$AvsP.DEG.all
-p3 <- complex_upset_plot(lst, bulk.any, bulk.all)$plot + ggtitle("SCLC_A vs SCLC_P") + theme(plot.title = element_text(size = 20))
+bulk.any <- bulk_de_rds$AvsP.DEG.any
+bulk.all <- bulk_de_rds$AvsP.DEG.all
+p3 <- complex_upset_plot(lst, bulk.any, bulk.all, retained_feature_set)$plot + ggtitle("SCLC_A vs SCLC_P") + theme(plot.title = element_text(size = 20))
 mat.AvsP.DGE <- complex_upset_plot(lst, bulk.any, bulk.all)$matrix
 (p1 / p2 / p3) + patchwork::plot_annotation(
   title = "DGE Human",
   theme = theme(plot.title = element_text(size =25))
 )
 ```
+```{r explore the SC specific DE,  fig.height=5, fig.width=5}
+plot_d <- tibble(
+  gene = pb_sc.dge_human.list$AvsP.DE$genes %>% rownames,
+  AveLogCPM =  pb_sc.dge_human.list$AvsP.DE$AveLogCPM,
+  Categories = case_when(gene %in% bulk.all~"common",
+                         gene %in% bulk.any~"any",
+                         TRUE~"Not in"),
+  DE=pb_sc.dge_human.list$AvsP.DE %>% decideTests() %>% unname
+) %>% filter(DE != 0 )
 
+# plot 
+p1 <- ggplot(plot_d %>% filter(DE==1), aes(x = Categories, y = AveLogCPM)) +
+  geom_boxplot() +
+  scale_fill_manual(values = c("-1" = "blue", "0" = "grey", "1" = "red")) +
+  theme_minimal() +
+  labs(fill = "DE") + ggtitle("Up regulated")
+
+p2 <- ggplot(plot_d %>% filter(DE==-1), aes(x = Categories, y = AveLogCPM)) +
+  geom_boxplot() +
+  scale_fill_manual(values = c("-1" = "blue", "0" = "grey", "1" = "red")) +
+  theme_minimal() +
+  labs(fill = "DE")+ ggtitle("Down regulated")
+p1 | p2
+
+```
+```{r}
+library(Glimma)
+glimmaMDS(pb_sc.gene.dge)
+```
+
+### Sup figure: Protein coding gene only
+```{r upset plot dge human (Protein-coding),  fig.height=10, fig.width=8}
+# Upset plot
+lst <- list(
+  "ONT SC" = ont_sc.dge_human.list$AvsL.DE,
+  "ONT SN" = ont_sn.dge_human.list$AvsL.DE,
+  "PacBio SC" = pb_sc.dge_human.list$AvsL.DE,
+  "PacBio SN" = pb_sn.dge_human.list$AvsL.DE
+)
+bulk.any <- bulk_de_rds$AvsL.DEG.any
+bulk.all <- bulk_de_rds$AvsL.DEG.all
+retained_feature_set <- gene_discovery %>%
+      left_join(
+        bulk_ident_rds$gene_discovery %>%
+          mutate(bulk.n = Illumina + `ONT cDNA` + PacBio + `ONT dRNA`) %>%
+          select(gene_id, bulk.n),
+        by = c("gene_id" = "gene_id")
+      ) %>% 
+  filter(`ONT SC` & `ONT SN` & `PacBio SC` & `PacBio SN` & bulk.n==4 & biotype=="protein_coding") %>% 
+  pull(gene_id)
+
+# fill na as 0 in bulk.n
+df$bulk.n[is.na(df$bulk.n)] <- 0
+# df <- df%>% mutate(bulk.n = as.factor(bulk.n))
+p1 <- complex_upset_plot(lst, bulk.any, bulk.all, retained_feature_set)$plot + ggtitle("SCLC_A vs LUAD") + theme(plot.title = element_text(size =20))
+mat.AvsL.DGE <- complex_upset_plot(lst, bulk.any, bulk.all)$matrix
+
+lst <- list(
+  "ONT SC" = ont_sc.dge_human.list$PvsL.DE,
+  "ONT SN" = ont_sn.dge_human.list$PvsL.DE,
+  "PacBio SC" = pb_sc.dge_human.list$PvsL.DE,
+  "PacBio SN" = pb_sn.dge_human.list$PvsL.DE
+)
+bulk.any <- bulk_de_rds$PvsL.DEG.any
+bulk.all <- bulk_de_rds$PvsL.DEG.all
+p2 <- complex_upset_plot(lst, bulk.any, bulk.all, retained_feature_set)$plot + ggtitle("SCLC_P vs LUAD") + theme(plot.title = element_text(size = 20))
+mat.PvsL.DGE <- complex_upset_plot(lst, bulk.any, bulk.all)$matrix
+
+lst <- list(
+  "ONT SC" = ont_sc.dge_human.list$AvsP.DE,
+  "ONT SN" = ont_sn.dge_human.list$AvsP.DE,
+  "PacBio SC" = pb_sc.dge_human.list$AvsP.DE,
+  "PacBio SN" = pb_sn.dge_human.list$AvsP.DE
+)
+bulk.any <- bulk_de_rds$AvsP.DEG.any
+bulk.all <- bulk_de_rds$AvsP.DEG.all
+p3 <- complex_upset_plot(lst, bulk.any, bulk.all, retained_feature_set)$plot + ggtitle("SCLC_A vs SCLC_P") + theme(plot.title = element_text(size = 20))
+mat.AvsP.DGE <- complex_upset_plot(lst, bulk.any, bulk.all)$matrix
+(p1 / p2 / p3) + patchwork::plot_annotation(
+  title = "DGE Human (Protein coding only)",
+  theme = theme(plot.title = element_text(size =25))
+)
+```
+### Sup figure: Non Protein coding gene only
+```{r upset plot dge human (Non-Protein-coding),  fig.height=10, fig.width=8}
+# Upset plot
+lst <- list(
+  "ONT SC" = ont_sc.dge_human.list$AvsL.DE,
+  "ONT SN" = ont_sn.dge_human.list$AvsL.DE,
+  "PacBio SC" = pb_sc.dge_human.list$AvsL.DE,
+  "PacBio SN" = pb_sn.dge_human.list$AvsL.DE
+)
+bulk.any <- bulk_de_rds$AvsL.DEG.any
+bulk.all <- bulk_de_rds$AvsL.DEG.all
+retained_feature_set <- gene_discovery %>%
+      left_join(
+        bulk_ident_rds$gene_discovery %>%
+          mutate(bulk.n = Illumina + `ONT cDNA` + PacBio + `ONT dRNA`) %>%
+          select(gene_id, bulk.n),
+        by = c("gene_id" = "gene_id")
+      ) %>% 
+  filter(`ONT SC` & `ONT SN` & `PacBio SC` & `PacBio SN` & bulk.n==4 & biotype!="protein_coding") %>% 
+  pull(gene_id)
+
+# fill na as 0 in bulk.n
+df$bulk.n[is.na(df$bulk.n)] <- 0
+# df <- df%>% mutate(bulk.n = as.factor(bulk.n))
+p1 <- complex_upset_plot(lst, bulk.any, bulk.all, retained_feature_set)$plot + ggtitle("SCLC_A vs LUAD") + theme(plot.title = element_text(size =20))
+mat.AvsL.DGE <- complex_upset_plot(lst, bulk.any, bulk.all)$matrix
+
+lst <- list(
+  "ONT SC" = ont_sc.dge_human.list$PvsL.DE,
+  "ONT SN" = ont_sn.dge_human.list$PvsL.DE,
+  "PacBio SC" = pb_sc.dge_human.list$PvsL.DE,
+  "PacBio SN" = pb_sn.dge_human.list$PvsL.DE
+)
+bulk.any <- bulk_de_rds$PvsL.DEG.any
+bulk.all <- bulk_de_rds$PvsL.DEG.all
+p2 <- complex_upset_plot(lst, bulk.any, bulk.all, retained_feature_set)$plot + ggtitle("SCLC_P vs LUAD") + theme(plot.title = element_text(size = 20))
+mat.PvsL.DGE <- complex_upset_plot(lst, bulk.any, bulk.all)$matrix
+
+lst <- list(
+  "ONT SC" = ont_sc.dge_human.list$AvsP.DE,
+  "ONT SN" = ont_sn.dge_human.list$AvsP.DE,
+  "PacBio SC" = pb_sc.dge_human.list$AvsP.DE,
+  "PacBio SN" = pb_sn.dge_human.list$AvsP.DE
+)
+bulk.any <- bulk_de_rds$AvsP.DEG.any
+bulk.all <- bulk_de_rds$AvsP.DEG.all
+p3 <- complex_upset_plot(lst, bulk.any, bulk.all, retained_feature_set)$plot + ggtitle("SCLC_A vs SCLC_P") + theme(plot.title = element_text(size = 20))
+mat.AvsP.DGE <- complex_upset_plot(lst, bulk.any, bulk.all)$matrix
+(p1 / p2 / p3) + patchwork::plot_annotation(
+  title = "DGE Human (Non-Protein-coding only)",
+  theme = theme(plot.title = element_text(size =25))
+)
+```
 
 # Differential transcript expression
 ```{r}
 DTE.edgeR_human <- function(dge, norm.method="TMM") {
-
   if (!is.null(norm.method)) {
      dge <- calcNormFactors(dge, method = norm.method)
   }
@@ -933,7 +1428,19 @@ DTE.edgeR_human <- function(dge, norm.method="TMM") {
     AvsP.DE = AvsP.QLF.test
   )
 }
+```
 
+
+```{r}
+design <- readRDS(
+  system.file("RNAseq123/design.rds", package = "Glimma"))
+contr.matrix <- readRDS(
+  system.file("RNAseq123/contr.matrix.rds", package = "Glimma"))
+dge <- readRDS(system.file("RNAseq123/dge.rds", package = "Glimma"))
+dge <- estimateDisp(dge, design)
+gfit <- glmQLFit(dge, design)
+glrt <- glmQLFTest(gfit, design, contrast = contr.matrix)
+glimmaMA(glrt) # glimmaMA(glrt, dge = dge) to use edgeR results
 ```
 
 
@@ -969,8 +1476,8 @@ lst <- list(
   "PacBio SC" = pb_sc.scl_dte_human.list$AvsL.DE,
   "PacBio SN" = pb_sn.scl_dte_human.list$AvsL.DE
 )
-bulk.any <- bulk_rst$AvsL.DTE.any
-bulk.all <- bulk_rst$AvsL.DTE.all
+bulk.any <- bulk_de_rds$AvsL.DTE.any
+bulk.all <- bulk_de_rds$AvsL.DTE.all
 p1 <- complex_upset_plot(lst, bulk.any, bulk.all)$plot + ggtitle("SCLC_A vs LUAD") + theme(plot.title = element_text(size = 20))
 mat.AvsL.DTE <- complex_upset_plot(lst, bulk.any, bulk.all)$matrix
 
@@ -980,8 +1487,8 @@ lst <- list(
   "PacBio SC" = pb_sc.scl_dte_human.list$PvsL.DE,
   "PacBio SN" = pb_sn.scl_dte_human.list$PvsL.DE
 )
-bulk.any <- bulk_rst$PvsL.DTE.any
-bulk.all <- bulk_rst$PvsL.DTE.all
+bulk.any <- bulk_de_rds$PvsL.DTE.any
+bulk.all <- bulk_de_rds$PvsL.DTE.all
 p2 <- complex_upset_plot(lst, bulk.any, bulk.all)$plot + ggtitle("SCLC_P vs LUAD") + theme(plot.title = element_text(size = 20))
 mat.PvsL.DTE <- complex_upset_plot(lst, bulk.any, bulk.all)$matrix
 
@@ -991,8 +1498,8 @@ lst <- list(
   "PacBio SC" = pb_sc.scl_dte_human.list$AvsP.DE,
   "PacBio SN" = pb_sn.scl_dte_human.list$AvsP.DE
 )
-bulk.any <- bulk_rst$AvsP.DTE.any
-bulk.all <- bulk_rst$AvsP.DTE.all
+bulk.any <- bulk_de_rds$AvsP.DTE.any
+bulk.all <- bulk_de_rds$AvsP.DTE.all
 p3 <- complex_upset_plot(lst, bulk.any, bulk.all)$plot + ggtitle("SCLC_A vs SCLC_P") + theme(plot.title = element_text(size = 20))
 mat.AvsP.DTE <- complex_upset_plot(lst, bulk.any, bulk.all)$matrix
 
@@ -1004,6 +1511,8 @@ p1 / p2 / p3 + patchwork::plot_annotation(
 
 
 
+
+# Unincluded analysis
 ## Understand the difference (SCLC_A vs LUAD)
 ```{r}
 volcano_plot <- function(rst,  main="Volcano plot", xlab="M", ylab="-10*log(P-val)", highligh_gene = NULL) {

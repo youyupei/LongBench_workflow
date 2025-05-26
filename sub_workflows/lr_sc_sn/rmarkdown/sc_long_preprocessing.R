@@ -33,7 +33,7 @@ library(tibble)
 #'
 load_flames_gene_quant <- function(fn_flames_gene_quant, project = "singlecell", min.cells = 3, min.features = 0, assay = "Gene_quant") {
   counts <- read.csv(fn_flames_gene_quant, row.names = 1)
-  
+  counts[is.na(counts)] <- 0
   # convert gene id to gene names
   ensembl <- biomaRt::useMart("ensembl", dataset = "hsapiens_gene_ensembl") # for human, change to "mmusculus_gene_ensembl" for mouse
   ensembl_genes <- biomaRt::getBM(attributes = c("ensembl_gene_id", "external_gene_name"), mart = ensembl)

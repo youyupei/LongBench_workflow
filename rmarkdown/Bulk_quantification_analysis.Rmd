@@ -157,13 +157,40 @@ human.G.Tx.map$tx_count <- human.G.Tx.map %>% calcTxNum
 bulk.meta <- read.csv(params$bulk_meta)
 rownames(bulk.meta) <- bulk.meta$sample
 
+# Normalisation functions
+get_tpm <- function(dge) {
+    counts <- dge$counts
+    len <- dge$gene$EffectiveLength
+    stopifnot(length(len) == nrow(counts))
+    tpm <- apply(counts, 2, function(col) {
+      rpk <- col / len
+      rpk / sum(rpk) * 1e6
+    })
+    
+  return(tpm)
+  }
+  
+get_tpm_raw_txlength <- function(dge) {
+    counts <- dge$counts
+    len <- dge$gene$Length
+    stopifnot(length(len) == nrow(counts))
+    tpm <- apply(counts, 2, function(col) {
+      rpk <- col / len
+      rpk / sum(rpk) * 1e6
+    })
+    
+  return(tpm)
+}
+
 # SR salmon
 ill_bulk.dge <- get_dge_from_salmon(params$ill_bulk_salmon_dir, ".*/")
-
 # LR oarfish
 ont_bulk.dge.oarfish <- get_dge_from_oarfish(params$ont_bulk_oarfish_dir, ".*/")
+ont_bulk.dge.oarfish$genes$EffectiveLength <- 1
 pb_bulk.dge.oarfish <- get_dge_from_oarfish(params$pb_bulk_oarfish_dir, ".*/")
+pb_bulk.dge.oarfish$genes$EffectiveLength <- 1
 ont_drna.dge.oarfish <- get_dge_from_oarfish(params$ont_drnd_oarfish_dir, ".*/")
+ont_drna.dge.oarfish$genes$EffectiveLength <- 1
 ```
 
 # Part1: Identification analysis:
@@ -291,7 +318,7 @@ overdisp_boxplot <- function(filter_func, title, breaks= c(0,1,5,10,20,40, Inf),
 }
 
 p1 <- overdisp_boxplot(is.human, "Human transcript", legend = TRUE)
-p2 <- overdisp_boxplot(function(x) {is.sequins(x) | is.sirv_or_ercc(x)}, title = "Spike-ins", legend = TRUE)
+p2 <- overdisp_boxplot(function(x) {is.sequins(x) | is.sirv_or_ercc(x)}, breaks= c(0,1,3,10,20, Inf), title = "Spike-ins", legend = TRUE)
 
 
 {
@@ -392,7 +419,7 @@ p2 <- overdisp_boxplot_length(function(x) {
 
 
 ## Filter by commonly identified features
-### 2. Filter out lowly expressed genes and transcript using `filterByExpr` for each dataset, using defaut parameters
+### 2. Filter out lowly expressed genes and transcript using `filterByExpr` for each dataset, using min.count=5 for tx parameters
 
 ```{r transcript filtering for DE}
 # Transcript
@@ -403,6 +430,7 @@ ill_bulk.dge <- ill_bulk.dge[common_tx, ]
 ont_bulk.dge.oarfish <- ont_bulk.dge.oarfish[common_tx, ]
 pb_bulk.dge.oarfish <- pb_bulk.dge.oarfish[common_tx, ]
 ont_drna.dge.oarfish <- ont_drna.dge.oarfish[common_tx, ]
+
 
 ## 2. filter by expression
 keep <- filterByExpr(ill_bulk.dge, group = ill_bulk.dge$samples$group, min.count=5) &
@@ -417,17 +445,16 @@ pb_bulk.dge.oarfish <- pb_bulk.dge.oarfish[keep, ]
 ont_drna.dge.oarfish <- ont_drna.dge.oarfish[keep, ]
 ```
 
-# Analysis: Raw count vs Transcript length scatter (H146)
-```{r, fig.height=5, fig.width=10}
-plot_raw_count_vs_length <- function(dge, title) {
-  dge <- dge[is.human(dge), ]
+# Analysis: Raw count vs Transcript length scatter
+```{r Raw count vs Transcript length scatter(human), fig.height=10, fig.width=10}
+plot_raw_count_vs_length <- function(dge, title, filter_func=is.human) {
+  dge <- dge[filter_func(dge), ]
    plot_d <- tibble(
     Length = rep(dge$genes$Length, times = ncol(dge$counts)) %>% log10,  # Replicate Length values for each sample
     Sample = rep(colnames(dge$counts), each = nrow(dge$counts)),  # Repeat sample names for each gene
-    counts = log10(as.vector(dge$counts))  # Flatten counts into a vector and take log10
+    counts = log10(as.vector(dge$counts))  # Flatten counts into a vector and take log10, 0 will go to -Inf
   ) %>%
-    filter(counts > 0)   %>% 
-    filter(counts > 0)  # Keep only positive counts
+    filter(counts > 0)
 
   # Add regression line with confidence interval and correlation
   p <- ggplot(plot_d %>% slice_sample(n = 1000), aes(x = Length, y = counts)) +
@@ -441,59 +468,137 @@ plot_raw_count_vs_length <- function(dge, title) {
   spearman_cor <- cor(plot_d$Length, plot_d$counts, method = "spearman")  # Spearman correlation
   
   # Annotate both Pearson and Spearman correlation values on the plot
-  p <- p + annotate("text", x = Inf, y = Inf, label = paste0("R (Pearson) = ", round(pearson_cor, 2), "\nR (Spearman) = ", round(spearman_cor, 2)), 
+  p <- p + annotate("text", x = Inf, y = Inf, label = paste0("R (Pearson) = ", round(pearson_cor, 4), "\nR (Spearman) = ", round(spearman_cor, 4)), 
                     hjust = 1.1, vjust = 2, size = 5)
 
   p
 }
 
 common_tx <- Reduce(intersect, lapply(list(ill_bulk.dge, ont_bulk.dge.oarfish, pb_bulk.dge.oarfish, ont_drna.dge.oarfish), rownames))
-p1 <- plot_raw_count_vs_length(ill_bulk.dge[common_tx,], "Illumina BULK")
-p2 <- plot_raw_count_vs_length(ont_bulk.dge.oarfish[common_tx,], "ONT BULK")
-p3 <- plot_raw_count_vs_length(pb_bulk.dge.oarfish[common_tx,], "PacBio BULK")
+p1 <- plot_raw_count_vs_length(ill_bulk.dge[common_tx,], "Illumina")
+ill_bulk.dge.tmp <- ill_bulk.dge[common_tx, ]
+p1.tpm <- plot_raw_count_vs_length(  {
+    x <- ill_bulk.dge[common_tx, ]
+    x$counts <- get_tpm(x)
+    x
+  },
+ "Illumina Length-adjusted (Salmon Effective Length)") + ylab("log10(TPM)") +
+  scale_x_continuous()
+p1.tpm.raw.tx.len <- plot_raw_count_vs_length(  {
+    x <- ill_bulk.dge[common_tx, ]
+    x$counts <- get_tpm_raw_txlength(x)
+    x
+  },
+ "Illumina Length-adjusted (Raw tx length)")  + ylab("log10(TPM)") +
+  scale_x_continuous()
+p2 <- plot_raw_count_vs_length(ont_bulk.dge.oarfish[common_tx,], "ONT cDNA")
+p2.tpm <- plot_raw_count_vs_length({
+    x <- ont_bulk.dge.oarfish[common_tx,]
+    x$counts <- get_tpm(x)
+    x
+  }, "ONT cDNA Length-adjusted")
+p3 <- plot_raw_count_vs_length(pb_bulk.dge.oarfish[common_tx,], "PacBio")
+p3.tpm <- plot_raw_count_vs_length({
+    x <- pb_bulk.dge.oarfish[common_tx,]
+    x$counts <- get_tpm(x)
+    x
+  }, "PacBio Length-adjusted")
 p4 <- plot_raw_count_vs_length(ont_drna.dge.oarfish[common_tx,], "ONT dRNA")
+p4.tpm <- plot_raw_count_vs_length({
+    x <- ont_drna.dge.oarfish[common_tx,]
+    x$counts <- get_tpm(x)
+    x
+  }, "ONT dRNA Length-adjusted")
 
-grid.arrange(p1, p2, p3, p4, ncol=2)
+grid.arrange(p1, p1.tpm, p2, p3, p4, ncol=2, top = "human transcripts")
 ```
+## SIRV
+```{r Raw count vs Transcript length scatter(SIRV), fig.height=10, fig.width=10}
 
-
+p1 <- plot_raw_count_vs_length(ill_bulk.dge[common_tx,], "Illumina" ,filter_func=is.sirv_E0)
+ill_bulk.dge.tmp <- ill_bulk.dge[common_tx, ]
+p1.tpm <- plot_raw_count_vs_length(  {
+    x <- ill_bulk.dge[common_tx, ]
+    x$counts <- get_tpm(x)
+    x
+  },
+ "Illumina Length-adjusted (Salmon Effective length)",filter_func=is.sirv_E0) +
+  ylab("log10(TPM)") +
+  scale_x_continuous()
+p1.tpm.raw.tx.len <- plot_raw_count_vs_length(  {
+    x <- ill_bulk.dge[common_tx, ]
+    x$counts <- get_tpm_raw_txlength(x)
+    x
+  },
+ "Illumina Length-adjusted (Raw tx length)",filter_func=is.sirv_E0) +
+  ylab("log10(TPM)") +
+  scale_x_continuous()
+p2 <- plot_raw_count_vs_length(ont_bulk.dge.oarfish[common_tx,], "ONT cDNA",filter_func=is.sirv_E0)
+p3 <- plot_raw_count_vs_length(pb_bulk.dge.oarfish[common_tx,], "PacBio",filter_func=is.sirv_E0)
+p4 <- plot_raw_count_vs_length(ont_drna.dge.oarfish[common_tx,], "ONT dRNA",filter_func=is.sirv_E0)
+grid.arrange(p1, p1.tpm , p1.tpm.raw.tx.len, p2, p3, p4, ncol=2)
+```
 # Spike in quantification
 ## PLOT: Spike-in transcript length distribution
-```{r, fig.height=5, fig.width=6}
+```{r, fig.height=3, fig.width=3}
 # sequins transcript length
 sequins.gt <- read_tsv(params$sequins_tsv)
+# 
+# # plot the distribution of the sequins transcript length, mark each quartile with lines
+# p1 <- ggplot(sequins.gt, aes(x = LENGTH)) +
+#   geom_histogram(binwidth = 100, fill="grey", color = "black", size=0.1) +
+#   geom_vline(xintercept = quantile(sequins.gt$LENGTH, c(0.25, 0.5, 0.75)), linetype = "dotted", color="red", size=0.4) +
+#   labs(title = "Sequins transcript length distribution", x = "Transcript length", y = "Count") +
+#   theme_minimal()
+# 
+# ercc.len <- ont_bulk.dge.oarfish[is.ercc(ont_bulk.dge.oarfish),]$genes$Length
+# plot_d <- data.frame('LENGTH'=ercc.len, row.names = NULL)
+# # plot the distribution of the sequins transcript length, mark each quartile with lines
+# p2 <- ggplot(plot_d, aes(x = LENGTH)) +
+#   geom_histogram(binwidth = 100, fill="grey", color = "black", size=0.1) +
+#   geom_vline(xintercept = quantile(plot_d$LENGTH, c(0.25, 0.5, 0.75)), linetype = "dotted", color="red", size=0.4) +
+#   labs(title = "ERCC transcript length distribution", x = "Transcript length", y = "Count") +
+#   theme_minimal()
+# 
+# 
+# sirv.len <- ont_bulk.dge.oarfish[is.sirv_all(ont_bulk.dge.oarfish),]$genes$Length
+# plot_d <- data.frame('LENGTH'=sirv.len, row.names = NULL)
+# # plot the distribution of the sequins transcript length, mark each quartile with lines
+# p3 <- ggplot(plot_d, aes(x = LENGTH)) +
+#   geom_histogram(binwidth = 100, fill="grey", color = "black", size=0.1) +
+#   geom_vline(xintercept = quantile(plot_d$LENGTH, c(0.25, 0.5, 0.75)), linetype = "dotted", color="red", size=0.4) +
+#   labs(title = "SIRV transcript length distribution", x = "Transcript length", y = "Count") +
+#   theme_minimal()
+# 
+# p1 <- p1 + xlim(0, 10000)
+# p2 <- p2 + xlim(0, 10000)
+# p3 <- p3 + xlim(0, 10000)
+# 
+# p1 / p2 / p3
 
-# plot the distribution of the sequins transcript length, mark each quartile with lines
-p1 <- ggplot(sequins.gt, aes(x = LENGTH)) +
-  geom_histogram(binwidth = 100, fill="grey", color = "black", size=0.1) +
-  geom_vline(xintercept = quantile(sequins.gt$LENGTH, c(0.25, 0.5, 0.75)), linetype = "dotted", color="red", size=0.4) +
-  labs(title = "Sequins transcript length distribution", x = "Transcript length", y = "Count") +
-  theme_minimal()
+# Prepare data
+seq_d <- data.frame(LENGTH = sequins.gt$LENGTH, type = "Sequins")
+ercc_d <- data.frame(LENGTH = ont_bulk.dge.oarfish[is.ercc(ont_bulk.dge.oarfish),]$genes$Length, type = "ERCC")
+sirv_d <- data.frame(LENGTH = ont_bulk.dge.oarfish[is.sirv_E0(ont_bulk.dge.oarfish),]$genes$Length, type = "SIRV E0")
+sirv_long_d <- data.frame(LENGTH = ont_bulk.dge.oarfish[is.long_sirv(ont_bulk.dge.oarfish),]$genes$Length, type = "long SIRV")
 
-ercc.len <- ont_bulk.dge.oarfish[is.ercc(ont_bulk.dge.oarfish),]$genes$Length
-plot_d <- data.frame('LENGTH'=ercc.len, row.names = NULL)
-# plot the distribution of the sequins transcript length, mark each quartile with lines
-p2 <- ggplot(plot_d, aes(x = LENGTH)) +
-  geom_histogram(binwidth = 100, fill="grey", color = "black", size=0.1) +
-  geom_vline(xintercept = quantile(plot_d$LENGTH, c(0.25, 0.5, 0.75)), linetype = "dotted", color="red", size=0.4) +
-  labs(title = "ERCC transcript length distribution", x = "Transcript length", y = "Count") +
-  theme_minimal()
+# Combine and set factor levels
+plot_d <- rbind(seq_d, ercc_d, sirv_d, sirv_long_d)
+plot_d$type <- factor(plot_d$type, levels = c("Sequins", "ERCC", "SIRV E0", "long SIRV"))
 
+# Plot
+library(ggplot2)
+p <- ggplot(plot_d, aes(x = type, y = LENGTH, fill = type)) +
+  geom_boxplot(outlier.size = 0.5) +
+  scale_y_continuous(limits = c(0, 10000)) +
+  labs(title = "Transcript Length Distributions", x = "Transcript Type", y = "Transcript Length") +
+  theme_minimal() +
+  theme(legend.position = "none") + 
+  scale_fill_viridis_d(option="D")  +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+  
 
-sirv.len <- ont_bulk.dge.oarfish[is.sirv_all(ont_bulk.dge.oarfish),]$genes$Length
-plot_d <- data.frame('LENGTH'=sirv.len, row.names = NULL)
-# plot the distribution of the sequins transcript length, mark each quartile with lines
-p3 <- ggplot(plot_d, aes(x = LENGTH)) +
-  geom_histogram(binwidth = 100, fill="grey", color = "black", size=0.1) +
-  geom_vline(xintercept = quantile(plot_d$LENGTH, c(0.25, 0.5, 0.75)), linetype = "dotted", color="red", size=0.4) +
-  labs(title = "SIRV transcript length distribution", x = "Transcript length", y = "Count") +
-  theme_minimal()
-
-p1 <- p1 + xlim(0, 10000)
-p2 <- p2 + xlim(0, 10000)
-p3 <- p3 + xlim(0, 10000)
-
-p1 / p2 / p3
+p
 ```
 
 ## Sequins (Scatter plot of expected vs observed)
@@ -519,7 +624,7 @@ get_sequins_scatter_plot <- function(dge, figure_name, tx_len_norm = TRUE) {
     
     # Normalise observed data
     if (tx_len_norm) {
-        dge.sequins.norm <- dge.sequins$counts %>% as_tibble(rownames="NAME")  %>% mutate(across(where(is.numeric), ~ get_ltpm(.x, dge.sequins$gene$Length)))
+        dge.sequins.norm <- dge.sequins$counts %>% as_tibble(rownames="NAME")  %>% mutate(across(where(is.numeric), ~ get_ltpm(.x, dge.sequins$gene$EffectiveLength)))
     } else {
         dge.sequins.norm <- dge.sequins$counts %>% as_tibble(rownames="NAME")  %>% mutate(across(where(is.numeric), get_lcpm))
     }
@@ -588,7 +693,7 @@ get_sequins_scatter_plot <- function(dge, figure_name, tx_len_norm = TRUE) {
 cor.ill_bulk <- get_sequins_scatter_plot(ill_bulk.dge, figure_name = "Illumina", tx_len_norm = TRUE)
 cor.pb_bulk.oarfish <- get_sequins_scatter_plot(pb_bulk.dge.oarfish, figure_name = "Pacbio", tx_len_norm = FALSE)
 cor.ont_drna.oarfish <- get_sequins_scatter_plot(ont_drna.dge.oarfish, figure_name = "ONT dRNA", tx_len_norm = FALSE)
-cor.ont_bulk.oarfish <- get_sequins_scatter_plot(ont_bulk.dge.oarfish, figure_name = "ONT cDNA", tx_len_norm = TRUE)
+cor.ont_bulk.oarfish <- get_sequins_scatter_plot(ont_bulk.dge.oarfish, figure_name = "ONT cDNA", tx_len_norm = FALSE)
 
 
 list(
@@ -602,10 +707,6 @@ list(
 ### Plot: Combine quantiled states
 ```{r Plot: Combine quantiled states (Squins), fig.height=6, fig.width=10 }
 get_sequin_quartiled_states <- function(dge, sample_name, tx_len_norm = TRUE) {
-  # tx_len_norm <- TRUE
-  # dge <- ont_bulk.dge.oarfish
-  # sample_name <- "ONT BULK Sequins"
-
   dge <- dge[is.sequins(dge), ]
   dge.sequins <- dge[is.sequins(dge), ]
 
@@ -630,7 +731,7 @@ get_sequin_quartiled_states <- function(dge, sample_name, tx_len_norm = TRUE) {
   if (tx_len_norm) {
     dge.sequins.norm <- dge.sequins$counts %>%
       as_tibble(rownames = "NAME") %>%
-      mutate(across(where(is.numeric), ~ get_ltpm(.x, dge.sequins$gene$Length)))
+      mutate(across(where(is.numeric), ~ get_ltpm(.x, dge.sequins$genes$EffectiveLength)))
   } else {
     dge.sequins.norm <- dge.sequins$counts %>%
       as_tibble(rownames = "NAME") %>%
@@ -761,43 +862,43 @@ plot_df$cell_line_sample <- paste(plot_df$sample, plot_df$cell_line, sep = " - "
 # order the cell line sample level first by the sample then by the cell line
 plot_df$cell_line_sample <- factor(plot_df$cell_line_sample, levels = plot_df$cell_line_sample %>% unique() %>% sort())
 
-p1 <- plot_df %>%
-  filter(`Transcript length` == "All transcript") %>%
-  ggplot(aes(x = cell_line_sample, y = total_counts, fill = sample)) +
-  # bar plot
-  geom_bar(stat = "identity") +
-  # better color scheme
-  scale_fill_viridis_d() +
-  # minimal theme
-  theme_minimal() +
-  # remove the x axis labels
-  theme(
-    axis.text.x = element_blank(),
-    axis.title.x = element_blank(),
-    panel.grid.major = element_blank()
-#    panel.grid.minor = element_blank()
-  ) +
-  scale_fill_manual(values = color_palette[c("Illumina", "ONT_1", "ONT_2", "PacBio")] %>% unname()) +
-  # log the y axis
-  #scale_y_log10() +
-  labs(y="Total counts")
-
-p2 <- plot_df %>%
-  filter(`Transcript length` == "All transcript") %>%
-  ggplot(aes(x = cell_line_sample, y = Transcript_discovery, fill = sample)) +
-  # bar plot
-  geom_bar(stat = "identity") +
-  # minimal theme
-  theme_minimal() +
-  # remove the x axis labels
-  theme(
-    axis.text.x = element_blank(),
-    axis.title.x = element_blank(),
-    panel.grid.major = element_blank()
-#    panel.grid.minor = element_blank()
-  ) +
-  scale_fill_manual(values = color_palette[c("Illumina", "ONT_1", "ONT_2", "PacBio")] %>% unname()) +
-  labs(y="Transcripts discovery rate")
+# p1 <- plot_df %>%
+#   filter(`Transcript length` == "All transcript") %>%
+#   ggplot(aes(x = cell_line_sample, y = total_counts, fill = sample)) +
+#   # bar plot
+#   geom_bar(stat = "identity") +
+#   # better color scheme
+#   scale_fill_viridis_d() +
+#   # minimal theme
+#   theme_minimal() +
+#   # remove the x axis labels
+#   theme(
+#     axis.text.x = element_blank(),
+#     axis.title.x = element_blank(),
+#     panel.grid.major = element_blank()
+# #    panel.grid.minor = element_blank()
+#   ) +
+#   scale_fill_manual(values = color_palette[c("Illumina", "ONT_1", "ONT_2", "PacBio")] %>% unname()) +
+#   # log the y axis
+#   #scale_y_log10() +
+#   labs(y="Total counts")
+# 
+# p2 <- plot_df %>%
+#   filter(`Transcript length` == "All transcript") %>%
+#   ggplot(aes(x = cell_line_sample, y = Transcript_discovery, fill = sample)) +
+#   # bar plot
+#   geom_bar(stat = "identity") +
+#   # minimal theme
+#   theme_minimal() +
+#   # remove the x axis labels
+#   theme(
+#     axis.text.x = element_blank(),
+#     axis.title.x = element_blank(),
+#     panel.grid.major = element_blank()
+# #    panel.grid.minor = element_blank()
+#   ) +
+#   scale_fill_manual(values = color_palette[c("Illumina", "ONT_1", "ONT_2", "PacBio")] %>% unname()) +
+#   labs(y="Transcripts discovery rate")
 p3 <- plot_df %>%
   ggplot(aes(x = cell_line_sample, y = `Transcript length`, color = correlation, size = `mean square error` )) +
   geom_point() +
@@ -808,12 +909,8 @@ p3 <- plot_df %>%
   # rotate the x axis labels
   theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
   labs(x = "Samples")
-  
-p1 / (p2 + theme(legend.position = "none")) / p3 +
-  patchwork::plot_layout(
-    heights = c(2, 2, 1), 
-    guides = "collect"
-  ) & theme(plot.margin = unit(c(0, 1, 0, 1), "cm"))
+
+p3 
 ```
 
 ## ERCC
@@ -837,7 +934,7 @@ get_ercc_scatter_plot <- function(dge, figure_name, tx_len_norm = TRUE) {
     
     # Normalise observed data
     if (tx_len_norm) {
-        dge.ercc.norm <- dge.ercc$counts %>% as_tibble(rownames="NAME")  %>% mutate(across(where(is.numeric), ~ get_ltpm(.x, dge.ercc$gene$Length)))
+        dge.ercc.norm <- dge.ercc$counts %>% as_tibble(rownames="NAME")  %>% mutate(across(where(is.numeric), ~ get_ltpm(.x, dge.ercc$genes$EffectiveLength)))
     } else {
         dge.ercc.norm <- dge.ercc$counts %>% as_tibble(rownames="NAME")  %>% mutate(across(where(is.numeric), get_lcpm))
     }
@@ -947,7 +1044,7 @@ get_ercc_quartiled_states <- function(dge, sample_name, tx_len_norm = TRUE) {
   if (tx_len_norm) {
     dge.ercc.norm <- dge.ercc$counts %>%
       as_tibble(rownames = "NAME") %>%
-      mutate(across(where(is.numeric), ~ get_ltpm(.x, dge.ercc$gene$Length)))
+      mutate(across(where(is.numeric), ~ get_ltpm(.x, dge.ercc$genes$EffectiveLength)))
   } else {
     dge.ercc.norm <- dge.ercc$counts %>%
       as_tibble(rownames = "NAME") %>%
@@ -1145,7 +1242,7 @@ get_sirv_scatter_plot <- function(dge, figure_name, tx_len_norm = TRUE, filter_f
     # Prepare sirv_e0 ground truth
     sirv.gt <- tibble(
         NAME = dge.sirv %>% row.names(),
-        LENGTH = dge.sirv$gene$Length,
+        LENGTH = dge.sirv$genes$Length,
         GT = rep(1, nrow(dge.sirv$gene)),
         is.long.sirv = is.long_sirv(dge.sirv)
     )
@@ -1154,7 +1251,7 @@ get_sirv_scatter_plot <- function(dge, figure_name, tx_len_norm = TRUE, filter_f
     
     # Normalise observed data
     if (tx_len_norm) {
-        dge.sirv.norm <- dge.sirv$counts %>% as_tibble(rownames="NAME")  %>% mutate(across(where(is.numeric), ~ get_ltpm(.x, dge.sirv$gene$Length)))
+        dge.sirv.norm <- dge.sirv$counts %>% as_tibble(rownames="NAME")  %>% mutate(across(where(is.numeric), ~ get_ltpm(.x, dge.sirv$genes$EffectiveLength)))
     } else {
         dge.sirv.norm <- dge.sirv$counts %>% as_tibble(rownames="NAME")  %>% mutate(across(where(is.numeric), get_lcpm))
     }
@@ -1282,7 +1379,7 @@ get_sirv_quartiled_states <- function(dge, sample_name, tx_len_norm = TRUE) {
   if (tx_len_norm) {
     dge.sirv.norm <- dge.sirv$counts %>%
       as_tibble(rownames = "NAME") %>%
-      mutate(across(where(is.numeric), ~ get_ltpm(.x, dge.sirv$gene$Length)))
+      mutate(across(where(is.numeric), ~ get_ltpm(.x, dge.sirv$genes$EffectiveLength)))
   } else {
     dge.sirv.norm <- dge.sirv$counts %>%
       as_tibble(rownames = "NAME") %>%
@@ -1507,7 +1604,7 @@ get_sirv_quartiled_states <- function(dge, sample_name, tx_len_norm = TRUE) {
   if (tx_len_norm) {
     dge.sirv.norm <- dge.sirv$counts %>%
       as_tibble(rownames = "NAME") %>%
-      mutate(across(where(is.numeric), ~ get_ltpm(.x, dge.sirv$gene$Length)))
+      mutate(across(where(is.numeric), ~ get_ltpm(.x, dge.sirv$genes$EffectiveLength)))
   } else {
     dge.sirv.norm <- dge.sirv$counts %>%
       as_tibble(rownames = "NAME") %>%
@@ -1690,7 +1787,7 @@ p1 / (p2 + theme(legend.position = "none")) / p3 +
 
 
 # PLOT: Human transcript discovery rate and total counts (stratified by transcript length)
-```{r Huamn transcript discovery rate, fig.width=9, fig.height=4}
+```{r Huamn transcript discovery rate, fig.width=14, fig.height=4}
 dge_list <-   list(ont_bulk.dge.oarfish[is.human(ont_bulk.dge.oarfish),], 
       ont_drna.dge.oarfish[is.human(ont_drna.dge.oarfish),],
        ill_bulk.dge[is.human(ill_bulk.dge),], 
@@ -1704,11 +1801,11 @@ figure_name <- "Human transcript discovery rate"
     dge <- dge_list[[i]]
     dataset <- dataset_list[[i]]
 
-    tx_discov_df <- dge$counts %>%
-      rowSums() %>%
-      tibble()
-    colnames(tx_discov_df) <- "Total count"
-    tx_discov_df$`Transcript discovered` <- filterByExpr(dge, group=dge$samples$sample)
+    tx_discov_df <- tibble(
+      `Total count` = dge$counts %>% rowSums(),
+      `TPM` = dge %>% get_tpm %>% rowMeans()
+    )
+
     tx_discov_df <- tx_discov_df %>% mutate( `transcript length` = dge$gene$Length) 
     # bin the transcript length every 500 and make everything above 10000 to be in the same bin
     tx_discov_df$`transcript length` <- cut(
@@ -1719,7 +1816,8 @@ figure_name <- "Human transcript discovery rate"
     # group by the transcript length and calculate the mean of the transcript discovered
     tx_discov_df <- tx_discov_df %>%
       group_by(`transcript length`) %>%
-      summarise(`Transcript discovery rate` = mean(`Transcript discovered`),`Total count` = sum(`Total count`)) %>%
+      summarise(`Total count` = sum(`Total count`),
+                TPM = sum(TPM)) %>%
       ungroup()
     tx_discov_df$Dataset <- dataset
     plot_df <- rbind(plot_df, tx_discov_df)
@@ -1741,9 +1839,18 @@ figure_name <- "Human transcript discovery rate"
     theme_minimal() +
     theme(axis.text.x = element_text(angle = 45, hjust = 1)) + 
     scale_color_manual(values = color_palette[c("Illumina", "ONT_1", "ONT_2", "PacBio")] %>% unname()) +
-    labs(title = "Human transcript quantification", x = "Proportion of Transcript Length", y = "Proportion")
-p1+ p2 + patchwork::plot_layout(guides = "collect")
+    labs(title = "Human transcript quantification", x = "Transcript Length", y = "Proportion")
+  
+  p3 <- ggplot(plot_df, aes(`transcript length`, y = TPM, color = Dataset, group = Dataset)) +
+    geom_line(position = position_dodge(width = 0.2), linewidth = 1) +
+    theme_minimal() +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1)) + 
+    scale_color_manual(values = color_palette[c("Illumina", "ONT_1", "ONT_2", "PacBio")] %>% unname()) +
+    labs(title = "Human transcript quantification", x = "Transcript Length", y = "TPM")
+p1+ p2 + p3 + patchwork::plot_layout(guides = "collect")
 ```
+
+
 
 # MDS function
 ```{r, fig.height=15, fig.width=10}
@@ -2024,14 +2131,13 @@ bulk.gene.dge.merge <- cbind(
 
 # Transcript
 ill_bulk.dge$samples$platform <- "Illumina"
-ill_bulk.dge.copy <- ill_bulk.dge
-ill_bulk.dge.copy$genes$EffectiveLength <- NULL
 ont_bulk.dge.oarfish$samples$platform <- "ONT cDNA"
+
 pb_bulk.dge.oarfish$samples$platform <- "PacBio"
 ont_drna.dge.oarfish$samples$platform <- "ONT dRNA"
 
 bulk.tx.dge.merge <- cbind(
-  ill_bulk.dge.copy,
+  ill_bulk.dge,
   ont_bulk.dge.oarfish,
   pb_bulk.dge.oarfish,
   ont_drna.dge.oarfish
@@ -2056,14 +2162,15 @@ myMDS <- function(dge, mds) {
     Sequins.mix = dge$samples$sequins
   )
 
-  p <- ggplot(mds_data, aes(x = Dim1, y = Dim2, color = Cancer.type, label = cell.line, shape = Data.type)) +
-    geom_point(size = 3, alpha = 0.6) + # Plot points
-    geom_text(vjust = 0.05, hjust = 0.05, size = 3) + # Add text labels
-    labs(title = "MDS plot", 
-        x = paste0("Dimension 1 (", round(mds$var.explained[1]*100, 2), "%)" ) , 
-        y = paste0("Dimension 2 (", round(mds$var.explained[2]*100, 2), "%)" )) +
-    scale_color_viridis_d() + # Set color scale
-    theme_minimal() 
+p <- ggplot(mds_data, aes(x = Dim1, y = Dim2, color = Cancer.type, label = cell.line)) +
+  geom_text(vjust = 0.05, hjust = 0.05, size = 3) +
+  labs(
+    title = "MDS plot", 
+    x = paste0("Dimension 1 (", round(mds$var.explained[1]*100, 2), "%)"), 
+    y = paste0("Dimension 2 (", round(mds$var.explained[2]*100, 2), "%)")
+  ) +
+  scale_color_viridis_d() +
+  theme_minimal()`
   return(p)
 } 
   
@@ -2104,9 +2211,10 @@ myMDS(bulk.gene.dge.merge[is.sirv_or_ercc(bulk.gene.dge.merge), ], mds) + ggtitl
   scale_color_manual(values = color_palette[c("Illumina", "ONT_1", "ONT_2", "PacBio")] %>% unname())
 ```
 
+
 ### Transcript count
 #### Human
-```{r, fig.height=5, fig.width=10}
+```{r, fig.height=6, fig.width=10}
 mds <- norm_and_mds(bulk.tx.dge.merge[is.human(bulk.tx.dge.merge),])
 p1 <- myMDS(bulk.tx.dge.merge[is.human(bulk.tx.dge.merge), ], mds) + ggtitle("Human transcript counts") + 
   aes(color = Data.type, shape = Cancer.type) + 
@@ -2140,26 +2248,276 @@ myMDS(bulk.tx.dge.merge[is.sirv_or_ercc(bulk.tx.dge.merge), ], mds) + ggtitle("S
 
 
 
-### Heatmap
-```{r, fig.width=40, fig.height=40}
+## Heatmap 
+```{r Heatmap Gene: top expression, fig.width=10, fig.height=10, eval=F}
+# library(edgeR)
+# library(ComplexHeatmap)
+# library(circlize)
+# library(RColorBrewer)
 # 
-# # 
-# library(pheatmap)
+# # Calculate log2-CPM
+# cpm_data <- cpm(bulk.gene.dge.merge, log = TRUE)
 # 
-# # Assuming `dge` is your DGEList object
-# # Calculate normalized counts (CPM)
-# cpm_data <- cpm(bulk.tx.dge.merge, log = TRUE)  # Log2-CPM transformation
-# 
-# # Optionally, filter to include the top 500 most variable genes
-# # You can adjust the number based on your data and visualization needs
+# # Select top 500 most variable genes
 # var_genes <- apply(cpm_data, 1, var)
 # top_genes <- names(sort(var_genes, decreasing = TRUE))[1:500]
 # cpm_top <- cpm_data[top_genes, ]
-# pheatmap(cpm_top, cluster_rows = TRUE, cluster_cols = TRUE)
+# 
+# # Prepare annotation data
+# sample_anno <- bulk.tx.dge.merge$samples %>%
+#   select(group, platform) %>%
+#   mutate(across(everything(), as.factor)) %>%
+#   mutate(name=paste(platform, colnames(cpm_top), sep = '_'))
+# 
+# 
+# # Define annotation colors as named vectors
+# group_levels <- levels(sample_anno$group)
+# platform_levels <- levels(sample_anno$platform)
+# 
+# group_colors <- setNames(brewer.pal(length(group_levels), "Set1"), group_levels)
+# platform_colors <- structure(color_palette[c("Illumina", "ONT_1", "ONT_2", "PacBio")], names = levels(sample_anno$platform))
+# 
+# # Create annotation
+# ha <- HeatmapAnnotation(
+#   df = sample_anno,
+#   col = list(
+#     group = group_colors,
+#     platform = platform_colors
+#   )
+# )
+# 
+# # Plot heatmap
+# 
+# col_fun <- colorRamp2(
+#   c(min(cpm_top), (min(cpm_top)+max(cpm_top))/2, max(cpm_top)), 
+#   c("#2166AC", "white", "#B2182B")
+# )
+# Heatmap(cpm_top,
+#         name = "log2-CPM",
+#         top_annotation = ha,
+#         show_column_names = TRUE,
+#         show_row_names = FALSE,
+#         cluster_columns = TRUE,
+#         cluster_rows = TRUE,
+#         row_title = NULL,
+#         column_title = NULL,
+#         col = col_fun)
+```
+### Gene: Correlation
+```{r Heatmap Gene: CPM correlation, fig.width=15, fig.height=6}
+library(edgeR)
+library(dplyr)
+library(ComplexHeatmap)
+library(circlize)
+
+# Log2-CPM matrix
+cpm_data <- cpm(bulk.gene.dge.merge[is.human(bulk.gene.dge.merge),], log = TRUE)
+
+# Sample annotation
+sample_anno <- bulk.gene.dge.merge[is.human(bulk.gene.dge.merge),]$samples %>%
+  select(group, platform, sample) %>%
+  mutate(across(everything(), as.factor)) %>%
+  droplevels()
+
+# Correlation matrix
+cor_mat <- cor(cpm_data, method = "pearson")
+# Get sample names
+sample_ids <- unique(sample_anno$sample)
+
+# Color function
+col_fun <- colorRamp2(c(0,0.5, 1), c("#2166AC", "white", "#B2182B"))
+
+# Store heatmaps per sample
+ht_list <- lapply(sample_ids, function(sid) {
+  cols <- which(sample_anno$sample == sid)
+  mat <- cor_mat[cols, cols]
+  rownames(mat) <- sample_anno[sample_anno$sample == sid,]$platform
+  colnames(mat) <- sample_anno[sample_anno$sample == sid,]$platform
+  
+  Heatmap(mat,
+          name = as.character(sid),
+          show_row_names = T,
+          show_column_names = T,
+          col = col_fun,
+          cluster_rows = T,
+          cluster_columns = T)
+})
+
+
+# Create grobs from heatmaps
+ht_grobs <- lapply(ht_list, function(ht) grid.grabExpr(draw(ht, merge_legend = TRUE)))
+
+# Arrange in 2x4 layout
+grid.arrange(grobs = ht_grobs, nrow = 2, ncol = 4,
+             top = textGrob("Sample-wise correlation heatmaps", gp = gpar(fontsize = 16, fontface = "bold")))
+
+```
+```{r Heatmap Gene: TPM correlation, fig.width=15, fig.height=6}
+library(edgeR)
+library(dplyr)
+library(ComplexHeatmap)
+library(circlize)
+
+# get CPM
+bulk.gene.dge.merge$genes$EffectiveLength <- 1
+cpm_data <- log2((bulk.gene.dge.merge[is.human(bulk.gene.dge.merge),] %>% get_tpm) + 1)
+
+# get TPM
+bulk.gene.dge.merge$genes$EffectiveLength <- bulk.gene.dge.merge$genes$Length
+tpm_data <- log2((bulk.gene.dge.merge[is.human(bulk.gene.dge.merge),] %>% get_tpm) + 1)
+
+# replace tpm by cpm for long reads to avoid length adjustment
+tpm_data[,bulk.gene.dge.merge$samples$platform != 'Illumina'] = cpm_data[,bulk.gene.dge.merge$samples$platform != 'Illumina'] 
+
+
+# Sample annotation
+sample_anno <- bulk.gene.dge.merge[is.human(bulk.gene.dge.merge),]$samples %>%
+  select(group, platform, sample) %>%
+  mutate(across(everything(), as.factor)) %>%
+  droplevels()
+
+# Correlation matrix
+cor_mat <- cor(tpm_data, method = "pearson")
+# Get sample names
+sample_ids <- unique(sample_anno$sample)
+
+# Color function
+col_fun <- colorRamp2(c(0,0.5, 1), c("#2166AC", "white", "#B2182B"))
+
+# Store heatmaps per sample
+ht_list <- lapply(sample_ids, function(sid) {
+  cols <- which(sample_anno$sample == sid)
+  mat <- cor_mat[cols, cols]
+  rownames(mat) <- sample_anno[sample_anno$sample == sid,]$platform
+  colnames(mat) <- sample_anno[sample_anno$sample == sid,]$platform
+  
+  Heatmap(mat,
+          name = as.character(sid),
+          show_row_names = T,
+          show_column_names = T,
+          col = col_fun,
+          cluster_rows = T,
+          cluster_columns = T)
+})
+
+
+# Create grobs from heatmaps
+ht_grobs <- lapply(ht_list, function(ht) grid.grabExpr(draw(ht, merge_legend = TRUE)))
+
+# Arrange in 2x4 layout
+grid.arrange(grobs = ht_grobs, nrow = 2, ncol = 4,
+             top = textGrob("Sample-wise correlation heatmaps (TPM)", gp = gpar(fontsize = 16, fontface = "bold")))
+
+```
+### Tx: correlation
+```{r Heatmap Tx: CPM correlation, fig.width=15, fig.height=6}
+library(edgeR)
+library(dplyr)
+library(ComplexHeatmap)
+library(circlize)
+
+# Log2-CPM matrix
+cpm_data <- cpm(bulk.tx.dge.merge[is.human(bulk.tx.dge.merge),], log = TRUE)
+
+# Sample annotation
+sample_anno <- bulk.tx.dge.merge[is.human(bulk.tx.dge.merge),]$samples %>%
+  select(group, platform, sample) %>%
+  mutate(across(everything(), as.factor)) %>%
+  droplevels()
+
+# Correlation matrix
+cor_mat <- cor(cpm_data, method = "pearson")
+# Get sample names
+sample_ids <- unique(sample_anno$sample)
+
+# Color function
+col_fun <- colorRamp2(c(0,0.5, 1), c("#2166AC", "white", "#B2182B"))
+
+# Store heatmaps per sample
+ht_list <- lapply(sample_ids, function(sid) {
+  cols <- which(sample_anno$sample == sid)
+  mat <- cor_mat[cols, cols]
+  rownames(mat) <- sample_anno[sample_anno$sample == sid,]$platform
+  colnames(mat) <- sample_anno[sample_anno$sample == sid,]$platform
+  
+  Heatmap(mat,
+          name = as.character(sid),
+          show_row_names = T,
+          show_column_names = T,
+          col = col_fun,
+          cluster_rows = T,
+          cluster_columns = T)
+})
+
+
+# Create grobs from heatmaps
+ht_grobs <- lapply(ht_list, function(ht) grid.grabExpr(draw(ht, merge_legend = TRUE)))
+
+# Arrange in 2x4 layout
+grid.arrange(grobs = ht_grobs, nrow = 2, ncol = 4,
+             top = textGrob("Sample-wise correlation heatmaps (CPM)", gp = gpar(fontsize = 16, fontface = "bold")))
 ```
 
+```{r Heatmap Tx: TPM correlation, fig.width=15, fig.height=6}
+library(edgeR)
+library(dplyr)
+library(ComplexHeatmap)
+library(circlize)
 
-### PVCA
+
+# Log2-CPM matrix
+
+# get CPM
+bulk.tx.dge.merge$genes$EffectiveLength <- 1
+cpm_data <- log2((bulk.tx.dge.merge[is.human(bulk.tx.dge.merge),] %>% get_tpm) + 1)
+
+# get TPM
+bulk.tx.dge.merge$genes$EffectiveLength <- bulk.tx.dge.merge$genes$EffectiveLength
+tpm_data <- log2((bulk.tx.dge.merge[is.human(bulk.tx.dge.merge),] %>% get_tpm) + 1)
+
+# replace tpm by cpm for long reads to avoid length adjustment
+tpm_data[,bulk.tx.dge.merge$samples$platform != 'Illumina'] = cpm_data[,bulk.tx.dge.merge$samples$platform != 'Illumina'] 
+
+# Sample annotation
+sample_anno <- bulk.tx.dge.merge[is.human(bulk.tx.dge.merge),]$samples %>%
+  select(group, platform, sample) %>%
+  mutate(across(everything(), as.factor)) %>%
+  droplevels()
+
+# Correlation matrix
+cor_mat <- cor(tpm_data, method = "pearson")
+# Get sample names
+sample_ids <- unique(sample_anno$sample)
+
+# Color function
+col_fun <- colorRamp2(c(0,0.5, 1), c("#2166AC", "white", "#B2182B"))
+
+# Store heatmaps per sample
+ht_list <- lapply(sample_ids, function(sid) {
+  cols <- which(sample_anno$sample == sid)
+  mat <- cor_mat[cols, cols]
+  rownames(mat) <- sample_anno[sample_anno$sample == sid,]$platform
+  colnames(mat) <- sample_anno[sample_anno$sample == sid,]$platform
+  
+  Heatmap(mat,
+          name = as.character(sid),
+          show_row_names = T,
+          show_column_names = T,
+          col = col_fun,
+          cluster_rows = T,
+          cluster_columns = T)
+})
+
+
+# Create grobs from heatmaps
+ht_grobs <- lapply(ht_list, function(ht) grid.grabExpr(draw(ht, merge_legend = TRUE)))
+
+# Arrange in 2x4 layout
+grid.arrange(grobs = ht_grobs, nrow = 2, ncol = 4,
+             top = textGrob("Sample-wise correlation heatmaps (TPM)", gp = gpar(fontsize = 16, fontface = "bold")))
+```
+
+## PVCA
 
 ```{r, fig.height=3, fig.width=4}
 # Create a design matrix for covariates

@@ -5,7 +5,7 @@ scratch_dir: "/vast/scratch/users/you.yu/LongBench/lr_sc_sn"
 
 # reference file
 reference:
-  genome: "/home/users/allstaff/you.yu/project/ref_files/GRCh38.primary_assembly.genome.fa"
+  genome: "/vast/projects/LongBench/reference_files/GRCh38/GRCh38.primary_assembly.genome.fa"
   genome_masked: "/vast/projects/LongBench/reference_files/GRCh38/GRCh38.N-masked.genome.fa"
   gtf: "/home/users/allstaff/you.yu/LongBench/reference_files/GRCh38/gencode.v44.annotation.gtf"
   gtf_gz: "/home/users/allstaff/you.yu/LongBench/reference_files/GRCh38/gencode.v44.annotation.gtf.gz"

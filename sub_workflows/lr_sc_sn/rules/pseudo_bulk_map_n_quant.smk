@@ -54,38 +54,15 @@ rule get_cell_line_pseudo_bulk_fq:
         rm -rf "$TMP"
         """
 
-rule _pseudobulk_read_count_single_run:
-    input:
-        fastq = results_dir + "/PseudoBulkAlignment/{sample}_{cell_line}_pseudo_bulk.fastq"
-    output:
-        txt = temp(results_dir + "/PseudoBulkQC/{sample}_{cell_line}_pseudo_bulk_read_count.txt")
-    resources:
-        cpus_per_task=1
-    shell:
-        """
-        mkdir -p $(dirname {output.txt})
-        expr $(( $(wc -l < {input.fastq}) / 4 )) > {output.txt}
-        """
-
-rule pseudobulk_read_count:
-    input:
-        expand(rules._pseudobulk_read_count_single_run.output[0], 
-            cell_line = config['cell_line_list'],
-            sample = config['sample_id']) 
-    output:
-        results_dir + "/PseudoBulkQC/pseudo_bulk_read_count.csv"
-    resources:
-        cpus_per_task=1
-    script:
-        "../scripts/combine_read_count.R"
-
+# Mapping
+## Map to transcriptome
 rule pseudobulk_minimap2_transcript:
     priority: 10
     input:
         fastq = results_dir + "/PseudoBulkAlignment/{sample}_{cell_line}_pseudo_bulk.fastq",
         ref = config['reference']['transcript']
     output:
-        bam = results_dir + "/PseudoBulkAlignment/{sample}_{cell_line}.bam"
+        bam = results_dir + "/PseudoBulkAlignment/Transcriptome/{sample}_{cell_line}.bam"
     resources:
         cpus_per_task=16,
         mem_mb=64000
@@ -93,9 +70,30 @@ rule pseudobulk_minimap2_transcript:
         minimap2 = config["software"]["minimap2"]
     shell:
         """
+        mkdir -p $(dirname {output.bam})
         # module load samtools
         {params.minimap2} -ax lr:hq --eqx -N 100 -t {resources.cpus_per_task} {input.ref}  {input.fastq} | samtools view -bS - > {output.bam}
-        rm {input.fastq}
+        """
+
+# Mapping
+## Map to genome
+rule pseudobulk_minimap2_genome:
+    priority: 10
+    input:
+        fastq = results_dir + "/PseudoBulkAlignment/{sample}_{cell_line}_pseudo_bulk.fastq",
+        ref = config['reference']['genome']
+    output:
+        bam = temp(results_dir + "/PseudoBulkAlignment/Genome/{sample}_{cell_line}.bam")
+    resources:
+        cpus_per_task=16,
+        mem_mb=64000
+    params:
+        minimap2 = config["software"]["minimap2"],
+        minimap2_genome_options = "-ax splice:hq"
+    shell:
+        """
+        mkdir -p $(dirname {output.bam})
+        {params.minimap2} {params.minimap2_genome_options} -t {resources.cpus_per_task} {input.ref}  {input.fastq} | samtools view -bS - > {output.bam}
         """
 
 
@@ -124,7 +122,7 @@ rule pseudobulk_minimap2_transcript:
 rule run_oarfish_cov:
     priority: 10
     input:
-        bam = results_dir + "/PseudoBulkAlignment/{sample}_{cell_line}.bam",
+        bam = rules.pseudobulk_minimap2_transcript.output.bam,
         ref = config["reference"]["transcript"]
     output:
         out_dir = directory(os.path.join(results_dir,"PseudoBulkOarfishCov/{sample}/{cell_line}"))
@@ -142,14 +140,41 @@ rule run_oarfish_cov:
         oarfish --alignments {input.bam} --threads {resources.cpus_per_task} --output {output.out_dir}/ --model-coverage  -d . --filter-group no-filters --num-bootstraps 50
         """
 
+rule pseudo_bulk_featureCounts_gene_quant:
+    input:
+        bam = join(results_dir, "PseudoBulkAlignment/Genome/{sample}_{cell_line}.sorted.bam"),
+        gtf = config['reference']['gtf']
+    output:
+        rds =  join(results_dir,  "PseudoBulkfeatureCounts/{sample}_{cell_line}_featureCounts.rds")
+    resources:
+        cpus_per_task=16,
+        mem_mb=16000
+        #slurm_extra="--mail-type=FAIL --mail-user=you.yu@wehi.edu.au"
+    shell:
+        """
+        mkdir -p $(dirname {output.rds})
+        Rscript -e "
+            fc_SE <- Rsubread::featureCounts('{input.bam}',annot.ext='{input.gtf}', 
+                isGTFAnnotationFile=TRUE, 
+                GTF.featureType='gene', 
+                GTF.attrType='gene_id', 
+                useMetaFeatures=TRUE, 
+                isLongRead=TRUE,
+                nthreads={resources.cpus_per_task})
+            saveRDS(fc_SE, file='{output.rds}')
+            "
+        """
 
-
-rule pseudo_bulk_oarfish_quant:
+rule pseudo_bulk_oarfish_map_n_quant:
     input: 
-        expand([os.path.join(results_dir,"PseudoBulkOarfishCov/{sample}/{cell_line}")], 
-                                                    cell_line = config['cell_line_list'],
-                                                    sample = config['sample_id']) ,
-        rules.pseudobulk_read_count.output[0]
+        expand([
+                join(results_dir,"PseudoBulkOarfishCov/{sample}/{cell_line}"),
+                join(results_dir, "PseudoBulkAlignment/Genome/{sample}_{cell_line}.sorted.bam"),
+                join(results_dir,  "PseudoBulkfeatureCounts/{sample}_{cell_line}_featureCounts.rds")
+            ], 
+            cell_line = config['cell_line_list'],
+            sample = config['sample_id']
+        ) 
     output:
         touch(os.path.join(results_dir, ".flag/pseudo_bulk_oarfish_quant.done"))
 

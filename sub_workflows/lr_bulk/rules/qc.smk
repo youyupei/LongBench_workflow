@@ -46,21 +46,24 @@ rule subsample_2M_reads:
         """
 
 
-rule Filter_and_Subsample_bam_for_qc:
+rule Subsample_bam_for_qc:
     input:
-        bam = results_dir + "/GenomeAlignment/{sample}_{cell_line}.sorted.bam"
+        results_dir + "/GenomeAlignment/{sample}_{cell_line}.sorted.bam"
     output:
-        bam = temp(os.path.join(scratch_dir,"subsample_data/{sample}_{cell_line}/genome_map_subsample_rate_{subsample_rate}.bam")),
-        bai = temp(os.path.join(scratch_dir,"subsample_data/{sample}_{cell_line}/genome_map_subsample_rate_{subsample_rate}.bam.bai"))
+        bam = os.path.join(scratch_dir,"subsample_data/{sample}_{cell_line}/genome_map_subsample_{n_reads}.bam"),
+        bai = os.path.join(scratch_dir,"subsample_data/{sample}_{cell_line}/genome_map_subsample_{n_reads}.bam.bai")
     resources:
-        cpus_per_task=4,
+        cpus_per_task=1,
         mem_mb=8000
     params:
         seed = config['random_seed'],
     shell:
         """
         mkdir -p $(dirname {output.bam})
-        samtools view --subsample {wildcards.subsample_rate} --subsample-seed {params.seed} -F2034  {input.bam} -h | samtools sort -o {output.bam}
+        samtools view {input} | cut -f1 | sort | uniq > {output.bam}.read_ids
+        shuf -n $(numfmt --from=si  {wildcards.n_reads}) --random-source=<(yes {params.seed}) {output.bam}.read_ids  > {output.bam}.read_ids.subsampled
+        rm {output.bam}.read_ids
+        samtools view -b -N {output.bam}.read_ids.subsampled {input} > {output.bam}
         samtools index {output.bam}
         """
 
@@ -196,8 +199,8 @@ rule flame_coverage_plot:
 rule RSeQC_gene_body_coverage:
     input:
         bed=config['reference']['bed_human'], 
-        genome_bam = os.path.join(scratch_dir,"subsample_data/{sample}_{cell_line}/genome_map_subsample_rate_0.1.bam"),
-        genome_bai = os.path.join(scratch_dir,"subsample_data/{sample}_{cell_line}/genome_map_subsample_rate_0.1.bam.bai")
+        genome_bam = os.path.join(scratch_dir,"subsample_data/{sample}_{cell_line}/genome_map_subsample_3M.bam"),
+        genome_bai = os.path.join(scratch_dir,"subsample_data/{sample}_{cell_line}/genome_map_subsample_3M.bam.bai")
     output:
         report(os.path.join(results_dir, "qc/RSeQC/{sample}_{cell_line}.geneBodyCoverage.curves.pdf")),
         os.path.join(results_dir, "qc/RSeQC/{sample}_{cell_line}.geneBodyCoverage.r")
@@ -253,22 +256,38 @@ rule RSeQC_junction_annotation:
 
 
 ## AlignQC
+rule alignQC_samflag_filter:
+    input:
+        genome_bam = os.path.join(scratch_dir,"subsample_data/{sample}_{cell_line}/genome_map_subsample_3M.bam"),
+        genome_bai = os.path.join(scratch_dir,"subsample_data/{sample}_{cell_line}/genome_map_subsample_3M.bam.bai")
+    output:
+        os.path.join(scratch_dir,"subsample_data/{sample}_{cell_line}/genome_map_3M.F2304.bam")
+    resources:
+        cpus_per_task=1,
+        mem_mb=8000
+    shell:
+        """
+        mkdir -p $(dirname {output})
+        samtools view -b -F 2304 {input.genome_bam} > {output}
+        samtools index {output}
+
+        """
+
 rule alignQC_analysis_subsample:
     input: 
         fa=config['reference']['genome'], 
         anno=config['reference']['gtf_gz'],
-        genome_bam = os.path.join(scratch_dir,"subsample_data/{sample}_{cell_line}/genome_map_subsample_rate_0.1.bam"),
-        genome_bai = os.path.join(scratch_dir,"subsample_data/{sample}_{cell_line}/genome_map_subsample_rate_0.1.bam.bai")
+        genome_bam = rules.alignQC_samflag_filter.output
     resources:
-        cpus_per_task=16,
-        mem_mb=300000,
-        slurm_extra="--mail-type=FAIL --mail-user=you.yu@wehi.edu.au" #
+        cpus_per_task=12,
+        mem_mb=500000
+        #slurm_extra="--mail-type=FAIL --mail-user=you.yu@wehi.edu.au" #
     output:
         output = directory(os.path.join(results_dir, "qc/AlignQC/{sample}_{cell_line}/")),
         tmp_dir = temp(directory(os.path.join(scratch_dir, "alignQC_tmp","{sample}_{cell_line}")))
     priority: 10
     container: "docker://vacation/alignqc"
-    retries: 3
+    #retries: 3
     shell:
         """
         mkdir -p $(dirname {output.output})
@@ -281,19 +300,19 @@ rule alignQC_analysis_subsample:
             --specific_tempdir {output.tmp_dir}
         """
 
-use rule alignQC_analysis_subsample as alignQC_analysis_full with:
-    input: 
-        fa=config['reference']['genome'], 
-        anno=config['reference']['gtf_gz'],
-        genome_bam = os.path.join(scratch_dir,"subsample_data/{sample}_{cell_line}/genome_map_subsample_rate_1.bam"),
-        genome_bai = os.path.join(scratch_dir,"subsample_data/{sample}_{cell_line}/genome_map_subsample_rate_1.bam.bai")
-    output:
-        output = directory(os.path.join(results_dir, "qc/AlignQC_full/{sample}_{cell_line}/")),
-        tmp_dir = temp(directory(os.path.join(scratch_dir, "alignQC_full_tmp","{sample}_{cell_line}")))
-    resources:
-        cpus_per_task=8,
-        mem_mb=400000,
-        slurm_extra="--mail-type=FAIL --mail-user=you.yu@wehi.edu.au --qos=bonus" # tmp use bonus qos
+# use rule alignQC_analysis_subsample as alignQC_analysis_full with:
+#     input: 
+#         fa=config['reference']['genome'], 
+#         anno=config['reference']['gtf_gz'],
+#         genome_bam = os.path.join(scratch_dir,"subsample_data/{sample}_{cell_line}/genome_map_subsample_1.bam"),
+#         genome_bai = os.path.join(scratch_dir,"subsample_data/{sample}_{cell_line}/genome_map_subsample_1.bam.bai")
+#     output:
+#         output = directory(os.path.join(results_dir, "qc/AlignQC_full/{sample}_{cell_line}/")),
+#         tmp_dir = temp(directory(os.path.join(scratch_dir, "alignQC_full_tmp","{sample}_{cell_line}")))
+#     resources:
+#         cpus_per_task=8,
+#         mem_mb=400000,
+#         slurm_extra="--mail-type=FAIL --mail-user=you.yu@wehi.edu.au --qos=bonus" # tmp use bonus qos
 
 ### Target QC rules
 ###################### Run QC pipelines ###############################
@@ -303,7 +322,7 @@ rule qc:
             [
                 # os.path.join(results_dir, "qc/coverage/{sample}_{cell_line}.flame.coverage_plot.{flames_cov_plot_suffix}"), # flames coverage plot
                 # os.path.join(results_dir, "qc/sqanti3/{sample}_{cell_line}/"), # SQANTI3
-                # os.path.join(results_dir, "qc/AlignQC/{sample}_{cell_line}/"), # AlignQC
+                os.path.join(results_dir, "qc/AlignQC/{sample}_{cell_line}/"), # AlignQC
                 os.path.join(results_dir, "qc/NanoPlot/{sample}_{cell_line}/NanoPlot-data.tsv.gz"), # NanoPlot
                 os.path.join(results_dir, "qc/coverage/{sample}_{cell_line}.picard.RNA_Metrics"), # picard coverage
                 os.path.join(results_dir, "qc/RSeQC/{sample}_{cell_line}.geneBodyCoverage.curves.pdf"), # RSeQC gene body coverage
@@ -336,15 +355,15 @@ rule all_alignQC_analysis_subsample:
     output:
         touch(os.path.join(config['flag_dir'], "lr_bulk_alginQC.done"))
 
-rule all_alignQC_analysis_full:
-    input:
-        expand(
-            rules.alignQC_analysis_full.output.output, 
-            sample=config["sample_id"],
-            cell_line = cell_line_to_barcode.keys()
-        )
-    output:
-        touch(os.path.join(config['flag_dir'], "lr_bulk_alginQC_full.done"))
+# rule all_alignQC_analysis_full:
+#     input:
+#         expand(
+#             rules.alignQC_analysis_full.output.output, 
+#             sample=config["sample_id"],
+#             cell_line = cell_line_to_barcode.keys()
+#         )
+#     output:
+#         touch(os.path.join(config['flag_dir'], "lr_bulk_alginQC_full.done"))
 
 # rule all_sqanti3:
 #     input:

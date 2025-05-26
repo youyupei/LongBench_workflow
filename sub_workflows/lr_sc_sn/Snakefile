@@ -5,6 +5,7 @@ envvars:
 # Load the configuration
 sys.path.insert(0, config['main_wf_dir'] + "/config/")
 import config_parser
+from os.path import join
 config = config_parser.sub_wf_config_parser(
    main_cfg_fn = config['global_config_path'], 
    sub_wf_name = "lr_sc_sn")
@@ -29,7 +30,7 @@ main_conda = config["conda"]["main"]
 results_dir = config["output_path"]
 scratch_dir = config["scratch_dir"]
 git_repo = config["git_repo_dir"]
-
+flag_dir = config['flag_dir']
 
 include: "rules/flames.smk"
 include: "rules/qc.smk"
@@ -38,7 +39,8 @@ include: "rules/mutation.smk"
 # include: "rules/.vireo.smk"
 include: "rules/emptydrop.smk"
 include: "rules/sc_clustering.smk"
-include: "rules/pseudo_bulk_quant.smk"
+include: "rules/pseudo_bulk_map_n_quant.smk"
+include: "rules/pseudo_bulk_qc.smk"
 include: config['main_wf_dir'] + "/modules/utilities.smk"
 
 
@@ -51,6 +53,7 @@ rule all:
         #rules.emptydrop.output,
         rules.run_all_rmarkdown.input,
         rules.plot_silhouette.output,
-        rules.pseudo_bulk_oarfish_quant.input
+        rules.pseudo_bulk_oarfish_map_n_quant.input,
+        rules.pseudobulk_qc.output
     output:
         touch(os.path.join(results_dir, ".flag/all.done"))

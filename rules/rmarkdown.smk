@@ -93,8 +93,10 @@ rule rmd_bulk_DE_analysis:
     resources:
         cpus_per_task=8,
         mem_mb=32000
+    retries: 3
     shell:
         """
+        module load curl
         Rscript {input.knit_script} {input.rmd}  {params.rmd_output_dir}
         """
 
@@ -107,8 +109,8 @@ rule rmd_bulk_DTU_anlaysis:
     params:
         rmd_output_dir = rmd_output_dir
     resources:
-        cpus_per_task=10,
-        mem_mb=32000
+        cpus_per_task=16,
+        mem_mb=128000
     shell:
         """
         module load gcc
@@ -122,7 +124,7 @@ rule rmd_sc_pseudo_bulk_analysis:
         rmd = join(rmd_dir, 'SC_identification_DE_analysis.Rmd'),
         knit_script = knit_script,
         pre_steps = [
-            rules.lr_sc_sn_pseudo_bulk_oarfish_quant.output,
+            rules.lr_sc_sn_pseudo_bulk_oarfish_map_n_quant.output,
             '/vast/projects/LongBench/analysis/lr_sc_sn/result/PseudoBulkQC/pseudo_bulk_read_count.csv',
             # Needs '/vast/projects/LongBench/analysis/workflow/rmarkdown/RDS/bulk_DE.rds', 
             rules.rmd_bulk_DE_analysis.output,

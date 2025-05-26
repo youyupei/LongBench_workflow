@@ -20,6 +20,7 @@ include: "rules/mapping.smk"
 include: "rules/mapping_masked_genome.smk"
 include: "rules/qc.smk"
 include: "rules/quantification.smk"
+include: "rules/mutation.smk"
 #include: config['main_wf_dir'] + "/modules/utilities.smk"
 
 # make sure the results_dir exists
@@ -35,6 +36,7 @@ rule all:
    input:
       rules.quantification.output,
       rules.qc.output,
-      rules.mapping.output
+      rules.mapping.output,
+      rules.DeepVariant.output,
    output:
       touch(os.path.join(results_dir, ".flag/all.done"))
