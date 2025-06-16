@@ -8,10 +8,10 @@ main_wf_config = config_parser.load_configfile(join(config['main_wf_dir'],config
 
 rule lr_sc_bam_downsample:
     input:
-        bam=lr_sc_sn_config['output_path'] + "/PseudoBulkAlignment/{sample}_{cell_line}.bam",
-        csv=lr_sc_sn_config['output_path'] + "/PseudoBulkQC/pseudo_bulk_read_count.csv"
+        bam=lr_sc_sn_config['output_path'] + "/PseudoBulkAlignment/Transcriptome/{sample}_{cell_line}.bam",
+        csv=lr_sc_sn_config['output_path'] + "/PseudoBulkQC/pseudo_bulk_read_count.csv" 
     output:
-        join(main_wf_config['tmp_dir'] , "PseudoBulkAlignment/{sample}_{cell_line}.read_id_subsampled.{subsample_size}.bam")
+        join(main_wf_config['tmp_dir'] , "PseudoBulkAlignment/{sample}_{cell_line}.read_id_subsampled.{subsample_rate}.bam")
     resources:
         cpus_per_task=1,
         mem_mb=32000
@@ -22,11 +22,10 @@ rule lr_sc_bam_downsample:
         """
         mkdir -p $(dirname {output})
         samtools view {input.bam} | cut -f1 | sort | uniq > {output}.read_ids
-        target_total=$(numfmt --from=si  {wildcards.subsample_size})
-        target_cellline_count=$(awk -F',' -v target="$target_total" '$5 == "{wildcards.sample}_{wildcards.cell_line}" {{print int($6 * target)}}' {input.csv})
-        shuf -n $target_cellline_count --random-source=<(yes {params.seed}) {output}.read_ids  > {output}.read_ids.subsampled
+        awk 'BEGIN {{srand({params.seed})}} {{if (rand() < {wildcards.subsample_rate}) print $0}}' {output}.read_ids > {output}.read_ids.subsampled
         rm {output}.read_ids
         samtools view -b -N {output}.read_ids.subsampled {input.bam} > {output}
+        rm {output}.read_ids.subsampled
         """
 
 
@@ -35,7 +34,7 @@ rule lr_sc_oarfish_cov_rare_fraction_analysis:
         bam = rules.lr_sc_bam_downsample.output,
         ref = lr_sc_sn_config["reference"]["transcript"]
     output:
-        out_dir_cov = directory(os.path.join(main_wf_config['output_path'],"rarefraction_analysis/oarfish/sc_sn/{sample}/{subsample_size,.*M}/{cell_line}"))
+        out_dir_cov = directory(os.path.join(main_wf_config['output_path'],"rarefraction_analysis/oarfish/sc_sn/{sample}/{subsample_rate,0.*}/{cell_line}"))
     conda:
         join(config['main_wf_dir'], config["conda_config"]["oarfish"])
     resources:
@@ -59,7 +58,7 @@ rule lr_sc_link_oarfish_cov_full:
     localrule: True
     shell:
         """
-        mkdir -p {output}
+        mkdir -p $(dirname {output})
         ln -s {input} {output}
         sleep 1
         touch -h {output}
@@ -76,7 +75,7 @@ rule lr_sc_rarefraction_analysis:
             ],
             cell_line = lr_sc_sn_config['cell_line_list'],
             sample = [x for x in lr_sc_sn_config['sample_id'] if "sc" in x],
-            subsample_size =  main_wf_config['rarefaction_size_sc']
+            subsample_rate =  main_wf_config['rarefaction_rate_sc']
         ),
         expand(
             [
@@ -86,7 +85,7 @@ rule lr_sc_rarefraction_analysis:
             ],
             cell_line = lr_sc_sn_config['cell_line_list'],
             sample = [x for x in lr_sc_sn_config['sample_id'] if "sn" in x],
-            subsample_size =  main_wf_config['rarefaction_size_sn']
+            subsample_rate =  main_wf_config['rarefaction_rate_sn']
         )
     output:
         touch(join(config['flag_dir'], "lr_sc_rarefraction_analysis.done"))
