@@ -60,12 +60,17 @@ force_cells: # Count threshold will override expected_cells
   pb_sc:
   pb_sn: 10000
 
+clair3_preset:
+  ont_sn: "ont_r10_dorado_cdna"
+  ont_sc: "ont_r10_dorado_cdna"
+  pb_sc: "hifi_mas_minimap2"
+  pb_sn: "hifi_mas_minimap2"
+
 whitelist_10x:
   ont_sn: 
   ont_sc:
   pb_sc:
   pb_sn:
-
 
 cell_line_list:
   - H146

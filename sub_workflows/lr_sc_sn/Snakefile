@@ -54,6 +54,7 @@ rule all:
         rules.run_all_rmarkdown.input,
         rules.plot_silhouette.output,
         rules.pseudo_bulk_oarfish_map_n_quant.input,
-        rules.pseudobulk_qc.output
+        rules.pseudobulk_qc.output,
+        rules.variant_calling.output
     output:
         touch(os.path.join(results_dir, ".flag/all.done"))
