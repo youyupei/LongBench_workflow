@@ -48,6 +48,7 @@ rule _internal_priming_identifier_single_run:
         genome = config['reference']['genome']
     output:
         summary=join(results_dir, "int_prim_analysis/{x}_summary.txt"),
+        gene_level_counts=join(results_dir, "int_prim_analysis/{x}_gene_counts.tsv"),
         bam = join(scratch_dir, "int_prim_analysis/{x}_IP_tag_added.bam"),
         bai = join(scratch_dir, "int_prim_analysis/{x}_IP_tag_added.bam.bai")
     resources:
@@ -66,6 +67,7 @@ rule _internal_priming_identifier_single_run:
         python3 {params.python_script} --bam_file {input.bam} \
                                         --gtf_file {input.gtf} \
                                         --output-summary {output.summary} \
+                                        --output-gene-count {output.gene_level_counts} \
                                         --genome-ref {input.genome} \
                                         --processes {resources.cpus_per_task}| samtools view -S -b | samtools sort > {output.bam}
         samtools index {output.bam}
