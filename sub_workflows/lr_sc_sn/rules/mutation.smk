@@ -23,7 +23,7 @@ rule run_clair3_rna:
         bai = os.path.join(results_dir, "flames_out/{x}/align2genome.bam.bai"),
         ref_genome = config['reference']['genome']
     output:
-        directory("../results/clair3_rna/{x}")
+        directory(join(results_dir, "clair3_rna/{x}"))
     params:
         preset = lambda wildcards: config['clair3_preset'][wildcards.x],
     container: 
@@ -33,7 +33,7 @@ rule run_clair3_rna:
         mem_mb = 64000
     shell:
         """
-        mkdir -p {params.outdir}        
+        mkdir -p {output}        
         /opt/bin/run_clair3_rna \
             -B {input.bam} \
             -R {input.ref_genome} \

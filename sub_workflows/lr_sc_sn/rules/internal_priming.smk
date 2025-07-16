@@ -15,10 +15,10 @@ rule Subsample_bam_for_qc:
     shell:
         """
         mkdir -p $(dirname {output.bam})
-        samtools view {input} | cut -f1 | sort | uniq > {output.bam}.read_ids
+        samtools view {input.bam} | cut -f1 | sort | uniq > {output.bam}.read_ids
         shuf -n $(numfmt --from=si  {wildcards.n_reads}) --random-source=<(yes {params.seed}) {output.bam}.read_ids  > {output.bam}.read_ids.subsampled
         rm {output.bam}.read_ids
-        samtools view -b -N {output.bam}.read_ids.subsampled {input} > {output.bam}
+        samtools view -b -N {output.bam}.read_ids.subsampled {input.bam} > {output.bam}
         samtools index {output.bam}
         """
 

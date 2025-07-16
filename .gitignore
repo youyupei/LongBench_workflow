@@ -3,6 +3,8 @@ conda/envs
 **/.flag/**
 **/__pycache__/**
 **/rmarkdown/*
+**/.parallel/**
+**/.keras/**
 
 # Do not ignore .Rmd files
 !**/rmarkdown/*.Rmd
