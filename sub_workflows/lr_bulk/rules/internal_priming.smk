@@ -11,7 +11,7 @@ rule run_internal_priming_analysis:
 rule _internal_priming_identifier_single_run:
     input: 
         bam =  os.path.join(scratch_dir,"subsample_data/{sample}_{cell_line}/genome_map_3M.F2304.bam"),
-        gtf = config['reference']['gtf_hunman'],
+        gtf = config['reference']['gtf_human'],
         genome = config['reference']['genome']
     output:
         summary=join(results_dir, "int_prim_analysis/{sample}_{cell_line}_summary.txt"),

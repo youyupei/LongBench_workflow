@@ -26,6 +26,7 @@ conda_config: # the parser will convert it to absolute path will be accessible a
   fastp: "conda/config/fastp.yaml"
   AlignQC: "conda/config/AlignQC.yaml"
   PrimeSpotter: "conda/config/PrimeSpotter.yaml"
+  whatshap: "conda/config/whatshap.yaml"
 
 conda:
   sqanti3: "SQANTI3" # prebuilt conda env name

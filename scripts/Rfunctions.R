@@ -1,3 +1,8 @@
+# Setup meta data if not already defined
+bulk.meta <- read.csv("/vast/projects/LongBench/sequencing_data/illumina_bulk/metadata.txt")
+rownames(bulk.meta) <- bulk.meta$sample
+
+
 catchOarfish <- function(paths, verbose = TRUE, prefix=".") {
     NSamples <- length(paths)
     OK <- requireNamespace("jsonlite", quietly = TRUE)

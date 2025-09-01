@@ -5,6 +5,7 @@ tmp_dir: "/vast/scratch/users/you.yu/LongBench/tmp"
 
 # rarefaction rate/size
 #rarefaction_rate: [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]
-rarefaction_size_bulk: [1M, 5M, 10M, 15M, 20M] # the suffix M is required for the workflow to recognize the size
+# rarefaction_size_bulk: [0.1M, 0.2M, 0.3M, 0.4M, 0.5M, 0.6M,0.7M,0.8M, 0.9M ,1M, 5M, 10M, 15M, 20M] # the suffix M is required for the workflow to recognize the size
+rarefaction_size_bulk: [0.1M, 0.2M, 0.3M, 0.4M, 0.5M, 0.6M,0.7M,0.8M, 0.9M] # the suffix M is required for the workflow to recognize the size
 rarefaction_rate_sc: [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9] # the suffix M is required for the workflow to recognize the size
 rarefaction_rate_sn: [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]  # the suffix M is required for the workflow to recognize the size

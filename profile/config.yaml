@@ -3,7 +3,7 @@ jobs: 5000
 use-conda: true
 use-singularity: true
 rerun-incomplete: true
-singularity-args: "-B /vast/projects/LongBench,/home/users/allstaff/you.yu/LongBench,/vast/scratch/users/you.yu/LongBench,/stornext --env LC_ALL=C.UTF-8,LANG=C.UTF-8"
+singularity-args: "-B /vast/projects/LongBench,/home/users/allstaff/you.yu/LongBench,/vast/scratch/users/you.yu/LongBench,/stornext,/vast/scratch/users/you.yu/.tmp --env LC_ALL=C.UTF-8,LANG=C.UTF-8"
 default-resources:
     mem_mb: 8000
     runtime: 2880

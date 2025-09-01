@@ -1,7 +1,7 @@
 ---
 title: "Longbench Quantification analysis"
 author: "Yupei & Ash"
-version: "v3.1"
+version: "v3.2"
 output:
   html_document:
     code_folding: hide
@@ -449,12 +449,12 @@ ont_drna.dge.oarfish <- ont_drna.dge.oarfish[keep, ]
 
 # Analysis: Raw count vs Transcript length scatter
 ```{r Raw count vs Transcript length scatter(human), fig.height=10, fig.width=10}
-plot_raw_count_vs_length <- function(dge, title, filter_func=is.human) {
+plot_raw_count_vs_length <- function(dge, title, filter_func=is.human, cpm.norm=FALSE) {
   dge <- dge[filter_func(dge), ]
    plot_d <- tibble(
     Length = rep(dge$genes$Length, times = ncol(dge$counts)) %>% log10,  # Replicate Length values for each sample
     Sample = rep(colnames(dge$counts), each = nrow(dge$counts)),  # Repeat sample names for each gene
-    counts = log10(as.vector(dge$counts))  # Flatten counts into a vector and take log10, 0 will go to -Inf
+    counts = if(cpm.norm) {cpm(dge$counts ,log=T) %>% as.vector} else log10(as.vector(dge$counts)) # Flatten counts into a vector and take log10, 0 will go to -Inf
   ) %>%
     filter(counts > 0)
 
@@ -463,7 +463,7 @@ plot_raw_count_vs_length <- function(dge, title, filter_func=is.human) {
     geom_point(alpha=0.3) +
     geom_smooth(method = "lm", se = TRUE, color = "blue", linewidth = 1) +  # Add regression line with CI
     theme_minimal() +
-    labs(title = title, x = "Transcript length (log10)", y = "Raw count (log10)")
+    labs(title = title, x = "Transcript length (log10)", y = if(cpm.norm) "logCPM" else "Raw count (log10)")
 
   # Calculate Pearson and Spearman correlation
   pearson_cor <- cor(plot_d$Length, plot_d$counts, method = "pearson")  # Pearson correlation
@@ -535,10 +535,10 @@ p1.tpm.raw.tx.len <- plot_raw_count_vs_length(  {
  "Illumina Length-adjusted (Raw tx length)",filter_func=is.sirv_E0) +
   ylab("log10(TPM)") +
   scale_x_continuous()
-p2 <- plot_raw_count_vs_length(ont_bulk.dge.oarfish[common_tx,], "ONT cDNA",filter_func=is.sirv_E0)
-p3 <- plot_raw_count_vs_length(pb_bulk.dge.oarfish[common_tx,], "PacBio",filter_func=is.sirv_E0)
-p4 <- plot_raw_count_vs_length(ont_drna.dge.oarfish[common_tx,], "ONT dRNA",filter_func=is.sirv_E0)
-grid.arrange(p1, p1.tpm , p1.tpm.raw.tx.len, p2, p3, p4, ncol=2)
+p2 <- plot_raw_count_vs_length(ont_bulk.dge.oarfish[common_tx,], "ONT cDNA",filter_func=is.sirv_E0, cpm.norm = T) + ylim(0,18)
+p3 <- plot_raw_count_vs_length(pb_bulk.dge.oarfish[common_tx,], "PacBio",filter_func=is.sirv_E0, cpm.norm = T)+ ylim(0,18)
+p4 <- plot_raw_count_vs_length(ont_drna.dge.oarfish[common_tx,], "ONT dRNA",filter_func=is.sirv_E0, cpm.norm = T)+ ylim(0,18)
+grid.arrange(p1, p1.tpm , p1.tpm.raw.tx.len, p2, p3, p4, ncol=3)
 ```
 # Spike in quantification
 ## PLOT: Spike-in transcript length distribution
@@ -874,62 +874,13 @@ plot_df$cell_line_sample <- paste(plot_df$sample, plot_df$cell_line, sep = " - "
 # order the cell line sample level first by the sample then by the cell line
 plot_df$cell_line_sample <- factor(plot_df$cell_line_sample, levels = plot_df$cell_line_sample %>% unique() %>% sort())
 
-# p1 <- plot_df %>%
-#   filter(`Transcript length` == "All transcript") %>%
-#   ggplot(aes(x = cell_line_sample, y = total_counts, fill = sample)) +
-#   # bar plot
-#   geom_bar(stat = "identity") +
-#   # better color scheme
-#   scale_fill_viridis_d() +
-#   # minimal theme
-#   theme_minimal() +
-#   # remove the x axis labels
-#   theme(
-#     axis.text.x = element_blank(),
-#     axis.title.x = element_blank(),
-#     panel.grid.major = element_blank()
-# #    panel.grid.minor = element_blank()
-#   ) +
-#   scale_fill_manual(values = color_palette[c("Illumina", "ONT_cDNA", "ONT_dRNA", "PacBio")] %>% unname()) +
-#   # log the y axis
-#   #scale_y_log10() +
-#   labs(y="Total counts")
-# 
-# p2 <- plot_df %>%
-#   filter(`Transcript length` == "All transcript") %>%
-#   ggplot(aes(x = cell_line_sample, y = Transcript_discovery, fill = sample)) +
-#   # bar plot
-#   geom_bar(stat = "identity") +
-#   # minimal theme
-#   theme_minimal() +
-#   # remove the x axis labels
-#   theme(
-#     axis.text.x = element_blank(),
-#     axis.title.x = element_blank(),
-#     panel.grid.major = element_blank()
-# #    panel.grid.minor = element_blank()
-#   ) +
-#   scale_fill_manual(values = color_palette[c("Illumina", "ONT_cDNA", "ONT_dRNA", "PacBio")] %>% unname()) +
-#   labs(y="Transcripts discovery rate")
-p3 <- plot_df %>%
-  ggplot(aes(x = cell_line_sample, y = , color = correlation, size = `mean square error` )) +
-  geom_point() +
-  # better color scheme
-  scale_color_gradient(low = "#d2cccc", high = "black")  +
-  # minimal theme
-  theme_minimal() +
-  # rotate the x axis labels
-  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
-  labs(x = "Samples")
-
-p3
 ```
 
 
-```{r Plot: Combine quantiled boxplot (Squins), fig.height=3, fig.width=5 }
-ggplot(plot_df, aes(x = sample, y = correlation, colour = sample)) +
+```{r Plot: Combine quantiled boxplot (Squins), fig.height=2, fig.width=7 }
+ggplot(plot_df, aes(x = sample, y = `mean square error`, colour = sample)) +
   geom_boxplot() +
-  facet_wrap(~ `Transcript length`, scales = "free_y") +
+  facet_wrap(~ `Transcript length`,  ncol = 5) +
   theme_minimal() +
   scale_color_manual(values = color_palette) +
   theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
@@ -997,9 +948,7 @@ get_ercc_scatter_plot <- function(dge, figure_name, tx_len_norm = TRUE) {
       # scale_y_log10(labels = label_number()) + 
       labs(title = figure_name, y = "Expected abundance log2(TPM+1)", x = "Observed log2(TPM+1)") +
       annotate("text", x = 15, y = 12, 
-               label = paste("Correlation: ", round(correlation, 2), '\n'
-                             ,"MSE: ", round(mean_sq_error, 2), '\n'
-                             ,"MAE: ", round(mean_abs_error, 2)),
+               label = paste("r = ", round(correlation, 2)),
                hjust = 0, vjust = 1, 
                color = "black", size = 3, 
                fontface = "italic") +
@@ -1243,10 +1192,10 @@ p1 / (p2 + theme(legend.position = "none")) / p3 +
 
 
 ```
-```{r Plot: Combine quantiled boxplot (ERCC), fig.height=3, fig.width=5 }
-ggplot(plot_df, aes(x = sample, y = correlation, colour = sample)) +
+```{r Plot: Combine quantiled boxplot (ERCC), fig.height=2, fig.width=7 }
+ggplot(plot_df, aes(x = sample, y = `mean square error`, colour = sample)) +
   geom_boxplot() +
-  facet_wrap(~ `Transcript length`, scales = "free_y") +
+  facet_wrap(~ `Transcript length`, ncol=5) +
   theme_minimal() +
   scale_color_manual(values = color_palette) +
   theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
@@ -1376,7 +1325,8 @@ list(
 ) %>% patchwork::wrap_plots(ncol = 4, guides = "collect")
 
 ```
-### SIRV quartile state
+
+
 ```{r SIRV quartile state, fig.height=8, fig.width=10}
 get_sirv_quartiled_states <- function(dge, sample_name, tx_len_norm = TRUE) {
 # 
@@ -1599,11 +1549,11 @@ p1 / (p2 + theme(legend.position = "none")) / p3 +
 
 
 ```
-```{r Plot: Combine quantiled boxplot (SIRV), fig.height=3, fig.width=5 }
+```{r Plot: Combine quantiled boxplot (SIRV), fig.height=2, fig.width=7 }
 
 ggplot(plot_df, aes(x = sample, y = `mean absolute error`, colour = sample)) +
   geom_boxplot() +
-  facet_wrap(~ `Transcript length`, scales = "free_y") +
+  facet_wrap(~ `Transcript length`,  ncol=5) +
   theme_minimal() +
   scale_color_manual(values = color_palette) +
   theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
@@ -1611,7 +1561,7 @@ ggplot(plot_df, aes(x = sample, y = `mean absolute error`, colour = sample)) +
 ```
 
 ### SIRV long short comparison
-```{r, fig.height=8, fig.width=10}
+```{r, fig.height=8, fig.width=10, include = F, eval=F}
 get_sirv_quartiled_states <- function(dge, sample_name, tx_len_norm = TRUE) {
 # 
   # dge <- ont_bulk.dge.oarfish
@@ -1661,54 +1611,10 @@ get_sirv_quartiled_states <- function(dge, sample_name, tx_len_norm = TRUE) {
   per_sample_sd <- sapply(dge$samples$sample, function(x) {
     sd(combined_df[combined_df$Sample == x,]$`Observed log-CPM`) %>% unlist
   })
-  
-  per_sample_mad <- sapply(dge$samples$sample, function(x) {
-    mad(combined_df[combined_df$Sample == x,]$`Observed log-CPM`) %>% unlist
-  })
-    
-  per_sample_mse <- sapply(dge$samples$sample, function(x) {
-      mean((combined_df[combined_df$Sample == x, ]$GT - combined_df[combined_df$Sample == x, ]$`Observed log-CPM`)^2) %>% unlist()
-  })
-    
-  per_sample_mae <- sapply(dge$samples$sample, function(x) {
-      mean(abs(combined_df[combined_df$Sample == x, ]$GT - combined_df[combined_df$Sample == x, ]$`Observed log-CPM`)) %>% unlist()
-  })
+
 
   # Calculate the standard deviation
   combined_df$Sample <- factor(combined_df$Sample)
-  # SD <- sd(combined_df$`Observed log-CPM`)
-  # MAD <- mad(combined_df$`Observed log-CPM`)
-  # MSE <- mean((combined_df$GT - combined_df$`Observed log-CPM`)^2)
-  # MAE <- mean(abs(combined_df$GT - combined_df$`Observed log-CPM`))
-
-
-  # calculate the correlation per quartile and per sample, and also give the correlation overall all four quartiles
-  per_quartile_mse <- combined_df %>%
-    group_by(Sample, is.long.sirv) %>%
-    summarise(mean_sq_error = mean((GT - `Observed log-CPM`)^2)) %>%
-    rename(
-      "cell_line" = Sample
-    ) %>%
-    ungroup()
-  
-  per_quartile_mae <- combined_df %>%
-    group_by(Sample, is.long.sirv) %>%
-    summarise(mean_abs_error = mean(abs(GT - `Observed log-CPM`))) %>%
-    rename(
-      "cell_line" = Sample
-    ) %>%
-    ungroup()
-
-  # merge the overall correlation with the per quartile correlation
-  per_sample_mse <- tibble(
-    cell_line = names(per_sample_mse),
-    new_mean_sq_error = as.numeric(per_sample_mse)
-  )
-
-  per_sample_mae <- tibble(
-    cell_line = names(per_sample_mae),
-    new_mean_abs_error = as.numeric(per_sample_mae)
-  )
 
   # Combine the two tibbles
   combined_data <- per_quartile_mae %>%
@@ -1718,8 +1624,7 @@ get_sirv_quartiled_states <- function(dge, sample_name, tx_len_norm = TRUE) {
   # Add "All transcript" row with the new correlations
   all_transcripts <- per_sample_mae %>%
     left_join(per_sample_mse, by = "cell_line") %>%
-    mutate(is.long.sirv = "All SIRV") %>%
-    rename("mean absolute error"=new_mean_abs_error,   "mean square error"=new_mean_sq_error)
+    mutate(is.long.sirv = "All SIRV") 
 
   # Combine with the original data
   combined_data$is.long.sirv <- ifelse(combined_data$is.long.sirv, "Long SIRV", "Regular SIRV")
@@ -2465,7 +2370,7 @@ p1 | p2
 
 
 #### SIRV
-```{r, fig.height=5, fig.width=5}
+```{r, fig.height=4, fig.width=5}
 mds <- norm_and_mds(bulk.tx.dge.merge[is.sirv_or_ercc(bulk.tx.dge.merge),])
 myMDS(bulk.tx.dge.merge[is.sirv_or_ercc(bulk.tx.dge.merge), ], mds) + ggtitle("SIRV transcript counts") +
   aes(color = Data.type, shape = Cancer.type) + 
@@ -2475,62 +2380,121 @@ myMDS(bulk.tx.dge.merge[is.sirv_or_ercc(bulk.tx.dge.merge), ], mds) + ggtitle("S
 
 
 ## Heatmap 
-```{r Heatmap Gene: top expression, fig.width=10, fig.height=10, eval=F}
-# library(edgeR)
-# library(ComplexHeatmap)
-# library(circlize)
-# library(RColorBrewer)
-# 
-# # Calculate log2-CPM
-# cpm_data <- cpm(bulk.gene.dge.merge, log = TRUE)
-# 
-# # Select top 500 most variable genes
-# var_genes <- apply(cpm_data, 1, var)
-# top_genes <- names(sort(var_genes, decreasing = TRUE))[1:500]
-# cpm_top <- cpm_data[top_genes, ]
-# 
-# # Prepare annotation data
-# sample_anno <- bulk.tx.dge.merge$samples %>%
-#   select(group, platform) %>%
-#   mutate(across(everything(), as.factor)) %>%
-#   mutate(name=paste(platform, colnames(cpm_top), sep = '_'))
-# 
-# 
-# # Define annotation colors as named vectors
-# group_levels <- levels(sample_anno$group)
-# platform_levels <- levels(sample_anno$platform)
-# 
-# group_colors <- setNames(brewer.pal(length(group_levels), "Set1"), group_levels)
-# platform_colors <- structure(color_palette[c("Illumina", "ONT_cDNA", "ONT_dRNA", "PacBio")], names = levels(sample_anno$platform))
-# 
-# # Create annotation
-# ha <- HeatmapAnnotation(
-#   df = sample_anno,
-#   col = list(
-#     group = group_colors,
-#     platform = platform_colors
-#   )
-# )
-# 
-# # Plot heatmap
-# 
-# col_fun <- colorRamp2(
-#   c(min(cpm_top), (min(cpm_top)+max(cpm_top))/2, max(cpm_top)), 
-#   c("#2166AC", "white", "#B2182B")
-# )
-# Heatmap(cpm_top,
-#         name = "log2-CPM",
-#         top_annotation = ha,
-#         show_column_names = TRUE,
-#         show_row_names = FALSE,
-#         cluster_columns = TRUE,
-#         cluster_rows = TRUE,
-#         row_title = NULL,
-#         column_title = NULL,
-#         col = col_fun)
+```{r Heatmap Gene: top expression, fig.width=10, fig.height=10, eval=T}
+library(edgeR)
+library(ComplexHeatmap)
+library(circlize)
+library(RColorBrewer)
+
+# Calculate log2-CPM
+cpm_data <- cpm(bulk.gene.dge.merge, log = TRUE)
+
+# Select top 500 most variable genes
+var_genes <- apply(cpm_data, 1, var)
+top_genes <- names(sort(var_genes, decreasing = TRUE))[1:100]
+cpm_top <- cpm_data[top_genes, ]
+
+# Prepare annotation data
+sample_anno <- bulk.tx.dge.merge$samples %>%
+  select(group, platform) %>%
+  mutate(across(everything(), as.factor)) %>%
+  mutate(name=colnames(cpm_top))
+
+
+# Define annotation colors as named vectors
+group_levels <- levels(sample_anno$group)
+platform_levels <- levels(sample_anno$platform)
+
+group_colors <- setNames(brewer.pal(length(group_levels), "Set1"), group_levels)
+platform_colors <- structure(color_palette[c("Illumina", "ONT_cDNA", "ONT_dRNA", "PacBio")], names = levels(sample_anno$platform))
+
+# Create annotation
+ha <- HeatmapAnnotation(
+  df = sample_anno,
+  col = list(
+    group = group_colors,
+    platform = platform_colors
+  )
+)
+
+# Plot heatmap
+
+col_fun <- colorRamp2(
+  c(min(cpm_top), (min(cpm_top)+max(cpm_top))/2, max(cpm_top)),
+  c("#2166AC", "white", "#B2182B")
+)
+Heatmap(cpm_top,
+        name = "log2-CPM",
+        top_annotation = ha,
+        show_column_names = TRUE,
+        show_row_names = FALSE,
+        cluster_columns = TRUE,
+        cluster_rows = TRUE,
+        row_title = NULL,
+        column_title = NULL,
+        col = col_fun)
 ```
+
+```{r Heatmap Gene-level correlation, fig.width=10, fig.height=10, eval=T}
+library(edgeR)
+library(ComplexHeatmap)
+library(circlize)
+library(RColorBrewer)
+
+# Calculate log2-CPM
+cpm_data <- cpm(bulk.gene.dge.merge, log = TRUE)
+
+# Select top 500 most variable genes
+# var_genes <- apply(cpm_data, 1, var)
+# top_genes <- names(sort(var_genes, decreasing = TRUE))[1:5000]
+# cpm_top <- cpm_data[top_genes, ]
+# make cor matrix
+
+cor_cpm_top <- cpm_top %>% cor
+
+# Prepare annotation data
+sample_anno <- bulk.tx.dge.merge$samples %>%
+  select(group, platform) %>%
+  mutate(across(everything(), as.factor)) %>%
+  mutate(name=colnames(cor_cpm_top))
+
+
+# Define annotation colors as named vectors
+group_levels <- levels(sample_anno$group)
+platform_levels <- levels(sample_anno$platform)
+
+group_colors <- setNames(brewer.pal(length(group_levels), "Set1"), group_levels)
+platform_colors <- structure(color_palette[c("Illumina", "ONT_cDNA", "ONT_dRNA", "PacBio")], names = levels(sample_anno$platform))
+
+# Create annotation
+ha <- HeatmapAnnotation(
+  df = sample_anno,
+  col = list(
+    group = group_colors,
+    platform = platform_colors
+  )
+)
+
+# Plot heatmap
+
+col_fun <- colorRamp2(
+  c(min(cor_cpm_top), (min(cor_cpm_top)+max(cor_cpm_top))/2, max(cor_cpm_top)),
+  c("#2166AC", "white", "#B2182B")
+)
+Heatmap(cor_cpm_top,
+        name = "log2-CPM",
+        top_annotation = ha,
+        show_column_names = TRUE,
+        show_row_names = FALSE,
+        cluster_columns = TRUE,
+        cluster_rows = TRUE,
+        row_title = NULL,
+        column_title = NULL,
+        col = col_fun)
+```
+
 ### Gene: Correlation
-```{r Heatmap Gene: CPM correlation, fig.width=15, fig.height=6}
+```{r Heatmap Gene: CPM correlation, fig.width=14, fig.height=6, include=F, eval=F}
 library(edgeR)
 library(dplyr)
 library(ComplexHeatmap)
@@ -2551,7 +2515,7 @@ cor_mat <- cor(cpm_data, method = "pearson")
 sample_ids <- unique(sample_anno$sample)
 
 # Color function
-col_fun <- colorRamp2(c(0,0.5, 1), c("#2166AC", "white", "#B2182B"))
+col_fun <- colorRamp2(c(0.5, 0.75, 1), c("#2166AC", "white", "#B2182B"))
 
 # Store heatmaps per sample
 ht_list <- lapply(sample_ids, function(sid) {
@@ -2566,7 +2530,9 @@ ht_list <- lapply(sample_ids, function(sid) {
           show_column_names = T,
           col = col_fun,
           cluster_rows = T,
-          cluster_columns = T)
+          cluster_columns = T,
+          row_dend_width = unit(4, "mm"),       # Adjust row dendrogram width
+          column_dend_height = unit(4, "mm"))
 })
 
 
@@ -2575,10 +2541,12 @@ ht_grobs <- lapply(ht_list, function(ht) grid.grabExpr(draw(ht, merge_legend = T
 
 # Arrange in 2x4 layout
 grid.arrange(grobs = ht_grobs, nrow = 2, ncol = 4,
-             top = textGrob("Sample-wise correlation heatmaps", gp = gpar(fontsize = 16, fontface = "bold")))
+             top = textGrob("Sample-wise correlation heatmaps  (CPM)", gp = gpar(fontsize = 16, fontface = "bold")))
 
 ```
-```{r Heatmap Gene: TPM correlation, fig.width=15, fig.height=6}
+
+
+```{r Heatmap Gene: TPM correlation, fig.width=14, fig.height=6}
 library(edgeR)
 library(dplyr)
 library(ComplexHeatmap)
@@ -2608,7 +2576,7 @@ cor_mat <- cor(tpm_data, method = "pearson")
 sample_ids <- unique(sample_anno$sample)
 
 # Color function
-col_fun <- colorRamp2(c(0,0.5, 1), c("#2166AC", "white", "#B2182B"))
+col_fun <- colorRamp2(c(0.5, 0.75, 1), c("#2166AC", "white", "#B2182B"))
 
 # Store heatmaps per sample
 ht_list <- lapply(sample_ids, function(sid) {
@@ -2623,7 +2591,9 @@ ht_list <- lapply(sample_ids, function(sid) {
           show_column_names = T,
           col = col_fun,
           cluster_rows = T,
-          cluster_columns = T)
+          cluster_columns = T,
+          row_dend_width = unit(4, "mm"),       # Adjust row dendrogram width
+          column_dend_height = unit(4, "mm"))
 })
 
 
@@ -2635,8 +2605,56 @@ grid.arrange(grobs = ht_grobs, nrow = 2, ncol = 4,
              top = textGrob("Sample-wise correlation heatmaps (TPM)", gp = gpar(fontsize = 16, fontface = "bold")))
 
 ```
+
+```{r}
+var_genes <- apply(cpm_data, 1, var)
+top_genes <- names(sort(var_genes, decreasing = TRUE))[1:100]
+cpm_top <- cpm_data[top_genes, ]
+
+# Prepare annotation data
+sample_anno <- bulk.tx.dge.merge$samples %>%
+  select(group, platform) %>%
+  mutate(across(everything(), as.factor)) %>%
+  mutate(name=colnames(cpm_top))
+
+
+# Define annotation colors as named vectors
+group_levels <- levels(sample_anno$group)
+platform_levels <- levels(sample_anno$platform)
+
+group_colors <- setNames(brewer.pal(length(group_levels), "Set1"), group_levels)
+platform_colors <- structure(color_palette[c("Illumina", "ONT_cDNA", "ONT_dRNA", "PacBio")], names = levels(sample_anno$platform))
+
+# Create annotation
+ha <- HeatmapAnnotation(
+  df = sample_anno,
+  col = list(
+    group = group_colors,
+    platform = platform_colors
+  )
+)
+
+# Plot heatmap
+
+col_fun <- colorRamp2(
+  c(min(cpm_top), (min(cpm_top)+max(cpm_top))/2, max(cpm_top)),
+  c("#2166AC", "white", "#B2182B")
+)
+Heatmap(cpm_top,
+        name = "log2-CPM",
+        top_annotation = ha,
+        show_column_names = TRUE,
+        show_row_names = FALSE,
+        cluster_columns = TRUE,
+        cluster_rows = TRUE,
+        row_title = NULL,
+        column_title = NULL,
+        col = col_fun)
+```
+
+
 ### Tx: correlation
-```{r Heatmap Tx: CPM correlation, fig.width=15, fig.height=6}
+```{r Heatmap Tx: CPM correlation, fig.width=14, fig.height=6, include=F, eval=F}
 library(edgeR)
 library(dplyr)
 library(ComplexHeatmap)
@@ -2657,7 +2675,7 @@ cor_mat <- cor(cpm_data, method = "pearson")
 sample_ids <- unique(sample_anno$sample)
 
 # Color function
-col_fun <- colorRamp2(c(0,0.5, 1), c("#2166AC", "white", "#B2182B"))
+col_fun <- colorRamp2(c(0.5, 0.75, 1), c("#2166AC", "white", "#B2182B"))
 
 # Store heatmaps per sample
 ht_list <- lapply(sample_ids, function(sid) {
@@ -2672,7 +2690,9 @@ ht_list <- lapply(sample_ids, function(sid) {
           show_column_names = T,
           col = col_fun,
           cluster_rows = T,
-          cluster_columns = T)
+          cluster_columns = T,
+          row_dend_width = unit(4, "mm"),       # Adjust row dendrogram width
+          column_dend_height = unit(4, "mm"))
 })
 
 
@@ -2684,7 +2704,7 @@ grid.arrange(grobs = ht_grobs, nrow = 2, ncol = 4,
              top = textGrob("Sample-wise correlation heatmaps (CPM)", gp = gpar(fontsize = 16, fontface = "bold")))
 ```
 
-```{r Heatmap Tx: TPM correlation, fig.width=15, fig.height=6}
+```{r Heatmap Tx: TPM correlation, fig.width=14, fig.height=6}
 library(edgeR)
 library(dplyr)
 library(ComplexHeatmap)
@@ -2716,7 +2736,7 @@ cor_mat <- cor(tpm_data, method = "pearson")
 sample_ids <- unique(sample_anno$sample)
 
 # Color function
-col_fun <- colorRamp2(c(0,0.5, 1), c("#2166AC", "white", "#B2182B"))
+col_fun <- colorRamp2(c(0.5, 0.75, 1), c("#2166AC", "white", "#B2182B"))
 
 # Store heatmaps per sample
 ht_list <- lapply(sample_ids, function(sid) {
@@ -2731,7 +2751,9 @@ ht_list <- lapply(sample_ids, function(sid) {
           show_column_names = T,
           col = col_fun,
           cluster_rows = T,
-          cluster_columns = T)
+          cluster_columns = T,
+            row_dend_width = unit(4, "mm"),       # Adjust row dendrogram width
+          column_dend_height = unit(4, "mm"))
 })
 
 

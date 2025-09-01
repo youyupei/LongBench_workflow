@@ -15,10 +15,8 @@ output:
 params:
   random_seed: 2024
   cache_dir: NULL
-  ont_sc_dir: "/vast/projects/LongBench/analysis/lr_sc_sn/result/PseudoBulkOarfishCov/ont_sc"
-  ont_sn_dir: "/vast/projects/LongBench/analysis/lr_sc_sn/result/PseudoBulkOarfishCov/ont_sn"
-  pb_sc_dir: "/vast/projects/LongBench/analysis/lr_sc_sn/result/PseudoBulkOarfishCov/pb_sc"
-  pb_sn_dir: "/vast/projects/LongBench/analysis/lr_sc_sn/result/PseudoBulkOarfishCov/pb_sn"
+  input_Bulk_DGEobject_rds: "/vast/projects/LongBench/analysis/workflow/rmarkdown/RDS/bulk_DGE.obj.rds"
+  input_Sc_DGEobject_rds: "/vast/projects/LongBench/analysis/workflow/rmarkdown/RDS/sc_DGE.obj.rds"
   human_gtf: '/vast/projects/LongBench/reference_files/GRCh38/gencode.v44.annotation.gtf'
   bulk_meta: "/vast/projects/LongBench/sequencing_data/illumina_bulk/metadata.txt"
   bulk_ident_rds: "/vast/projects/LongBench/analysis/workflow/rmarkdown/RDS/bulk_identification.rds"
@@ -86,115 +84,28 @@ color_palette <- c(
 )
 ```
 
+```{r Load RDS}
+list2env(readRDS(params$input_Bulk_DGEobject_rds), .GlobalEnv)
+# This will load the following DGE objects:
+# ill_bulk.tx.dge, ont_bulk.tx.dge, pb_bulk.tx.dge, drna_bulk.tx.dge, for transcript level unfiltered DGE
+# ill_bulk.gene.dge, ont_bulk.gene.dge, pb_bulk.gene.dge, drna_bulk.gene.dge for gene level unfiltered DGE
 
-```{r, get number of transcripts gene from gtf}
-calcTxNum <- function(G.Tx.map){
-  geneid = rep(NA, nrow(G.Tx.map))
-  txcount = table(G.Tx.map$gene_id)
-  txnum = as.numeric(txcount[match(G.Tx.map$gene_id, names(txcount))])
-}
+list2env(readRDS(params$input_Sc_DGEobject_rds), .GlobalEnv)
+# This will load the following DGE objects:
+# ont_sc.tx.dge, ont_sn.tx.dge, pb_sc.tx.dge, pb_sn.tx.dge for transcript level unfiltered DGE
+# ont_sc.gene.dge, ont_sn.gene.dge, pb_sc.gene.dge, pb_sn.gene.dge for gene level unfiltered DGE
 
-# Human
-human_tx  <- GenomicFeatures::makeTxDbFromGFF(params$human_gtf, format = "gtf") %>% GenomicFeatures::transcripts(columns = c("tx_id", "tx_name", "gene_id"))
-human.G.Tx.map <- tibble(
-  gene_id = human_tx$gene_id %>% unlist,
-  tx_name = human_tx$tx_name
-)
-rm(human_tx)
-human.G.Tx.map$tx_count <- human.G.Tx.map %>% calcTxNum
 ```
 
-```{r Create DGE from input, echo=F}
-bulk.meta <- read.csv(params$bulk_meta)
-bulk_ident_rds <- readRDS(params$bulk_ident_rds)
-bulk_de_rds <- readRDS(params$bulk_de_rds)
-rownames(bulk.meta) <- bulk.meta$sample
 
-# SR salmon
-# ill_bulk.dge <- get_dge_from_salmon(params$ill_bulk_salmon_dir, ".*/")
-
-# LR oarfish
-ont_sc.dge <- get_dge_from_oarfish(params$ont_sc_dir, ".*/")
-ont_sn.dge <- get_dge_from_oarfish(params$ont_sn_dir, ".*/")
-pb_sc.dge <- get_dge_from_oarfish(params$pb_sc_dir, ".*/")
-pb_sn.dge <- get_dge_from_oarfish(params$pb_sn_dir, ".*/")
-```
-
-### Aggregate transcript counts to gene level using `tximport` with unfiltered transcript counts
-```{r, echo=F}
-library(tximport) # install latest version from github
-
-# Extract tx_name and gene_id columns from human and sequins
-human_tx2gene <- human.G.Tx.map[, c("tx_name", "gene_id")]
-
-# Get quant.sf file paths
-get_quant_paths <- function(dirs, file_name) {
-  # Generate file paths for quantification files
-  quant_paths <- file.path(dirs, file_name)
-  return(quant_paths)
-}
-
-# Define directories with their corresponding expected file names
-oarfish_dirs <- list(
-  ont_sc = list(dir = params$ont_sc_dir, file_name = ".quant"),
-  ont_sn = list(dir = params$ont_sn_dir, file_name = ".quant"),
-  pb_sc = list(dir = params$pb_sc_dir, file_name = ".quant"),
-  pb_sn = list(dir = params$pb_sn_dir, file_name = ".quant")
-)
-
-# Apply function to each directory to get all quant file paths
-quant_paths <- lapply(oarfish_dirs, function(dir_info) {
-  # Get the directory and file name from dir_info
-  dir <- dir_info$dir
-  file_name <- dir_info$file_name
-  
-  # List all subdirectories and get the quant file paths
-  sub_dirs <- list.dirs(dir, full.names = TRUE, recursive = FALSE)
-  get_quant_paths(sub_dirs, file_name)
-})
-
-# Flatten the list of quant_paths into a named list
-quant_paths <- lapply(quant_paths, unlist)
-
-# Function to import DGE from tximport
-get_dge_from_txi <- function(quant_dir, sample_prefix_regex, type) {
-  # Import data using tximport
-  txi <- tximport(quant_dir,
-                  type = type,
-                  tx2gene = human_tx2gene,
-                  ignoreAfterBar = TRUE,
-                  countsFromAbundance = "no") # raw counts
-  counts <- as.data.frame(txi$counts, stringAsFactors = FALSE)
-  sample_names <- gsub(sample_prefix_regex, '', basename(dirname(quant_dir)))
-  colnames(counts) <- sample_names
-  rst.dge <- DGEList(counts = counts)
-  rst.dge$genes <- data.frame(Length=txi$length %>% rowMeans())
-  rownames(rst.dge$samples) <- sub(sample_prefix_regex, '', rownames(rst.dge$samples))
-  colnames(rst.dge$counts) <- sub(sample_prefix_regex, "", colnames(rst.dge$counts))
-  # colnames(rst.dge$gene$Length) <- sub(sample_prefix_regex, "", colnames(rst.dge$gene$Length))
-  
-  rst.dge$samples <- merge(rst.dge$samples %>% select(-group), bulk.meta, by = "row.names", all.x = TRUE) %>% select(-Row.names)
-  rst.dge$samples <- rst.dge$samples[match(colnames(rst.dge$counts), rst.dge$samples$sample),]
-  return(rst.dge)
-}
-
-# Process each quant path for different bulk types
-ont_sc.gene.dge <- get_dge_from_txi(quant_paths$ont_sc, ".*/", "oarfish")
-ont_sn.gene.dge <- get_dge_from_txi(quant_paths$ont_sn, ".*/", "oarfish")
-pb_sc.gene.dge <- get_dge_from_txi(quant_paths$pb_sc, ".*/", "oarfish")
-pb_sn.gene.dge <- get_dge_from_txi(quant_paths$pb_sn, ".*/", "oarfish")
-
-# save all workpalce as Rdata
-# save.image("/vast/scratch/users/you.yu/test/SC_DE_line197.Rdata")
-```
 ### Plot: total Gene and transcript count
 ```{r sc total count plot, fig.height=3, fig.width=8}
 
 plot_df <- tibble(
-  "ONT SC" = ont_sc.dge$counts %>% sum(),
-  "ONT SN" = ont_sn.dge$counts %>% sum(),
-  "PacBio SC" = pb_sc.dge$counts %>% sum(),
-  "PacBio SN" = pb_sn.dge$counts %>% sum()
+  "ONT SC" = ont_sc.tx.dge$counts %>% sum(),
+  "ONT SN" = ont_sn.tx.dge$counts %>% sum(),
+  "PacBio SC" = pb_sc.tx.dge$counts %>% sum(),
+  "PacBio SN" = pb_sn.tx.dge$counts %>% sum()
 ) %>% pivot_longer(everything(), names_to = "Dataset", values_to = "Total Count")
 
 plot_df$Dataset <- factor(plot_df$Dataset, levels = c("ONT SC", "ONT SN", "PacBio SC", "PacBio SN"))
@@ -256,7 +167,237 @@ merged_data %>%
   scale_color_manual(values = c('#a2b346', '#565750')) + ylim(0, 1.5e8)
 ```
 
+# Pseudobulk vs Bulk Correlation
 
+## Gene level
+```{r}
+gene.rst_tibble <- tibble()
+# Iterate over each bulk DGE and sc DGE combination and compute correlation for each sample
+## For each sample
+get_cell_line_count <- function(dge, cell_line){
+  dge[, dge$samples$sample == cell_line]$count
+}
+for (cell_line in ont_bulk.gene.dge$samples$sample) {
+  # Get bulk counts for the current cell line
+  ont_bulk_counts <- get_cell_line_count(ont_bulk.gene.dge, cell_line)
+  pb_bulk_counts <- get_cell_line_count(pb_bulk.gene.dge, cell_line)
+  drna_bulk_counts <- get_cell_line_count(drna_bulk.gene.dge, cell_line)
+
+  # Get sc counts for the current cell line
+  ont_sc_counts <- get_cell_line_count(ont_sc.gene.dge, cell_line)
+  ont_sn_counts <- get_cell_line_count(ont_sn.gene.dge, cell_line)
+  pb_sc_counts <- get_cell_line_count(pb_sc.gene.dge, cell_line)
+  pb_sn_counts <- get_cell_line_count(pb_sn.gene.dge, cell_line)
+
+  # Filter to common transcripts (count >= 5)
+  common_tx <- Reduce(intersect, list(
+    rownames(ont_bulk_counts)[ont_bulk_counts > 0],
+    rownames(pb_bulk_counts)[pb_bulk_counts > 0],
+    rownames(drna_bulk_counts)[drna_bulk_counts > 0],
+    rownames(ont_sc_counts)[ont_sc_counts > 0],
+    rownames(ont_sn_counts)[ont_sn_counts > 0],
+    rownames(pb_sc_counts)[pb_sc_counts > 0],
+    rownames(pb_sn_counts)[pb_sn_counts > 0]
+  ))
+
+  # Calculate correlations on log CPM values, bulk vs sc
+  cor_values <- tibble(
+    cell_line = cell_line,
+    "ONT SC vs ONT Bulk" = cor(
+      cpm(ont_bulk_counts[common_tx,], log = TRUE),
+      cpm(ont_sc_counts[common_tx,], log = TRUE),
+      method = "pearson"
+    ),
+    "ONT SN vs ONT Bulk" = cor(
+      cpm(ont_bulk_counts[common_tx,], log = TRUE),
+      cpm(ont_sn_counts[common_tx,], log = TRUE),
+      method = "pearson"
+    ),
+    "PacBio SC vs ONT Bulk" = cor(
+      cpm(ont_bulk_counts[common_tx,], log = TRUE),
+      cpm(pb_sc_counts[common_tx,], log = TRUE),
+      method = "pearson"
+    ),
+    "PacBio SN vs ONT Bulk" = cor(
+      cpm(ont_bulk_counts[common_tx,], log = TRUE),
+      cpm(pb_sn_counts[common_tx,], log = TRUE),
+      method = "pearson"
+    ),
+    "ONT SC vs PacBio Bulk" = cor(
+      cpm(pb_bulk_counts[common_tx,], log = TRUE),
+      cpm(ont_sc_counts[common_tx,], log = TRUE),
+      method = "pearson"
+    ),
+    "ONT SN vs PacBio Bulk" = cor(
+      cpm(pb_bulk_counts[common_tx,], log = TRUE),
+      cpm(ont_sn_counts[common_tx,], log = TRUE),
+      method = "pearson"
+    ),
+    "PacBio SC vs PacBio Bulk" = cor(
+      cpm(pb_bulk_counts[common_tx,], log = TRUE),
+      cpm(pb_sc_counts[common_tx,], log = TRUE),
+      method = "pearson"
+    ),
+    "PacBio SN vs PacBio Bulk" = cor(
+      cpm(pb_bulk_counts[common_tx,], log = TRUE),
+      cpm(pb_sn_counts[common_tx,], log = TRUE),
+      method = "pearson"
+    ),
+    "ONT SC vs dRNA Bulk" = cor(
+      cpm(drna_bulk_counts[common_tx,], log = TRUE),
+      cpm(ont_sc_counts[common_tx,], log = TRUE),
+      method = "pearson"
+    ),
+    "ONT SN vs dRNA Bulk" = cor(
+      cpm(drna_bulk_counts[common_tx,], log = TRUE),
+      cpm(ont_sn_counts[common_tx,], log = TRUE),
+      method = "pearson"
+    ),
+    "PacBio SC vs dRNA Bulk" = cor(
+      cpm(drna_bulk_counts[common_tx,], log = TRUE),
+      cpm(pb_sc_counts[common_tx,], log = TRUE),
+      method = "pearson"
+    ),
+    "PacBio SN vs dRNA Bulk" = cor(
+      cpm(drna_bulk_counts[common_tx,], log = TRUE),
+      cpm(pb_sn_counts[common_tx,], log = TRUE),
+      method = "pearson"
+    )
+  )
+  gene.rst_tibble <- bind_rows(gene.rst_tibble, cor_values)
+}
+```
+## Transcript level
+```{r}
+tx.rst_tibble <- tibble()
+# Iterate over each bulk DGE and sc DGE combination and compute correlation for each sample
+## For each sample
+get_cell_line_count <- function(dge, cell_line){
+  dge[, dge$samples$sample == cell_line]$count
+}
+for (cell_line in ont_bulk.tx.dge$samples$sample) {
+  # Get bulk counts for the current cell line
+  ont_bulk_counts <- get_cell_line_count(ont_bulk.tx.dge, cell_line)
+  pb_bulk_counts <- get_cell_line_count(pb_bulk.tx.dge, cell_line)
+  drna_bulk_counts <- get_cell_line_count(drna_bulk.tx.dge, cell_line)
+
+  # Get sc counts for the current cell line
+  ont_sc_counts <- get_cell_line_count(ont_sc.tx.dge, cell_line)
+  ont_sn_counts <- get_cell_line_count(ont_sn.tx.dge, cell_line)
+  pb_sc_counts <- get_cell_line_count(pb_sc.tx.dge, cell_line)
+  pb_sn_counts <- get_cell_line_count(pb_sn.tx.dge, cell_line)
+
+  # Filter to common transcripts (count >= 5)
+  common_tx <- Reduce(intersect, list(
+    rownames(ont_bulk_counts)[ont_bulk_counts > 0 ],
+    rownames(pb_bulk_counts)[pb_bulk_counts > 0],
+    rownames(drna_bulk_counts)[drna_bulk_counts > 0],
+    rownames(ont_sc_counts)[ont_sc_counts > 0],
+    rownames(ont_sn_counts)[ont_sn_counts > 0],
+    rownames(pb_sc_counts)[pb_sc_counts > 0],
+    rownames(pb_sn_counts)[pb_sn_counts > 0]
+  ))
+
+  # Calculate correlations on log CPM values, bulk vs sc
+  cor_values <- tibble(
+    cell_line = cell_line,
+    "ONT SC vs ONT Bulk" = cor(
+      cpm(ont_bulk_counts[common_tx,], log = TRUE),
+      cpm(ont_sc_counts[common_tx,], log = TRUE),
+      method = "pearson"
+    ),
+    "ONT SN vs ONT Bulk" = cor(
+      cpm(ont_bulk_counts[common_tx,], log = TRUE),
+      cpm(ont_sn_counts[common_tx,], log = TRUE),
+      method = "pearson"
+    ),
+    "PacBio SC vs ONT Bulk" = cor(
+      cpm(ont_bulk_counts[common_tx,], log = TRUE),
+      cpm(pb_sc_counts[common_tx,], log = TRUE),
+      method = "pearson"
+    ),
+    "PacBio SN vs ONT Bulk" = cor(
+      cpm(ont_bulk_counts[common_tx,], log = TRUE),
+      cpm(pb_sn_counts[common_tx,], log = TRUE),
+      method = "pearson"
+    ),
+    "ONT SC vs PacBio Bulk" = cor(
+      cpm(pb_bulk_counts[common_tx,], log = TRUE),
+      cpm(ont_sc_counts[common_tx,], log = TRUE),
+      method = "pearson"
+    ),
+    "ONT SN vs PacBio Bulk" = cor(
+      cpm(pb_bulk_counts[common_tx,], log = TRUE),
+      cpm(ont_sn_counts[common_tx,], log = TRUE),
+      method = "pearson"
+    ),
+    "PacBio SC vs PacBio Bulk" = cor(
+      cpm(pb_bulk_counts[common_tx,], log = TRUE),
+      cpm(pb_sc_counts[common_tx,], log = TRUE),
+      method = "pearson"
+    ),
+    "PacBio SN vs PacBio Bulk" = cor(
+      cpm(pb_bulk_counts[common_tx,], log = TRUE),
+      cpm(pb_sn_counts[common_tx,], log = TRUE),
+      method = "pearson"
+    ),
+    "ONT SC vs dRNA Bulk" = cor(
+      cpm(drna_bulk_counts[common_tx,], log = TRUE),
+      cpm(ont_sc_counts[common_tx,], log = TRUE),
+      method = "pearson"
+    ),
+    "ONT SN vs dRNA Bulk" = cor(
+      cpm(drna_bulk_counts[common_tx,], log = TRUE),
+      cpm(ont_sn_counts[common_tx,], log = TRUE),
+      method = "pearson"
+    ),
+    "PacBio SC vs dRNA Bulk" = cor(
+      cpm(drna_bulk_counts[common_tx,], log = TRUE),
+      cpm(pb_sc_counts[common_tx,], log = TRUE),
+      method = "pearson"
+    ),
+    "PacBio SN vs dRNA Bulk" = cor(
+      cpm(drna_bulk_counts[common_tx,], log = TRUE),
+      cpm(pb_sn_counts[common_tx,], log = TRUE),
+      method = "pearson"
+    )
+  )
+  tx.rst_tibble <- bind_rows(tx.rst_tibble, cor_values)
+
+}
+```
+
+## Plot
+```{r, fig.width=4, fig.height=6}
+# Boxplot
+gene.p <- gene.rst_tibble %>%
+  pivot_longer(
+    cols = -cell_line,
+    names_to = "comparison",
+    values_to = "value"
+  ) %>% ggplot( aes(x = comparison, y = value)) +
+  geom_boxplot() +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  ylab("Correlation") +
+  xlab("Comparison") + ggtitle("PseudoBulk vs Bulk correlation (Gene level)")
+
+
+tx.p <- tx.rst_tibble %>%
+  pivot_longer(
+    cols = -cell_line,
+    names_to = "comparison",
+    values_to = "value"
+  ) %>% ggplot( aes(x = comparison, y = value)) +
+  geom_boxplot() +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  ylab("Pearson Correlation") +
+  xlab("Comparison") + ggtitle("PseudoBulk vs Bulk correlation (Transcript level)")
+
+gene.p/ tx.p
+
+```
 
 # Identification analysis:
 ## Gene level 
@@ -280,7 +421,7 @@ gene_discovery <- tibble(
 )
 
 
-tx_ref_df <- ont_sc.dge$genes %>%
+tx_ref_df <- ont_sc.tx.dge$genes %>%
   rownames_to_column("tx_id") %>%
   select(tx_id, Length) %>%
   tibble() %>%
@@ -373,7 +514,7 @@ ComplexUpset::upset(
 ### Upset plots: Overlap with Bulk
 ```{r Gene Identification Upset plot Overlap with Bulk, fig.height=3, fig.width=8}
 library(ComplexUpset)
-
+bulk_ident_rds <- readRDS(params$bulk_ident_rds)
 df <- gene_discovery %>%
   left_join(
     bulk_ident_rds$gene_discovery %>%
@@ -410,9 +551,9 @@ ComplexUpset::upset(
       text=element_text(size = 3, vjust=-0.2)
     )  +  scale_fill_manual(
               values = c(
-                "red",
-                "grey",
-                "#1a4f07"
+                "#AE7573",
+                "#BEBEBE",
+                "#235008"
               )
           )
   ),
@@ -425,9 +566,9 @@ ComplexUpset::upset(
           position = 'right',
       ) +  scale_fill_manual(
               values = c(
-                "red",
-                "grey",
-                "#1a4f07"
+                "#AE7573",
+                "#BEBEBE",
+                "#235008"
               )
           ) +
         theme(legend.position = "none")
@@ -460,9 +601,9 @@ p1 <- ComplexUpset::upset(
               text=element_text(size = 3, vjust=-0.2)
             )  +  scale_fill_manual(
                       values = c(
-                        "red",
-                        "grey",
-                        "#1a4f07"
+                      "#AE7573",
+                      "#BEBEBE",
+                      "#235008"
                       )
                   )
           ),
@@ -475,9 +616,9 @@ p1 <- ComplexUpset::upset(
                   position = 'right',
               ) +  scale_fill_manual(
                       values = c(
-                        "red",
-                        "grey",
-                        "#1a4f07"
+                        "#AE7573",
+                        "#BEBEBE",
+                        "#235008"
                       )
                   ) +
                 theme(legend.position = "none")
@@ -578,20 +719,20 @@ FilterByExpr
 ```{r transcript filtering for DE, fig.height=15, fig.width=30}
 # Transcript
 ## 1. get common transcripts
-common_tx <- Reduce(intersect, lapply(list(ont_sc.dge, ont_sn.dge, pb_sc.dge, pb_sn.dge), rownames))
+common_tx <- Reduce(intersect, lapply(list(ont_sc.tx.dge, ont_sn.tx.dge, pb_sc.tx.dge, pb_sn.tx.dge), rownames))
 
-ont_sc.dge <- ont_sc.dge[common_tx, ]
-ont_sn.dge <- ont_sn.dge[common_tx, ]
-pb_sc.dge <- pb_sc.dge[common_tx, ]
-pb_sn.dge <- pb_sn.dge[common_tx, ]
+ont_sc.tx.dge <- ont_sc.tx.dge[common_tx, ]
+ont_sn.tx.dge <- ont_sn.tx.dge[common_tx, ]
+pb_sc.tx.dge <- pb_sc.tx.dge[common_tx, ]
+pb_sn.tx.dge <- pb_sn.tx.dge[common_tx, ]
 
 
 tx_discovery <- tibble(
   tx_id = common_tx,
-  "ONT SC" = filterByExpr(ont_sc.dge, group = ont_sc.dge$samples$group, min.count=5),
-  "ONT SN" = filterByExpr(ont_sn.dge, group = ont_sn.dge$samples$group, min.count=5),
-  "PacBio SC" = filterByExpr(pb_sc.dge, group = pb_sc.dge$samples$group, min.count=5),
-  "PacBio SN" = filterByExpr(pb_sn.dge, group = pb_sn.dge$samples$group, min.count=5)
+  "ONT SC" = filterByExpr(ont_sc.tx.dge, group = ont_sc.tx.dge$samples$group, min.count=5),
+  "ONT SN" = filterByExpr(ont_sn.tx.dge, group = ont_sn.tx.dge$samples$group, min.count=5),
+  "PacBio SC" = filterByExpr(pb_sc.tx.dge, group = pb_sc.tx.dge$samples$group, min.count=5),
+  "PacBio SN" = filterByExpr(pb_sn.tx.dge, group = pb_sn.tx.dge$samples$group, min.count=5)
 ) %>% mutate(
   tx_id = strsplit(tx_id, "\\|") %>% sapply(function(x) x[1])
 ) %>% left_join(tx_ref_df, by = c("tx_id")) %>% 
@@ -690,9 +831,9 @@ ComplexUpset::upset(
       text=element_text(size = 3, vjust=-0.2)
     )  +  scale_fill_manual(
               values = c(
-                "#B67272",
-                "grey",
-                "#1a4f07"
+                "#AE7573",
+                "#BEBEBE",
+                "#235008"
               )
           )
   ),
@@ -705,9 +846,9 @@ ComplexUpset::upset(
           position = 'right',
       ) +  scale_fill_manual(
               values = c(
-                "#B67272",
-                "grey",
-                "#1a4f07"
+                "#AE7573",
+                "#BEBEBE",
+                "#235008"
               )
           ) +
         theme(legend.position = "none")
@@ -740,9 +881,9 @@ p1 <- ComplexUpset::upset(
               text=element_text(size = 3, vjust=-0.2)
             )  +  scale_fill_manual(
                       values = c(
-                        "#B67272",
-                        "grey",
-                        "#1a4f07"
+                        "#AE7573",
+                        "#BEBEBE",
+                        "#235008"
                       )
                   )
           ),
@@ -755,9 +896,9 @@ p1 <- ComplexUpset::upset(
                   position = 'right',
               ) +  scale_fill_manual(
                       values = c(
-                        "#B67272",
-                        "grey",
-                        "#1a4f07"
+                        "#AE7573",
+                        "#BEBEBE",
+                        "#235008"
                       )
                   ) +
                 theme(legend.position = "none")
@@ -788,9 +929,9 @@ p2 <- ComplexUpset::upset(
               text=element_text(size = 3, vjust=-0.2)
             )  +  scale_fill_manual(
                       values = c(
-                        "#B67272",
-                        "grey",
-                        "#1a4f07"
+                        "#AE7573",
+                        "#BEBEBE",
+                        "#235008"
                       )
                   )
           ),
@@ -803,9 +944,9 @@ p2 <- ComplexUpset::upset(
                   position = 'right',
               ) +  scale_fill_manual(
                       values = c(
-                        "#B67272",
-                        "grey",
-                        "#1a4f07"
+                        "#AE7573",
+                        "#BEBEBE",
+                        "#235008"
                       )
                   ) +
                 theme(legend.position = "none")
@@ -855,10 +996,10 @@ df <- df%>% mutate(bulk.n = as.factor(bulk.n))
 keep <- df %>% mutate(keep = `ONT SC` & `ONT SN` & `PacBio SC` & `PacBio SN` & bulk.n == 4) %>% pull(keep)
 table(keep)
 
-ont_sc.dge <- ont_sc.dge[keep, ]
-ont_sn.dge <- ont_sn.dge[keep, ]
-pb_sc.dge <- pb_sc.dge[keep, ]
-pb_sn.dge <- pb_sn.dge[keep, ]
+ont_sc.tx.dge <- ont_sc.tx.dge[keep, ]
+ont_sn.tx.dge <- ont_sn.tx.dge[keep, ]
+pb_sc.tx.dge <- pb_sc.tx.dge[keep, ]
+pb_sn.tx.dge <- pb_sn.tx.dge[keep, ]
 ```
 
 Normalise the gene and transcript counts using `calcNormFactors` with `TMM` methods for each dataset, separately for human
@@ -872,10 +1013,10 @@ pb_sn.gene.dge <- calcNormFactors(pb_sn.gene.dge, method = "TMM")
 
 
 ### 4. Normalise the transcript counts using `calcNormFactors` with `TMM` methods for each dataset
-ont_sc.dge <- calcNormFactors(ont_sc.dge, method = "TMM")
-ont_sn.dge <- calcNormFactors(ont_sn.dge, method = "TMM")
-pb_sc.dge <- calcNormFactors(pb_sc.dge, method = "TMM")
-pb_sn.dge <- calcNormFactors(pb_sn.dge, method = "TMM")
+ont_sc.tx.dge <- calcNormFactors(ont_sc.tx.dge, method = "TMM")
+ont_sn.tx.dge <- calcNormFactors(ont_sn.tx.dge, method = "TMM")
+pb_sc.tx.dge <- calcNormFactors(pb_sc.tx.dge, method = "TMM")
+pb_sn.tx.dge <- calcNormFactors(pb_sn.tx.dge, method = "TMM")
 ```
 
 # MDS (Merged)
@@ -901,21 +1042,21 @@ gene.dge.merge <- cbind(
 )
 
 # Transcript
-ont_sc.dge$samples$platform <- "ONT"
-ont_sn.dge$samples$platform <- "ONT"
-pb_sc.dge$samples$platform <- "PacBio"
-pb_sn.dge$samples$platform <- "PacBio"
+ont_sc.tx.dge$samples$platform <- "ONT"
+ont_sn.tx.dge$samples$platform <- "ONT"
+pb_sc.tx.dge$samples$platform <- "PacBio"
+pb_sn.tx.dge$samples$platform <- "PacBio"
 
-ont_sc.dge$samples$library <- "SC"
-ont_sn.dge$samples$library <- "SN"
-pb_sc.dge$samples$library <- "SC"
-pb_sn.dge$samples$library <- "SN"
+ont_sc.tx.dge$samples$library <- "SC"
+ont_sn.tx.dge$samples$library <- "SN"
+pb_sc.tx.dge$samples$library <- "SC"
+pb_sn.tx.dge$samples$library <- "SN"
 
 tx.dge.merge <- cbind(
-  ont_sc.dge,
-  ont_sn.dge,
-  pb_sc.dge,
-  pb_sn.dge
+  ont_sc.tx.dge,
+  ont_sn.tx.dge,
+  pb_sc.tx.dge,
+  pb_sn.tx.dge
 )
 ```
 
@@ -1267,7 +1408,7 @@ mat.AvsP.DGE <- complex_upset_plot(lst, bulk.any, bulk.all)$matrix
   theme = theme(plot.title = element_text(size =25))
 )
 ```
-```{r explore the SC specific DE,  fig.height=5, fig.width=5}
+```{r explore the SC specific DE,  fig.height=5, fig.width=5, include=F, eval=F}
 plot_d <- tibble(
   gene = pb_sc.dge_human.list$AvsP.DE$genes %>% rownames,
   AveLogCPM =  pb_sc.dge_human.list$AvsP.DE$AveLogCPM,
@@ -1292,10 +1433,7 @@ p2 <- ggplot(plot_d %>% filter(DE==-1), aes(x = Categories, y = AveLogCPM)) +
 p1 | p2
 
 ```
-```{r}
-library(Glimma)
-glimmaMDS(pb_sc.gene.dge)
-```
+
 
 ### Sup figure: Protein coding gene only
 ```{r upset plot dge human (Protein-coding),  fig.height=10, fig.width=8}
@@ -1447,10 +1585,10 @@ glimmaMA(glrt) # glimmaMA(glrt, dge = dge) to use edgeR results
 ## DTE edgeR+scaling
 ```{r get dte scaling}
 # scale
-ont_sc.tx.scale_dge <- ont_sc.dge
-ont_sn.tx.scale_dge <- ont_sn.dge
-pb_sc.tx.scale_dge <- pb_sc.dge
-pb_sn.tx.scale_dge <- pb_sn.dge
+ont_sc.tx.scale_dge <- ont_sc.tx.dge
+ont_sn.tx.scale_dge <- ont_sn.tx.dge
+pb_sc.tx.scale_dge <- pb_sc.tx.dge
+pb_sn.tx.scale_dge <- pb_sn.tx.dge
 
 ont_sc.tx.scale_dge$counts  <- ont_sc.tx.scale_dge$counts / ont_sc.tx.scale_dge$genes$Overdispersion
 ont_sn.tx.scale_dge$counts  <- ont_sn.tx.scale_dge$counts / ont_sn.tx.scale_dge$genes$Overdispersion

@@ -16,15 +16,7 @@ output:
     toc_depth: '4'
 params:
   random_seed: 2024
-  sirv_ercc_gtf: '/vast/projects/LongBench/reference_files/SIRV_Set4_Norm_Sequences_20210507/SIRV_ERCC_longSIRV_multi-fasta_20210507.gtf'
-  sequins_gtf: '/vast/projects/LongBench/reference_files/Sequin_resources/v2.4/rnasequin_annotation_2.4.gtf'
-  sequins_tsv: '/vast/projects/LongBench/reference_files/Sequin_resources/v2.4/rnasequin_isoforms_2.4.tsv'
-  human_gtf: '/vast/projects/LongBench/reference_files/GRCh38/gencode.v44.annotation.gtf'
-  sirv_csv: '/home/users/allstaff/you.yu/LongBench/reference_files/SIRV_Set4_Norm_Sequences_20210507/SIRV_set4_concentration.csv'
-  ont_bulk_oarfish_dir: '/vast/projects/LongBench/analysis/lr_bulk/result/oarfish_cov_output/ont_bulk'
-  pb_bulk_oarfish_dir: '/vast/projects/LongBench/analysis/lr_bulk/result/oarfish_cov_output/pb_bulk'
-  ont_drnd_oarfish_dir: '/vast/projects/LongBench/analysis/lr_bulk/result/oarfish_cov_output/dRNA_bulk'
-  ill_bulk_salmon_dir: '/vast/projects/LongBench//analysis/sr_bulk/result/salmon/salmon_quant'
+  input_DGEobject_rds: "/vast/projects/LongBench/analysis/workflow/rmarkdown/RDS/bulk_DGE.obj.rds"
   bulk_meta: '/vast/projects/LongBench/sequencing_data/illumina_bulk/metadata.txt'
   cache_dir: NULL
   fig.path: 'figures/'
@@ -113,143 +105,27 @@ is.long_sirv <- function(dge) {grepl("^SIRV\\d{4}", rownames(dge))}
 is.ercc <- function(dge) {!is.human(dge) & !is.sequins(dge) & !is.sirv_all(dge)}
 ```
 
-```{r, get number of transcripts gene from gtf}
-calcTxNum <- function(G.Tx.map){
-  geneid = rep(NA, nrow(G.Tx.map))
-  txcount = table(G.Tx.map$gene_id)
-  txnum = as.numeric(txcount[match(G.Tx.map$gene_id, names(txcount))])
-}
-# SIRV
-SIRV_tx <- GenomicFeatures::makeTxDbFromGFF(params$sirv_ercc_gtf, format = "gtf") %>% GenomicFeatures::transcripts(columns = c("tx_id", "tx_name", "gene_id"))
-SIRV.G.Tx.map <- tibble(
-  gene_id = SIRV_tx$gene_id %>% unlist,
-  tx_name = SIRV_tx$tx_name
-)
-rm(SIRV_tx)
-SIRV.G.Tx.map$tx_count <- SIRV.G.Tx.map %>% calcTxNum
 
-# Sequins
-sequins_tx  <- GenomicFeatures::makeTxDbFromGFF(params$sequins_gtf, format = "gtf") %>% GenomicFeatures::transcripts(columns = c("tx_id", "tx_name", "gene_id"))
-sequins.G.Tx.map <- tibble(
-  gene_id = sequins_tx$gene_id %>% unlist,
-  tx_name = sequins_tx$tx_name
-)
-rm(sequins_tx)
-sequins.G.Tx.map$tx_count <- sequins.G.Tx.map %>% calcTxNum
+# Get the count data from RDS
 
-# Human
-human_tx  <- GenomicFeatures::makeTxDbFromGFF(params$human_gtf, format = "gtf") %>% GenomicFeatures::transcripts(columns = c("tx_id", "tx_name", "gene_id"))
-human.G.Tx.map <- tibble(
-  gene_id = human_tx$gene_id %>% unlist,
-  tx_name = human_tx$tx_name
-)
-rm(human_tx)
-human.G.Tx.map$tx_count <- human.G.Tx.map %>% calcTxNum
+```{r Get the count data, echo=TRUE, message=FALSE, warning=FALSE, results='hide'}
+list2env(readRDS(params$input_DGEobject_rds), .GlobalEnv)
+# This will load the following DGE objects:
+# ill_bulk.tx.dge, ont_bulk.tx.dge, pb_bulk.tx.dge, drna_bulk.tx.dge, for transcript level unfiltered DGE
+# ill_bulk.gene.dge, ont_bulk.gene.dge, pb_bulk.gene.dge, drna_bulk.gene.dge for gene level unfiltered DGE
 ```
 
 
-# Gene discovery analysis
-```{r Create DGE from input, echo=F}
-bulk.meta <- read.csv(params$bulk_meta)
-rownames(bulk.meta) <- bulk.meta$sample
-
-# SR salmon
-ill_bulk.dge <- get_dge_from_salmon(params$ill_bulk_salmon_dir, ".*/")
-# LR oarfish
-ont_bulk.dge.oarfish <- get_dge_from_oarfish(params$ont_bulk_oarfish_dir, ".*/")
-pb_bulk.dge.oarfish <- get_dge_from_oarfish(params$pb_bulk_oarfish_dir, ".*/")
-ont_drna.dge.oarfish <- get_dge_from_oarfish(params$ont_drnd_oarfish_dir, ".*/")
-
-# Extract human transcript counts
-ill_bulk.dge <- ill_bulk.dge[is.human(ill_bulk.dge), ]
-ont_bulk.dge.oarfish <- ont_bulk.dge.oarfish[is.human(ont_bulk.dge.oarfish), ]
-pb_bulk.dge.oarfish <- pb_bulk.dge.oarfish[is.human(pb_bulk.dge.oarfish), ]
-ont_drna.dge.oarfish <- ont_drna.dge.oarfish[is.human(ont_drna.dge.oarfish), ]
-```
-### 1. Aggregate transcript counts to gene level using `tximport` with unfiltered transcript counts
-```{r, echo=F}
-library(tximport) # install latest version from github
-
-# Extract tx_name and gene_id columns from human and sequins
-human_tx2gene <- human.G.Tx.map[, c("tx_name", "gene_id")]
-sequins_tx2gene <- sequins.G.Tx.map[, c("tx_name", "gene_id")]
-SIRV_tx2gene <- SIRV.G.Tx.map[, c("tx_name", "gene_id")]
-combined_tx2gene <- rbind(human_tx2gene, sequins_tx2gene,SIRV_tx2gene)
-
-# Get quant.sf file paths
-get_quant_paths <- function(dirs, file_name) {
-  # Generate file paths for quantification files
-  quant_paths <- file.path(dirs, file_name)
-  return(quant_paths)
-}
-
-# Define directories with their corresponding expected file names
-oarfish_dirs <- list(
-  ill_bulk = list(dir = params$ill_bulk_salmon_dir, file_name = "quant.sf"),
-  ont_bulk = list(dir = params$ont_bulk_oarfish_dir, file_name = ".quant"),
-  pb_bulk = list(dir = params$pb_bulk_oarfish_dir, file_name = ".quant"),
-  drna_bulk = list(dir = params$ont_drnd_oarfish_dir, file_name = ".quant")
-)
-
-# Apply function to each directory to get all quant file paths
-quant_paths <- lapply(oarfish_dirs, function(dir_info) {
-  # Get the directory and file name from dir_info
-  dir <- dir_info$dir
-  file_name <- dir_info$file_name
-  
-  # List all subdirectories and get the quant file paths
-  sub_dirs <- list.dirs(dir, full.names = TRUE, recursive = FALSE)
-  get_quant_paths(sub_dirs, file_name)
-})
-
-# Flatten the list of quant_paths into a named list
-quant_paths <- lapply(quant_paths, unlist)
-
-# Function to import DGE from tximport
-get_dge_from_txi <- function(quant_dir, sample_prefix_regex, type) {
-  # Import data using tximport
-  txi <- tximport(quant_dir,
-                  type = type,
-                  tx2gene = combined_tx2gene,
-                  ignoreAfterBar = TRUE,
-                  countsFromAbundance = "no") # raw counts
-  counts <- as.data.frame(txi$counts, stringAsFactors = FALSE)
-  sample_names <- gsub(sample_prefix_regex, '', basename(dirname(quant_dir)))
-  colnames(counts) <- sample_names
-  rst.dge <- DGEList(counts = counts)
-  rst.dge$genes <- data.frame(Length=txi$length %>% rowMeans())
-  rownames(rst.dge$samples) <- sub(sample_prefix_regex, '', rownames(rst.dge$samples))
-  colnames(rst.dge$counts) <- sub(sample_prefix_regex, "", colnames(rst.dge$counts))
-  # colnames(rst.dge$gene$Length) <- sub(sample_prefix_regex, "", colnames(rst.dge$gene$Length))
-  
-  rst.dge$samples <- merge(rst.dge$samples %>% select(-group), bulk.meta, by = "row.names", all.x = TRUE) %>% select(-Row.names)
-  rst.dge$samples <- rst.dge$samples[match(colnames(rst.dge$counts), rst.dge$samples$sample),]
-  return(rst.dge)
-}
-
-# Process each quant path for different bulk types
-ill_bulk.gene.dge <- get_dge_from_txi(quant_paths$ill_bulk, ".*/", "salmon")
-ont_bulk.gene.dge <- get_dge_from_txi(quant_paths$ont_bulk, ".*/", "oarfish")
-pb_bulk.gene.dge <- get_dge_from_txi(quant_paths$pb_bulk, ".*/", "oarfish")
-drna_bulk.gene.dge <- get_dge_from_txi(quant_paths$drna_bulk, ".*/", "oarfish")
-
-# Extract human gene counts
-ill_bulk.gene.dge <- ill_bulk.gene.dge[is.human(ill_bulk.gene.dge), ]
-ont_bulk.gene.dge <- ont_bulk.gene.dge[is.human(ont_bulk.gene.dge), ]
-pb_bulk.gene.dge <- pb_bulk.gene.dge[is.human(pb_bulk.gene.dge), ]
-drna_bulk.gene.dge <- drna_bulk.gene.dge[is.human(drna_bulk.gene.dge), ]
-
-# remove .* 
+### 2. Define "Gene discovery" based on `filterByExpr` for each dataset, using default parameters
+```{r gene filtering for DE}
+#GENE 
+## 1. get common genes
+### remove .* 
 rownames(ill_bulk.gene.dge) <- ill_bulk.gene.dge %>% rownames %>% sub("\\..*", "", .)
 rownames(ont_bulk.gene.dge) <- ont_bulk.gene.dge %>% rownames %>% sub("\\..*", "", .)
 rownames(pb_bulk.gene.dge) <- pb_bulk.gene.dge %>% rownames %>% sub("\\..*", "", .)
 rownames(drna_bulk.gene.dge) <- drna_bulk.gene.dge %>% rownames %>% sub("\\..*", "", .)
-```
 
-### 2. Define "Gene discovery" based on6 `filterByExpr` for each dataset, using default parameters
-```{r gene filtering for DE}
-#GENE 
-## 1. get common genes
 common_genes <- Reduce(intersect, lapply(list(ill_bulk.gene.dge, ont_bulk.gene.dge, pb_bulk.gene.dge, drna_bulk.gene.dge), rownames))
 
 ill_bulk.gene.dge <- ill_bulk.gene.dge[common_genes, ]
@@ -257,14 +133,13 @@ ont_bulk.gene.dge <- ont_bulk.gene.dge[common_genes, ]
 pb_bulk.gene.dge <- pb_bulk.gene.dge[common_genes, ]
 drna_bulk.gene.dge <- drna_bulk.gene.dge[common_genes, ]
 
-common_tx <- Reduce(intersect, lapply(list(ill_bulk.dge, ont_bulk.dge.oarfish, pb_bulk.dge.oarfish, ont_drna.dge.oarfish), rownames))
-ill_bulk.dge <- ill_bulk.dge[common_tx, ]
-ont_bulk.dge.oarfish <- ont_bulk.dge.oarfish[common_tx, ]
-pb_bulk.dge.oarfish <- pb_bulk.dge.oarfish[common_tx, ]
-ont_drna.dge.oarfish <- ont_drna.dge.oarfish[common_tx, ]
+common_tx <- Reduce(intersect, lapply(list(ill_bulk.tx.dge, ont_bulk.tx.dge, pb_bulk.tx.dge, drna_bulk.tx.dge), rownames))
+ill_bulk.tx.dge <- ill_bulk.tx.dge[common_tx, ]
+ont_bulk.tx.dge <- ont_bulk.tx.dge[common_tx, ]
+pb_bulk.tx.dge <- pb_bulk.tx.dge[common_tx, ]
+drna_bulk.tx.dge <- drna_bulk.tx.dge[common_tx, ]
 
-# save all workpalce as Rdata
-# save.image("/vast/scratch/users/you.yu/test/Bulk_DE_line269.Rdata")
+
 ```
 
 ### Gene discovery plots
@@ -281,7 +156,7 @@ gene_discovery <- tibble(
 )
 
 # Getting the gene biotype and gene id, using illumina data here but will be identical for all datasets
-tx_ref_df <- ill_bulk.dge$genes %>%
+tx_ref_df <- ill_bulk.tx.dge$genes %>%
   rownames_to_column("tx_id") %>%
   select(tx_id, Length) %>%
   tibble() %>%
@@ -323,6 +198,28 @@ gene_discovery <- gene_discovery %>%
 gene_discovery$biotype <- factor(gene_discovery$biotype, levels = c(sort(unique(gene_discovery$biotype)) %>% setdiff("Others"), "Others"))
 
 output_list[["gene_discovery"]] <- gene_discovery # save for downstream analysis
+```
+
+Feature in gene_discovery tibble current only contain gene length which is the average length of the transcripts in the gene. Let's adding some more feature for plotting
+
+
+1. Boolean for intronic genes. Each gene is checked if it is located inside the intron of the other gene. The specific definition:
+`findOverlaps(exons, merged_introns, ignore.strand=TRUE, type='within',  select="all", minoverlap =50)`
+```{r Add intronic gene and exon count}
+
+rds_list <- readRDS("/home/users/allstaff/you.yu/LongBench/analysis/workflow/rmarkdown/RDS/intronic_gene_and_exon_count.rds")
+overlaps_tibble <- rds_list$exon_intron_overlaps
+overlaps_tibble$exon_gene <- sub("\\..*","", overlaps_tibble$exon_gene)
+overlaps_tibble$intron_gene <- sub("\\..*", "", overlaps_tibble$intron_gene)
+
+exons_count <- rds_list$exons_count  %>% mutate(Gene = sub("\\..*", "", Gene))
+
+rm(rds_list)
+
+# Merge the intronic gene information into the gene_discovery tibble
+gene_discovery <- gene_discovery %>% mutate(
+  "Intronic Gene" = gene_discovery$gene_id %in% overlaps_tibble[overlaps_tibble$intron_gene %in% gene_discovery$gene_id,]$exon_gene
+)  %>% left_join(exons_count, by = c("gene_id" = "Gene"))
 ```
 
 ####  Main Upset plot
@@ -593,115 +490,6 @@ map(cell_lines,
 
 ```
 
-### Expression of the intronic gene and single-exon genes
-```{r}
-library(GenomicRanges)
-library(rtracklayer)
-library(dplyr)
-library(purrr)
-library(pbapply)
-gtf_file <- "/home/users/allstaff/you.yu/LongBench/reference_files/GRCh38/gencode.v44.annotation.gtf"
-annotations <- rtracklayer::import(gtf_file)
-
-# Filter for gene and exon annotations
-genes <- annotations[annotations$type == "gene"]
-exons <- annotations[annotations$type == "exon"]
-
-# for each gene, get the introns
-exon_split <- split(exons, exons$gene_id)
-library(furrr)
-# Set up parallel processing with future_map (e.g., using all available cores)
-plan(multisession)
-options(future.globals.maxSize = 1024 * 1024 * 1024)  # 1 GB
-
-introns  <- exon_split %>% names %>% 
-    future_map(~ {
-        intr <- gaps(exon_split[[.x]])
-        if (length(intr) == 1) {
-            return(NULL)
-        } else {
-            intr$gene_name <- .x
-            return(intr[-1])
-        }
-    }, .progress = TRUE)
-
-merged_introns <- do.call(c, introns)
-overlaps <- findOverlaps(exons, merged_introns, ignore.strand=TRUE, type='within',  select="all", minoverlap =50)
-overlaps_tibble <- tibble(
-    exon_gene = exons$gene_id[queryHits(overlaps)],
-    intron_gene = merged_introns$gene_name[subjectHits(overlaps)],
-) %>%
-    filter(exon_gene != intron_gene) %>%
-    distinct()
-
-# output the results
-write.table(overlaps_tibble, file = "gene_introns.tsv", sep = "\t", quote = FALSE, row.names = FALSE)
-
-overlaps_tibble$exon_gene <- sub("\\..*","", overlaps_tibble$exon_gene)
-overlaps_tibble$intron_gene <- sub("\\..*","", overlaps_tibble$intron_gene)
-
-# Sanity check:"ENSG00000271204.1" %in% overlaps_tibble$exon_gene
-# 'ENSG00000231721.8' %in%  overlaps_tibble$intron_gene
-```
-
-
-```{r exon count per gene}
-exons_count <-  exon_split %>% future_map(length,  .progress = TRUE) %>% unlist %>% enframe(name = "Gene", value = "Exon_Count")
-exons_count <- exons_count %>% mutate(Gene = sub("\\..*", "", Gene))
-gene_discovery<- gene_discovery %>% 
-  left_join(exons_count, by = c("gene_id" = "Gene"))
-```
-
-
-```{r,  Expression of the intronic and single-exon gene, fig.height=7, fig.width=8}
-plot_df <- gene_discovery %>% mutate(
-  "Intronic Gene" = gene_discovery$gene_id %in% overlaps_tibble[overlaps_tibble$intron_gene %in% gene_discovery$gene_id,]$exon_gene,
-  "Single exon" = gene_discovery$Exon_Count == 1
-)
-
-ComplexUpset::upset(
-  plot_df,
-  intersect = c('Illumina', "ONT cDNA", "PacBio", "ONT dRNA"),
-  annotations = list(
-        # 1st method - passing list:
-        "Exon counts" = list(
-          aes = aes(x = intersection, y = Exon_Count),
-          # provide a list if you wish to add several geoms
-          geom = geom_boxplot(na.rm = TRUE, outliers = FALSE)
-        ),
-        "Single-exon Genes" = (
-          ggplot(mapping=aes(fill = `Single exon`)) +
-            geom_bar(position = "fill")+
-            scale_fill_manual(values = c("#BAC5CB",'#B5C952')) + 
-            ylab('Single-exon gene \n proportion')
-        ),
-        "Intronic Genes" = (
-          ggplot(mapping=aes(fill = `Intronic Gene`)) +
-            geom_bar(position = "fill")+
-            scale_fill_manual(values = c("#BAC5CB",'#B5C952')) + 
-            ylab('Intronic gene \n proportion')
-        )
-  ),
-  set_sizes=(
-        ComplexUpset::upset_set_size(
-            geom=geom_bar(
-                width=0.8
-            ) 
-        )+ theme(legend.position = "none")
-    ),
-   base_annotations=list(
-        'Intersection size'=ComplexUpset::intersection_size(
-            counts=TRUE,
-            mapping=aes(fill=biotype),
-            text=element_text(size = 3, vjust=-0.2)
-        ) + scale_fill_manual(values = c("Non-protein-coding"="#BAC5CB",
-                              "Protein-coding"='#B5C952'))
-    ),
-  wrap = TRUE
-)
-
-```
-
 ### Additional Analysis Not Included
 #### Inspect Pacbio specific genes
 Listing top expressed Platform specific identification on H1975 (randomly picked one as the trend is similar across cell lines)
@@ -887,10 +675,10 @@ ggplot(combined_results, aes(x = exon_expr, y = intron_expr)) +
 # Filter by expression
 tx_discovery <- tibble(
   tx_id = common_tx,
-  "Illumina" = filterByExpr(ill_bulk.dge, group = ill_bulk.dge$samples$group, min.count=5),
-  "ONT cDNA" = filterByExpr(ont_bulk.dge.oarfish, group = ont_bulk.dge.oarfish$samples$group, min.count=5),
-  "PacBio" = filterByExpr(pb_bulk.dge.oarfish, group = pb_bulk.dge.oarfish$samples$group, min.count=5),
-  "ONT dRNA" = filterByExpr(ont_drna.dge.oarfish, group = ont_drna.dge.oarfish$samples$group, min.count=5)
+  "Illumina" = filterByExpr(ill_bulk.tx.dge, group = ill_bulk.tx.dge$samples$group, min.count=5),
+  "ONT cDNA" = filterByExpr(ont_bulk.tx.dge, group = ont_bulk.tx.dge$samples$group, min.count=5),
+  "PacBio" = filterByExpr(pb_bulk.tx.dge, group = pb_bulk.tx.dge$samples$group, min.count=5),
+  "ONT dRNA" = filterByExpr(drna_bulk.tx.dge, group = drna_bulk.tx.dge$samples$group, min.count=5)
 ) %>% filter(
   Illumina | `ONT cDNA` | PacBio | `ONT dRNA`
 )

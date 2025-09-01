@@ -299,6 +299,24 @@ rule alignQC_analysis_subsample:
             --threads {resources.cpus_per_task} \
             --specific_tempdir {output.tmp_dir}
         """
+# TOP aligned length
+rule find_top_aligned_length:
+    input:
+        bam = results_dir + "/GenomeAlignment/{sample}_{cell_line}.sorted.bam"
+        #bai = results_dir + "/TranscriptAlignment/{sample}_{cell_line}.sorted.bam.bai"
+    output:
+        os.path.join(results_dir, "qc/TopAlignedRead/{sample}_{cell_line}.tsv")
+    resources:
+        cpus_per_task=1,
+        mem_mb=8000
+    params:
+        script = os.path.join(config['main_wf_dir'],'scripts/find_longest_reads_in_bam.py')
+    shell:
+        """
+        mkdir -p $(dirname {output})
+        python3 {params.script} {input.bam} {output} -n 100
+        """
+
 
 # use rule alignQC_analysis_subsample as alignQC_analysis_full with:
 #     input: 
@@ -330,6 +348,7 @@ rule qc:
                 os.path.join(results_dir, "qc/RSeQC/{sample}_{cell_line}.splice_events.pdf"), # RSeQC_junction_annotation
                 os.path.join(results_dir, "qc/RSeQC/{sample}_{cell_line}.splice_junction.pdf"), # RSeQC_junction_annotation
                 os.path.join(results_dir, "qc/aligment_summary/{alignment_type}/{sample}_{cell_line}.picard_AlignmentSummaryMetrics.txt"), # picard alignment summary
+                os.path.join(results_dir, "qc/TopAlignedRead/{sample}_{cell_line}.tsv")
             ],
             sample=config["sample_id"],
             flames_cov_plot_suffix = ['png'],

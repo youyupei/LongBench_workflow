@@ -17,19 +17,20 @@
 #         Rscript {params.script} {input.bam_path} {input.allele_stat_path} {input.barcode_file} {resources.cpus_per_task} {output.output_rds} 
 #         """
 
+
 rule run_clair3_rna:
     input:
-        bam = os.path.join(results_dir, "flames_out/{x}/align2genome.bam"),
-        bai = os.path.join(results_dir, "flames_out/{x}/align2genome.bam.bai"),
+        bam = join(results_dir, "PseudoBulkAlignment/Genome/{sample}_{cell_line}.sorted.bam"),
+        bai = join(results_dir, "PseudoBulkAlignment/Genome/{sample}_{cell_line}.sorted.bam.bai"),
         ref_genome = config['reference']['genome']
     output:
-        directory(join(results_dir, "clair3_rna/{x}"))
+        directory(join(results_dir, "clair3_rna/{sample}/{cell_line}"))
     params:
-        preset = lambda wildcards: config['clair3_preset'][wildcards.x],
+        preset = lambda wildcards: config['clair3_preset'][wildcards.sample],
     container: 
         "docker://hkubal/clair3-rna:latest"
     resources:
-        cpus_per_task = 16,
+        cpus_per_task = 8,
         mem_mb = 64000
     shell:
         """
@@ -41,7 +42,8 @@ rule run_clair3_rna:
             -t {resources.cpus_per_task} \
             -p {params.preset} \
             --enable_phasing_model \
-            --include_all_ctgs
+            --include_all_ctgs \
+            --conda_prefix /opt/conda/envs/clair3_rna
         """
 
 
@@ -49,5 +51,6 @@ rule variant_calling:
     input:
         expand(
             rules.run_clair3_rna.output,
-            x = config['sample_id']
+            sample = config['sample_id'],
+            cell_line = config['cell_line_list']
         )

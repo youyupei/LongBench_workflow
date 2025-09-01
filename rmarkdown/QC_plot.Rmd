@@ -1,8 +1,8 @@
 ---
 title: "QC plots from AlignQC and internal priming analysis"
 author: "Yupei"
-date: '2024-03-04'
-version: "v1.0"
+date: '`r Sys.Date()`'
+version: "v1.2"
 output:
   html_document:
     code_folding: hide
@@ -292,7 +292,7 @@ junc.var <- junc.var %>% mutate(
 ```
 
 
-```{r Perfect junction proportion}
+```{r Perfect junction proportion,fig.height=3, fig.width=4}
 # Perfect junction
 df_long <- junc.var %>%
   select(c(
@@ -374,7 +374,7 @@ ggplot() +
 
 
 ### Genomic Feature
-```{r}
+```{r bulk}
 # LR
 dirs <- list.dirs('/vast/projects/LongBench/analysis/lr_bulk/result/qc/AlignQC/', recursive = TRUE, full.names = TRUE)
 # Find all alignment stats files
@@ -439,7 +439,7 @@ genoemic.feature$Feature <- factor(genoemic.feature$Feature, levels=c("intergeni
 ```
 
 
-```{r genomic feature overall proportion}
+```{r genomic feature overall proportion,fig.height=3, fig.width=4}
 # Compute average proportions per platform
 summary_data <- genoemic.feature %>%
   group_by(Platform, Feature) %>%
@@ -484,100 +484,86 @@ ggplot(summary_data, aes(x = Aligned_length, y = proportion, fill = Feature)) +
 
 ### Exon count and transcript completeness
 ```{r, include=F, eval=F}
-# # LR
-# dirs <- list.dirs('/vast/projects/LongBench/analysis/lr_bulk/result/qc/AlignQC/', recursive = TRUE, full.names = TRUE)
-# # Find all alignment stats files
-# stats_files <- list.files(dirs, pattern = "annotbest.txt.gz", full.names = TRUE)
-# 
-# # SR
-# dirs <- list.dirs("/vast/projects/LongBench/analysis/sr_bulk/result/qc/AlignQC/", recursive = TRUE, full.names = TRUE)
-# stats_files <- c(stats_files, list.files(dirs, pattern = "annotbest.txt.gz", full.names = TRUE))
-# 
-# 
-# # Function to parse each file
-# parse_stats <- function(file) {
-#   # Extract platform and type from file path
-#   parts <- strsplit(file, "/")[[1]]
-#   platform <- parts[length(parts) - 2]
-#   
-#   # Read file and convert to tibble
-#   stats <- read_tsv(file, col_names = c(
-#     "id",
-#     "Read_id",
-#     "tx_id",
-#     "g_id",
-#     "completeness",
-#     "exon_count_read1",
-#     "exon_count_read2",
-#     "exon_count_read3",
-#     "exon_count_anno",
-#     "align_length_read1",
-#     "align_length_read2",
-#     "align_length_anno",
-#     "tx_id_1",
-#     "tx_id_2",
-#     "unknown_number"
-#   )) %>%
-#     select(completeness, exon_count_anno) %>%
-#     mutate(
-#       Platform = case_when(
-#         str_detect(platform, "dRNA") ~ "ONT dRNA",
-#         str_detect(platform, "ont_bulk") ~ "ONT cDNA",
-#         str_detect(platform, "pb") ~ "PacBio",
-#         TRUE ~ "Illumina",
-#       ),
-#       # remove *_
-#       Cell_line = gsub(".*_", "", platform)
-#     )
-#   
-#   # count the number of reads with different completeness and different exon count
-#   stats <- stats %>%
-#     group_by(Platform, Cell_line, completeness, exon_count_anno) %>%
-#     summarise(
-#       count = n(),
-#       .groups = "drop"
-#     )
-# 
-#   return(stats)
-# }
-# 
-# # Parse all files and combine into a single tibble
-# annotation.stat <- map_dfr(stats_files, parse_stats)
-# 
-# overall.completeness <- annotation.stat %>%
-#   group_by(Platform, Cell_line, completeness) %>%
-#   summarise(
-#     count = sum(count),
-#     .groups = "drop"
-#   )  %>% group_by(Platform, Cell_line) %>%
-#   mutate(
-#     proportion = count / sum(count) * 100
-#   ) %>% group_by(Platform,completeness) %>%
-#   summarise(avg_proportion = mean(proportion), .groups = "drop")
-# 
-# # Create stacked bar plot
-# ggplot(overall.completeness, aes(x = Platform, y = avg_proportion, fill = completeness)) +
-#   geom_bar(stat = "identity") +
-#   theme_minimal() +
-#   labs(x = "Platform", y = "Average Proportion (%)", fill = "Feature") +
-#   scale_fill_brewer(palette = "Set2") # Adjust color scheme
-# 
+# LR
+dirs <- list.dirs('/vast/projects/LongBench/analysis/lr_bulk/result/qc/AlignQC/', recursive = TRUE, full.names = TRUE)
+# Find all alignment stats files
+stats_files <- list.files(dirs, pattern = "annotbest.txt.gz", full.names = TRUE)
+
+# SR
+dirs <- list.dirs("/vast/projects/LongBench/analysis/sr_bulk/result/qc/AlignQC/", recursive = TRUE, full.names = TRUE)
+stats_files <- c(stats_files, list.files(dirs, pattern = "annotbest.txt.gz", full.names = TRUE))
+
+
+# Function to parse each file
+parse_stats <- function(file) {
+  # Extract platform and type from file path
+  parts <- strsplit(file, "/")[[1]]
+  platform <- parts[length(parts) - 2]
+
+  # Read file and convert to tibble
+  stats <- read_tsv(file, col_names = c(
+    "id",
+    "Read_id",
+    "tx_id",
+    "g_id",
+    "completeness",
+    "exon_count_read1",
+    "exon_count_read2",
+    "exon_count_read3",
+    "exon_count_anno",
+    "align_length_read1",
+    "align_length_read2",
+    "align_length_anno",
+    "tx_id_1",
+    "tx_id_2",
+    "unknown_number"
+  )) %>%
+    select(completeness, exon_count_anno) %>%
+    mutate(
+      Platform = case_when(
+        str_detect(platform, "dRNA") ~ "ONT dRNA",
+        str_detect(platform, "ont_bulk") ~ "ONT cDNA",
+        str_detect(platform, "pb") ~ "PacBio",
+        TRUE ~ "Illumina",
+      ),
+      # remove *_
+      Cell_line = gsub(".*_", "", platform)
+    )
+
+  # count the number of reads with different completeness and different exon count
+  stats <- stats %>%
+    group_by(Platform, Cell_line, completeness, exon_count_anno) %>%
+    summarise(
+      count = n(),
+      .groups = "drop"
+    )
+
+  return(stats)
+}
+
+# Parse all files and combine into a single tibble
+annotation.stat <- map_dfr(stats_files, parse_stats)
+
+overall.completeness <- annotation.stat %>%
+  group_by(Platform, Cell_line, completeness) %>%
+  summarise(
+    count = sum(count),
+    .groups = "drop"
+  )  %>% group_by(Platform, Cell_line) %>%
+  mutate(
+    proportion = count / sum(count) * 100
+  ) %>% group_by(Platform,completeness) %>%
+  summarise(avg_proportion = mean(proportion), .groups = "drop")
+
+# Create stacked bar plot
+ggplot(overall.completeness, aes(x = Platform, y = avg_proportion, fill = completeness)) +
+  geom_bar(stat = "identity") +
+  theme_minimal() +
+  labs(x = "Platform", y = "Average Proportion (%)", fill = "Feature") +
+  scale_fill_brewer(palette = "Set2") # Adjust color scheme
+
 
 ```
-
-
-### TODO
-
-1. Read align percentage -> alignment_stats.txt
-2. Aligned length per read -> lengths.txt.gz
-3. Exon counts per reads -> read_genomic_features.txt.gz
-4. Exon counts per transcript
-5. Read to transcript mapping
-6. Percentage of intronic reads -> read_genomic_features.txt.gz
-7. Percentage of intergenic reads -> read_genomic_features.txt.gz
-8. Percentage of Exonic reads -> read_genomic_features.txt.gz
-9. junction shift -> junvar.txt
-10. Error rate -> error_stats.txt
 
 ## INTERNAL PRIMING
 ```{r internal_priming_proportion, fig.height=3, fig.width=4}
@@ -645,6 +631,118 @@ ggplot() +
   scale_color_manual(values = color_palette[c("ONT", "ONT_1", "PacBio")] %>% unname) +  # Match dot color to fill + 
   theme_minimal()
 ```
+
+## PICARD QC
+```{r BASE distribution}
+dirs <- list.dirs('/vast/projects/LongBench/analysis/lr_bulk/result/qc/coverage', recursive = TRUE, full.names = TRUE)
+files <- list.files(dirs, pattern = ".picard.RNA_Metrics", full.names = TRUE)
+
+extract_metrics <- function(file) {
+  # Read the file and skip to the data table
+  lines <- readLines(file)
+  start <- grep("^PF_BASES", lines)  # header line index
+  # Read the two lines of header + values into a temp text connection
+  tab_text <- paste(lines[start:(start+1)], collapse = "\n")
+  
+  df <- read.delim(text = tab_text, stringsAsFactors = FALSE)
+  
+  # Select desired columns and convert to numeric
+  cols <- c("PCT_CODING_BASES", "PCT_UTR_BASES",
+            "PCT_INTRONIC_BASES", "PCT_INTERGENIC_BASES", "PCT_MRNA_BASES")
+  df_sub <- df %>% select(all_of(cols))
+  
+  # Extract platform and cell line from filename
+  fname <- basename(file)
+  platform <- str_extract(fname, ".*(?=_bulk)")
+  cell_line <- str_extract(fname, "(?<=bulk_)[^\\.]+")
+  
+  df_sub$platform <- platform
+  df_sub$cell_line <- cell_line
+  
+  return(df_sub)
+}
+
+
+
+# Apply to all files
+result_df <- do.call(rbind, lapply(files, extract_metrics))
+```
+
+
+```{r plot, fig.width=4, fig.height=4}
+# Gather metrics into long format for easier plotting
+plot_df <- result_df %>%
+  pivot_longer(cols = c(PCT_INTRONIC_BASES, PCT_INTERGENIC_BASES, PCT_MRNA_BASES),
+               names_to = "metric", values_to = "value")
+
+# Summarize mean and sd per platform & metric
+summary_df <- plot_df %>%
+  group_by(platform, metric) %>%
+  summarise(mean_val = mean(value, na.rm=TRUE),
+            sd_val = sd(value, na.rm=TRUE),
+            .groups = 'drop')
+
+# Barplot with error bars
+ggplot(summary_df, aes(x=metric, y=mean_val, fill=platform)) +
+  geom_bar(stat="identity", position=position_dodge(width=0.8)) +
+  geom_errorbar(aes(ymin=mean_val-sd_val, ymax=mean_val+sd_val),
+                position=position_dodge(width=0.8), width=0.2) +
+  labs(y="Percentage", x="Metric", title="Mean % by Platform with SD") +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle=45, hjust=1))
+
+ggplot(summary_df, aes(x = platform, y = mean_val, fill = metric)) +
+  geom_bar(stat = "identity", position = "fill") +
+  labs(y = "Proportion", x = "Metric", title = "Platform Contribution per Metric (Stacked Proportion)") +
+  scale_y_continuous(labels = scales::percent_format()) +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+```
+
+## Longest aligned reads
+```{r Longest aligned reads, fig.height=3,fig.width=3}
+dirs <- list.dirs('/home/users/allstaff/you.yu/LongBench/analysis/lr_bulk/result/qc/TopAlignedRead', recursive = TRUE, full.names = TRUE)
+files <- list.files(dirs, pattern = ".tsv", full.names = TRUE)
+
+# Function to parse each file
+parse_stats <- function(file) {
+  # Extract platform and type from file path
+  parts <- strsplit(file, "/")[[1]]
+  platform <- parts[length(parts)] %>% str_extract(".*(?=_bulk)")
+  cell_line <- parts[length(parts)] %>% str_extract("(?<=bulk_)[^\\.]+") %>% str_remove("\\.tsv$")
+  # Read file and convert to tibble
+  stats <- read_tsv(file)
+  
+  # Add platform and type columns
+  stats <- stats %>%
+    mutate(platform = recode(platform,
+                           "dRNA" = "ONT dRNA",
+                           "pb"   = "PacBio",
+                           "ont"  = "ONT cDNA"),
+           cell_line = cell_line)
+  return(stats)
+}
+
+color_palette <- c(
+  PacBio = "#df1995",
+  "ONT dRNA" = "#00789b",
+  "ONT cDNA" = "#04476c",
+  Illumina = "#e88b20"
+)
+# Apply to all files
+result_df <- do.call(rbind, lapply(files, parse_stats))
+result_df %>%
+  ggplot(aes(x = platform, y = aligned_length, colour = platform)) +
+  geom_boxplot() +
+  #scale_y_log10() +
+  theme_minimal() +
+  scale_color_manual(values = color_palette) + 
+  theme(legend.position = "none") +
+  labs(y = "Top 100 aligned length", x = "Sequencing protocols")
+```
+
+
 # SC/SN
 ```{r}
 color_palette <- c(
@@ -656,8 +754,119 @@ color_palette <- c(
 )
 ```
 
+## Vireo QC
+```{r Vireo Doublet and unassigned, fig.height=3, fig.width=6}
+# LR
+dirs <- list.dirs('/vast/projects/LongBench/analysis/lr_sc_sn/result/vireo', recursive = TRUE, full.names = TRUE)
+files <- list.files(dirs, pattern = "donor_ids.tsv", full.names = TRUE)
+
+library(ggplot2)
+library(dplyr)
+library(stringr)
+library(readr)
+library(tibble)
+
+# Read and summarize files
+summary_df <- lapply(files, function(f) {
+  df <- read_tsv(f, show_col_types = FALSE)
+  total <- nrow(df)
+  prop_table <- tibble(
+    protocol = str_extract(f, "(ont|pb)_(sc|sn)"),
+    doublet = mean(df$donor_id == "doublet"),
+    unassigned = mean(df$donor_id == "unassigned")
+  )
+  pivot_longer(prop_table, cols = c(doublet, unassigned), names_to = "donor_id", values_to = "proportion")
+}) %>% bind_rows()
+
+# Add platform and type
+summary_df <- summary_df %>%
+  mutate(
+    Platform = case_when(str_detect(protocol, "ont") ~ "ONT", TRUE ~ "PacBio"),
+    Type = ifelse(str_detect(protocol, "_sc"), "SC", "SN")
+  )
+
+# Plot
+ggplot(summary_df, aes(x = protocol, y = proportion*100, fill = Platform, alpha = Type)) +
+  geom_col(position = position_dodge(width = 0.7), width = 0.6) +
+  facet_wrap(~donor_id) +
+  scale_fill_manual(values = color_palette) +
+  scale_alpha_manual(values = c(SC = 1, SN = 0.3)) +
+  theme_minimal() +
+  labs(x = "Protocol", y = "Percentage (%)", fill = "Platform", alpha = "Cell Type")
+```
+
+```{r}
+# get sc
+BC_list.sc <- list.files('/vast/projects/LongBench/analysis/lr_sc_sn/result/misc/cell_line_bc_list/sc', pattern = "*BC_list.txt", full.names = TRUE, recursive = T) %>% 
+  lapply(function(f) {
+  df <- read_tsv(f,col_names=F) %>%
+    rename(cell = X1) %>%
+    mutate(cell_line = basename(f) %>% str_remove("_BC_list.txt"),
+           Type = "SC") 
+}) %>% bind_rows
+
+BC_list.sn <- list.files('/vast/projects/LongBench/analysis/lr_sc_sn/result/misc/cell_line_bc_list/sn', pattern = "*BC_list.txt", full.names = TRUE, recursive = T) %>% 
+  lapply(function(f) {
+  df <- read_tsv(f,col_names=F) %>%
+    rename(cell = X1) %>%
+    mutate(cell_line = basename(f) %>% str_remove("_BC_list.txt"),
+           Type = "SN") 
+}) %>% bind_rows
+
+BC_list <- bind_rows(BC_list.sc, BC_list.sn)
+remove(BC_list.sc, BC_list.sn)
+```
+
+```{r}
+dirs <- list.dirs('/vast/projects/LongBench/analysis/lr_sc_sn/result/vireo', recursive = TRUE, full.names = TRUE)
+files <- list.files(dirs, pattern = "prop_ambient.tsv", full.names = TRUE)
+# Read and summarize
+ambient_df <- lapply(files, function(f) {
+  df <- read_tsv(f, show_col_types = FALSE) %>%
+    select(-logLik_ratio) %>%
+    mutate(protocol = str_extract(f, "(ont|pb)_(sc|sn)"))
+}) %>% bind_rows()
+
+# Add metadata for plotting
+ambient_df <- ambient_df %>%
+  mutate(
+    Platform = case_when(str_detect(protocol, "ont") ~ "ONT", TRUE ~ "PacBio"),
+    Type = ifelse(str_detect(protocol, "_sc"), "SC", "SN")
+  )
+
+ambient_assigned <- ambient_df %>%
+  inner_join(BC_list, by = c("cell", "Type")) %>%                                # Step 1: assign cell line
+  rowwise() %>%
+  mutate(prob_assigned = get(cell_line)) %>%                          # Step 2: extract value by column name
+  ungroup()
+
+```
+
+
+```{r Vireo ambient RNA proportion, fig.height=3, fig.width=4}
+# Color palette
+color_palette <- c(
+  PacBio = "#df1995",
+  ONT = "#00789b"
+)
+
+# Plot
+ggplot(ambient_assigned, aes(x = protocol, y = 1-prob_assigned, fill = Platform, alpha = Type)) +
+  geom_boxplot(outlier.size = 0.5, width = 0.6) +
+  scale_fill_manual(values = color_palette) +
+  scale_alpha_manual(values = c(SC = 1, SN = 0.3)) +
+  labs(x = "Protocol", y = "Ambient RNA read proportion", fill = "Platform", alpha = "Cell Type") +
+  scale_y_log10() +
+  theme_minimal()
+
+```
+
+
+
 ## AlignQC
-### Alignment stats
+### Alignment stats (Skipped as no useful information for pseudobulk approach)
+
+### Genomic Feature
 ```{r SC genomic feature}
 # LR
 dirs <- list.dirs('/vast/projects/LongBench/analysis/lr_sc_sn/result/PseudoBulkQC/AlignQC', recursive = TRUE, full.names = TRUE)
@@ -718,7 +927,7 @@ genoemic.feature$Feature <- factor(genoemic.feature$Feature, levels=c("intergeni
 
 ```
 
-```{r SC SN genomic feature overall proportion}
+```{r SC SN genomic feature overall proportion,fig.height=3, fig.width=4}
 # Compute average proportions per platform
 summary_data <- genoemic.feature %>%
   group_by(Platform, Feature) %>%
@@ -733,4 +942,214 @@ ggplot(summary_data, aes(x = Platform, y = proportion, fill = Feature)) +
   theme_minimal() +
   labs(x = "Platform", y = "Proportion", fill = "Feature") +
   scale_fill_brewer(palette = "Set2") # Adjust color scheme
+```
+
+
+
+
+### Error state
+```{r load error state SC, include=F, eval=F}
+
+# LR
+dirs <- list.dirs('/vast/projects/LongBench/analysis/lr_sc_sn/result/PseudoBulkQC/AlignQC', recursive = TRUE, full.names = TRUE)
+# Find all alignment stats files
+stats_files <- list.files(dirs, pattern = "error_stats.txt", full.names = TRUE)
+
+# Parse all files and combine into a single tibble
+error.stats <- map_dfr(stats_files, parse_stats)
+# split the platform column into two columns
+error.stats <- error.stats %>%
+  separate(platform, into=c('Platform', 'Library Type','Cell_line'), sep = '_') %>%
+  mutate(
+    Platform = recode(
+      Platform, ont = 'ONT', pb = 'PacBio'
+    ),
+    `Library Type` = recode(`Library Type`, sc='SC', sn='SN')
+    )
+
+
+error.stats <- error.stats %>%
+  mutate(
+    ANY_ERROR = ANY_ERROR / ALIGNMENT_BASES * 100,
+    MISMATCHES = MISMATCHES / ALIGNMENT_BASES * 100,
+    ANY_DELETION = ANY_DELETION / ALIGNMENT_BASES * 100,
+    ANY_INSERTION = ANY_INSERTION / ALIGNMENT_BASES * 100
+  )
+
+df_long <- error.stats %>%
+  select(c(
+    Platform,
+    `Library Type`,
+    Cell_line,
+    ANY_ERROR,
+    MISMATCHES,
+    ANY_DELETION,
+    ANY_INSERTION
+  )) %>%
+  pivot_longer(cols = -c(Platform, Cell_line, `Library Type`), names_to = "Metric", values_to = "Value")
+
+df_summary <- df_long %>%
+  group_by(Platform, Metric, `Library Type`) %>%
+  summarise(
+    Mean_Value = mean(Value, na.rm = TRUE),
+    SD = sd(Value, na.rm = TRUE),  # Standard deviation
+    .groups = "drop"
+  )
+
+library(ggplot2)
+
+# Add styling columns
+df_summary <- df_summary %>%
+  mutate(
+    Platform_base = if_else(grepl("PacBio", Platform), "PacBio", "ONT"),
+    Sample_Type = if_else(grepl("SC", `Library Type`), "SC", "SN"),
+    fill_color = if_else(Platform_base == "PacBio", "#df1995", "#00789b"),
+    border_color = fill_color,
+    alpha_val = if_else(Sample_Type == "SC", 0.7, 0.3),
+    Group = paste(Platform, `Library Type`, sep = " ")
+  )
+
+df_long <- df_long %>%
+  mutate(
+    Platform_base = if_else(grepl("PacBio", Platform), "PacBio", "ONT"),
+    Sample_Type = if_else(grepl("SC", `Library Type`), "SC", "SN"),
+    fill_color = if_else(Platform_base == "PacBio", "#df1995", "#00789b"),
+    border_color = fill_color,
+    alpha_val = if_else(Sample_Type == "SC", 1, 0.3),
+    Group = paste(Platform, `Library Type`, sep = " ")
+  )
+
+# Plot
+ggplot() +
+  geom_bar(data = df_summary,
+           aes(x = Group, y = Mean_Value, fill = fill_color, alpha = alpha_val),
+           stat = "identity") +
+  geom_errorbar(data = df_summary,
+                aes(x = Group, ymin = Mean_Value - SD, ymax = Mean_Value + SD),
+                width = 0.2) +
+  geom_point(data = df_long,
+             aes(x = Group, y = Value, color = border_color, alpha = alpha_val),
+             position = position_jitter(width = 0.2), size = 2) +
+  facet_wrap(~Metric, scales = "free_y") +
+  scale_fill_identity() +
+  scale_color_identity() +
+  scale_alpha_identity() +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  labs(x = "Platform + Library Type", y = "Percentage")
+```
+
+## INTERNAL PRIMING
+```{r internal_priming_proportion SC, fig.height=3, fig.width=3}
+dirs <- list.dirs("/vast/projects/LongBench/analysis/lr_sc_sn/result/int_prim_analysis", recursive = TRUE, full.names = TRUE)
+# Find all alignment stats files
+stats_files <- list.files(dirs, pattern = "*summary.txt", full.names = TRUE)
+
+
+# Function to parse each file
+parse_stats <- function(file) {
+  # Extract platform and type from file path
+  parts <- strsplit(file, "/")[[1]]
+  platform <- parts[length(parts)]
+  
+  # Read file and convert to tibble
+  stats <- read.table(file, sep = ":", col.names = c("metric", "value"), fill = TRUE)
+  
+  # Add platform and type columns
+  stats <- stats %>%
+    mutate(platform = platform) %>%
+    pivot_wider(names_from = metric, values_from = value)
+  
+  return(stats)
+}
+
+# Parse all files and combine into a single tibble
+int.prim.stats <- map_dfr(stats_files, parse_stats)
+
+# split the platform column into two columns
+int.prim.stats <- int.prim.stats %>%
+  mutate(
+    Platform = case_when(
+      str_detect(platform, "ont_sc") ~ "ONT SC",
+      str_detect(platform, "ont_sn") ~ "ONT SN",
+      str_detect(platform, "pb_sc") ~ "PacBio SC",
+      str_detect(platform, "pb_sn") ~ "PacBio SN"
+    ),
+    `Internally primed reads percentage (%)` = `Proportion of internal priming reads` * 100
+  ) %>% dplyr::select(-platform)
+
+# Prepare data
+df_summary <- int.prim.stats %>%
+  mutate(
+    Platform_base = if_else(grepl("PacBio", Platform), "PacBio", "ONT"),
+    Sample_Type = if_else(grepl("SC", Platform), "SC", "SN"),
+    fill_color = if_else(Platform_base == "PacBio", "#df1995", "#00789b"),
+    border_color = fill_color,  # No need to repeat logic
+    alpha_val = if_else(Sample_Type == "SC", 1, 0.3)
+  )
+
+# Plot
+ggplot(df_summary, aes(x = Platform, y = `Proportion of internal priming reads`*100)) +
+  geom_bar(
+    stat = "identity",
+    aes(fill = fill_color, alpha = alpha_val),
+    width = 0.7
+  ) +
+  scale_fill_identity() +
+  scale_color_identity() +
+  scale_alpha_identity() +
+  labs(x = "Protocols", y = "Internally primed reads (%)") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+
+## PICARD QC
+```{r BASE distribution}
+dirs <- list.dirs('/vast/projects/LongBench/analysis/lr_sc_sn/result/qc/coverage', recursive = TRUE, full.names = TRUE)
+files <- list.files(dirs, pattern = ".picard.RNA_Metrics", full.names = TRUE)
+
+extract_metrics <- function(file) {
+  # Read the file and skip to the data table
+  lines <- readLines(file)
+  start <- grep("^PF_BASES", lines)  # header line index
+  # Read the two lines of header + values into a temp text connection
+  tab_text <- paste(lines[start:(start+1)], collapse = "\n")
+  
+  df <- read.delim(text = tab_text, stringsAsFactors = FALSE)
+  
+  # Select desired columns and convert to numeric
+  cols <- c("PCT_CODING_BASES", "PCT_UTR_BASES",
+            "PCT_INTRONIC_BASES", "PCT_INTERGENIC_BASES", "PCT_MRNA_BASES")
+  df_sub <- df %>% select(all_of(cols))
+  
+  # Extract platform and cell line from filename
+  fname <- basename(file)
+  platform <- str_extract(fname, ".*(?=.picard.)")
+  
+  df_sub$platform <- platform
+  
+  return(df_sub)
+}
+
+
+
+# Apply to all files
+result_df <- do.call(rbind, lapply(files, extract_metrics))
+```
+
+
+
+```{r plot, fig.width=4, fig.height=4}
+# Gather metrics into long format for easier plotting
+plot_df <- result_df %>%
+  pivot_longer(cols = c(PCT_INTRONIC_BASES, PCT_INTERGENIC_BASES, PCT_MRNA_BASES),
+               names_to = "metric", values_to = "value")
+
+# Barplot with error bars
+ggplot(plot_df, aes(x=platform, y=value, fill=metric)) +
+  geom_bar(stat="identity", position = "stack") +
+  labs(y="Percentage", x="Metric", title="Genominc feature % by Platform") +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle=45, hjust=1))
 ```

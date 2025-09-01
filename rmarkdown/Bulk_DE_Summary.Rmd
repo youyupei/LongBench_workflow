@@ -2,7 +2,7 @@
 title: "DE analysis"
 author: "Yupei & Ash"
 date: '`r Sys.Date()`'
-version: 'v3.1_lfc0'
+version: 'v3.3_lfc0'
 output:
   html_document:
     code_folding: hide
@@ -17,16 +17,7 @@ params:
   random_seed: 2024
   cache_dir: NULL
   fig.path: NULL
-  sirv_ercc_gtf: '/vast/projects/LongBench/reference_files/SIRV_Set4_Norm_Sequences_20210507/SIRV_ERCC_longSIRV_multi-fasta_20210507.gtf'
-  sequins_gtf: '/vast/projects/LongBench/reference_files/Sequin_resources/v2.4/rnasequin_annotation_2.4.gtf'
-  sequins_tsv: '/vast/projects/LongBench/reference_files/Sequin_resources/v2.4/rnasequin_isoforms_2.4.tsv'
-  human_gtf: '/vast/projects/LongBench/reference_files/GRCh38/gencode.v44.annotation.gtf'
-  sirv_csv: '/vast/projects/LongBench/reference_files/SIRV_Set4_Norm_Sequences_20210507/SIRV_set4_concentration.csv'
-  ont_bulk_oarfish_dir: "/vast/projects/LongBench/analysis/lr_bulk/result/oarfish_cov_output/ont_bulk"
-  pb_bulk_oarfish_dir: "/vast/projects/LongBench/analysis/lr_bulk/result/oarfish_cov_output/pb_bulk"
-  ont_drnd_oarfish_dir: "/vast/projects/LongBench/analysis/lr_bulk/result/oarfish_cov_output/dRNA_bulk"
-  ill_bulk_salmon_dir: "/vast/projects/LongBench/analysis/sr_bulk/result/salmon/salmon_quant"
-  bulk_meta: "/vast/projects/LongBench/sequencing_data/illumina_bulk/metadata.txt"
+  input_DGEobject_rds: "/vast/projects/LongBench/analysis/workflow/rmarkdown/RDS/bulk_DGE.obj.rds"
   output_rds: "/vast/projects/LongBench/analysis/workflow/rmarkdown/RDS/bulk_DE.rds"  
   expected_de_table: '/vast/projects/LongBench/reference_files/Expected_DE.csv'
   log2FC_cutoff: 0
@@ -52,7 +43,7 @@ params:
 
     \- **Short-Read Sequencing**: Illumina.
 
-    \- **Long-Read Sequencing**: PacBio ,  Oxford Nanopore Technologies (ONT) (`ONT_1` (cDNA sequencing), `ONT_2` (dRNA sequencing))
+    \- **Long-Read Sequencing**: PacBio ,  Oxford Nanopore Technologies (ONT) (`ONT cDNA` (cDNA sequencing), `ONT dRNA` (dRNA sequencing))
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(
@@ -107,30 +98,11 @@ if (!is.null(params$cache_dir)) {
 }
 ```
 
-```{r Input filename setup, include=FALSE, eval=F}
-params <- list(
-  random_seed = 2024,
-  cache_dir = NULL,
-  sirv_ercc_gtf = '/vast/projects/LongBench/reference_files/SIRV_Set4_Norm_Sequences_20210507/SIRV_ERCC_longSIRV_multi-fasta_20210507.gtf',
-  sequins_gtf = '/vast/projects/LongBench/reference_files/Sequin_resources/v2.4/rnasequin_annotation_2.4.gtf',
-  sequins_tsv = '/vast/projects/LongBench/reference_files/Sequin_resources/v2.4/rnasequin_isoforms_2.4.tsv',
-  human_gtf = '/vast/projects/LongBench/reference_files/GRCh38/gencode.v44.annotation.gtf',
-  sirv_csv = '/vast/projects/LongBench/reference_files/SIRV_Set4_Norm_Sequences_20210507/SIRV_set4_concentration.csv',
-  ont_bulk_oarfish_dir = "/vast/projects/LongBench/analysis/lr_bulk/result/oarfish_cov_output/ont_bulk",
-  pb_bulk_oarfish_dir = "/vast/projects/LongBench/analysis/lr_bulk/result/oarfish_cov_output/pb_bulk",
-  ont_drnd_oarfish_dir = "/vast/projects/LongBench/analysis/lr_bulk/result/oarfish_cov_output/dRNA_bulk",
-  ill_bulk_salmon_dir = "/vast/projects/LongBench/analysis/sr_bulk/result/salmon/salmon_quant",
-  bulk_meta = "/vast/projects/LongBench/sequencing_data/illumina_bulk/metadata.txt",
-  log2FC_cutoff= 0
-)
-```
-
 ```{r color code, include=FALSE}
 color_palette <- c(
   PacBio = "#df1995",
-  ONT = "#00789b",
-  ONT_1 = "#04476c", # ONT cDNA
-  ONT_2 = "#24cdcd", # ONT dRNA
+  "ONT dRNA" = "#00789b",
+  "ONT cDNA" = "#04476c",
   Illumina = "#e88b20"
 )
 ```
@@ -145,113 +117,61 @@ is.long_sirv <- function(dge) {grepl("^SIRV\\d{4}", rownames(dge))}
 is.ercc <- function(dge) {!is.human(dge) & !is.sequins(dge) & !is.sirv_all(dge)}
 ```
 
-```{r message=FALSE, warning=FALSE, include=FALSE}
-calcTxNum <- function(G.Tx.map){
-  geneid = rep(NA, nrow(G.Tx.map))
-  txcount = table(G.Tx.map$gene_id)
-  txnum = as.numeric(txcount[match(G.Tx.map$gene_id, names(txcount))])
-}
-# SIRV
-SIRV_tx <- GenomicFeatures::makeTxDbFromGFF(params$sirv_ercc_gtf, format = "gtf") %>% GenomicFeatures::transcripts(columns = c("tx_id", "tx_name", "gene_id"))
-SIRV.G.Tx.map <- tibble(
-  gene_id = SIRV_tx$gene_id %>% unlist,
-  tx_name = SIRV_tx$tx_name
-)
-rm(SIRV_tx)
-SIRV.G.Tx.map$tx_count <- SIRV.G.Tx.map %>% calcTxNum
 
-# Sequins
-sequins_tx  <- GenomicFeatures::makeTxDbFromGFF(params$sequins_gtf, format = "gtf") %>% GenomicFeatures::transcripts(columns = c("tx_id", "tx_name", "gene_id"))
-sequins.G.Tx.map <- tibble(
-  gene_id = sequins_tx$gene_id %>% unlist,
-  tx_name = sequins_tx$tx_name
-)
-rm(sequins_tx)
-sequins.G.Tx.map$tx_count <- sequins.G.Tx.map %>% calcTxNum
 
-# Human
-human_tx  <- GenomicFeatures::makeTxDbFromGFF(params$human_gtf, format = "gtf") %>% GenomicFeatures::transcripts(columns = c("tx_id", "tx_name", "gene_id"))
-human.G.Tx.map <- tibble(
-  gene_id = human_tx$gene_id %>% unlist,
-  tx_name = human_tx$tx_name
-)
-rm(human_tx)
-human.G.Tx.map$tx_count <- human.G.Tx.map %>% calcTxNum
+# Get the count data from RDS
+
+```{r Get the count data, echo=TRUE, message=FALSE, warning=FALSE, results='hide'}
+list2env(readRDS(params$input_DGEobject_rds), .GlobalEnv)
+# This will load the following DGE objects:
+# ill_bulk.tx.dge, ont_bulk.tx.dge, pb_bulk.tx.dge, drna_bulk.tx.dge, for transcript level unfiltered DGE
+# ill_bulk.gene.dge, ont_bulk.gene.dge, pb_bulk.gene.dge, drna_bulk.gene.dge for gene level unfiltered DGE
 ```
 
-```{r Create DGE from input, echo=TRUE, message=FALSE, warning=FALSE, results='hide'}
-bulk.meta <- read.csv(params$bulk_meta)
-rownames(bulk.meta) <- bulk.meta$sample
+## Plot the library size
+```{r total count plot, fig.height=3, fig.width=3}
+# Build combined data frame of library sizes
+lib_sizes <- data.frame(
+  Sample = colnames(ill_bulk.tx.dge),
+  LibSize = colSums(ill_bulk.tx.dge$counts),
+  Dataset = "Illumina"
+) %>%
+  rbind(data.frame(
+    Sample = colnames(drna_bulk.tx.dge),
+    LibSize = colSums(drna_bulk.tx.dge$counts),
+    Dataset = "ONT dRNA"
+  )) %>%
+  rbind(data.frame(
+    Sample = colnames(pb_bulk.tx.dge),
+    LibSize = colSums(pb_bulk.tx.dge$counts),
+    Dataset = "PacBio"
+  )) %>%
+  rbind(data.frame(
+    Sample = colnames(ont_bulk.tx.dge),
+    LibSize = colSums(ont_bulk.tx.dge$counts),
+    Dataset = "ONT cDNA"
+  ))
 
-# SR salmon
-ill_bulk.dge <- get_dge_from_salmon(params$ill_bulk_salmon_dir, ".*/")
+# Plot with custom colors
+ggplot(lib_sizes, aes(x = Dataset, y = LibSize, fill = Dataset)) +
+  geom_boxplot(outlier.shape = NA, alpha = 0.9) +
+  geom_jitter(width = 0.2, alpha = 0.6, size = 1) +
+  scale_fill_manual(values = color_palette) +
+  scale_y_continuous(labels = scales::comma) +
+  labs(
+    title = "Library Size per Sample",
+    y = "Total Counts (Library Size)",
+    x = "Sequencing protocols"
+  ) +
+  ylim(0, 65000000) +
+  theme_minimal() +
+  theme(legend.position = "none") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
 
-# LR oarfish
-ont_bulk.dge.oarfish <- get_dge_from_oarfish(params$ont_bulk_oarfish_dir, ".*/")
-pb_bulk.dge.oarfish <- get_dge_from_oarfish(params$pb_bulk_oarfish_dir, ".*/")
-ont_drna.dge.oarfish <- get_dge_from_oarfish(params$ont_drnd_oarfish_dir, ".*/")
-```
-
-# Count data Preprocessing
-
-1.  Aggregate transcript counts to gene level using `tximport` with unfiltered transcript counts
-2.  Filter out lowly expressed genes and transcript using `filterByExpr` for each dataset, using default parameters
-
--   The filtering will be done on single dataset level, and the union of the filtered genes will be used for the downstream analysis
--   Note: The starting number of gene/transcript is smaller for the salmon pseudoalignment method compared to the kallisto and oarfish methods. This is due to the fact that the genecode transcript FASTA has more transcript/gene than their annotation GTF file. Given the proportion is tiny (\<0.2% transcripts), to keep the analysis consistent, we will remove the genes (either expressed or not) that are not present in salmon output from the kallisto and oarfish datasets.
-
-3.  Normalise the gene counts using `calcNormFactors` with `TMM` methods for each dataset
-
-## Aggregate transcript counts to gene level using `tximport` with unfiltered transcript counts
-
-```{r Aggregate to gene level, echo=TRUE, message=FALSE, warning=FALSE, results='hide'}
-library(tximport) # install latest version from github
-
-# Extract tx_name and gene_id columns from human , sequins and SIRV
-human_tx2gene <- human.G.Tx.map[, c("tx_name", "gene_id")]
-sequins_tx2gene <- sequins.G.Tx.map[, c("tx_name", "gene_id")]
-SIRV_tx2gene <- SIRV.G.Tx.map[, c("tx_name", "gene_id")]
-combined_tx2gene <- rbind(human_tx2gene, sequins_tx2gene, SIRV_tx2gene)
-
-# Get quant.sf file paths
-get_quant_paths <- function(dirs, file_name) {
-  # Generate file paths for quantification files
-  quant_paths <- file.path(dirs, file_name)
-  return(quant_paths)
-}
-
-# Define directories with their corresponding expected file names
-oarfish_dirs <- list(
-  ill_bulk = list(dir = params$ill_bulk_salmon_dir, file_name = "quant.sf"),
-  ont_bulk = list(dir = params$ont_bulk_oarfish_dir, file_name = ".quant"),
-  pb_bulk = list(dir = params$pb_bulk_oarfish_dir, file_name = ".quant"),
-  drna_bulk = list(dir = params$ont_drnd_oarfish_dir, file_name = ".quant")
-)
-
-# Apply function to each directory to get all quant file paths
-quant_paths <- lapply(oarfish_dirs, function(dir_info) {
-  # Get the directory and file name from dir_info
-  dir <- dir_info$dir
-  file_name <- dir_info$file_name
-  
-  # List all subdirectories and get the quant file paths
-  sub_dirs <- list.dirs(dir, full.names = TRUE, recursive = FALSE)
-  get_quant_paths(sub_dirs, file_name)
-})
-
-# Flatten the list of quant_paths into a named list
-quant_paths <- lapply(quant_paths, unlist)
-
-# Process each quant path for different bulk types
-ill_bulk.gene.dge <- get_dge_from_txi(quant_paths$ill_bulk, ".*/", "salmon")
-ont_bulk.gene.dge <- get_dge_from_txi(quant_paths$ont_bulk, ".*/", "oarfish")
-pb_bulk.gene.dge <- get_dge_from_txi(quant_paths$pb_bulk, ".*/", "oarfish")
-drna_bulk.gene.dge <- get_dge_from_txi(quant_paths$drna_bulk, ".*/", "oarfish")
 ```
 
 ## Filter out lowly expressed genes and transcript using `filterByExpr` for each dataset, using default parameters
-
-```{r gene filtering for DE, echo=TRUE, message=FALSE, warning=FALSE, results='hide'}
+```{r filtering for DE testable feature, echo=TRUE, message=FALSE, warning=FALSE, results='hide'}
 #GENE 
 ## 1. get common genes
 common_genes <- Reduce(intersect, lapply(list(ill_bulk.gene.dge, ont_bulk.gene.dge, pb_bulk.gene.dge, drna_bulk.gene.dge), rownames))
@@ -272,29 +192,27 @@ ill_bulk.gene.dge <- ill_bulk.gene.dge[keep, ]
 ont_bulk.gene.dge <- ont_bulk.gene.dge[keep, ]
 pb_bulk.gene.dge <- pb_bulk.gene.dge[keep, ]
 drna_bulk.gene.dge <- drna_bulk.gene.dge[keep, ]
-```
 
-```{r transcript filtering for DE, echo=TRUE, message=FALSE, warning=FALSE, results='hide'}
 # Transcript
 ## 1. get common transcripts
-common_tx <- Reduce(intersect, lapply(list(ill_bulk.dge, ont_bulk.dge.oarfish, pb_bulk.dge.oarfish, ont_drna.dge.oarfish), rownames))
+common_tx <- Reduce(intersect, lapply(list(ill_bulk.tx.dge, ont_bulk.tx.dge, pb_bulk.tx.dge, drna_bulk.tx.dge), rownames))
 
-ill_bulk.dge <- ill_bulk.dge[common_tx, ]
-ont_bulk.dge.oarfish <- ont_bulk.dge.oarfish[common_tx, ]
-pb_bulk.dge.oarfish <- pb_bulk.dge.oarfish[common_tx, ]
-ont_drna.dge.oarfish <- ont_drna.dge.oarfish[common_tx, ]
+ill_bulk.tx.dge <- ill_bulk.tx.dge[common_tx, ]
+ont_bulk.tx.dge <- ont_bulk.tx.dge[common_tx, ]
+pb_bulk.tx.dge <- pb_bulk.tx.dge[common_tx, ]
+drna_bulk.tx.dge <- drna_bulk.tx.dge[common_tx, ]
 
 ## 2. filter by expression
-keep <- filterByExpr(ill_bulk.dge, group = ill_bulk.dge$samples$group, min.count=5) &
-          filterByExpr(ont_bulk.dge.oarfish, group = ont_bulk.dge.oarfish$samples$group, min.count=5) &
-          filterByExpr(pb_bulk.dge.oarfish, group = pb_bulk.dge.oarfish$samples$group, min.count=5) &
-          filterByExpr(ont_drna.dge.oarfish, group = ont_drna.dge.oarfish$samples$group, min.count=5)
+keep <- filterByExpr(ill_bulk.tx.dge, group = ill_bulk.tx.dge$samples$group, min.count=5) &
+          filterByExpr(ont_bulk.tx.dge, group = ont_bulk.tx.dge$samples$group, min.count=5) &
+          filterByExpr(pb_bulk.tx.dge, group = pb_bulk.tx.dge$samples$group, min.count=5) &
+          filterByExpr(drna_bulk.tx.dge, group = drna_bulk.tx.dge$samples$group, min.count=5)
 #table(keep)
 
-ill_bulk.dge <- ill_bulk.dge[keep, ]
-ont_bulk.dge.oarfish <- ont_bulk.dge.oarfish[keep, ]
-pb_bulk.dge.oarfish <- pb_bulk.dge.oarfish[keep, ]
-ont_drna.dge.oarfish <- ont_drna.dge.oarfish[keep, ]
+ill_bulk.tx.dge <- ill_bulk.tx.dge[keep, ]
+ont_bulk.tx.dge <- ont_bulk.tx.dge[keep, ]
+pb_bulk.tx.dge <- pb_bulk.tx.dge[keep, ]
+drna_bulk.tx.dge <- drna_bulk.tx.dge[keep, ]
 ```
 
 ## Normalise the gene and transcript counts using `calcNormFactors` with `TMM` methods for each dataset, separately for human
@@ -308,12 +226,13 @@ drna_bulk.gene.dge <- calcNormFactors(drna_bulk.gene.dge, method = "TMM")
 
 
 ### 4. Normalise the transcript counts using `calcNormFactors` with `TMM` methods for each dataset
-ill_bulk.dge <- calcNormFactors(ill_bulk.dge, method = "TMM")
-ont_bulk.dge.oarfish <- calcNormFactors(ont_bulk.dge.oarfish, method = "TMM")
-pb_bulk.dge.oarfish <- calcNormFactors(pb_bulk.dge.oarfish, method = "TMM")
-ont_drna.dge.oarfish <- calcNormFactors(ont_drna.dge.oarfish, method = "TMM")
+ill_bulk.tx.dge <- calcNormFactors(ill_bulk.tx.dge, method = "TMM")
+ont_bulk.tx.dge <- calcNormFactors(ont_bulk.tx.dge, method = "TMM")
+pb_bulk.tx.dge <- calcNormFactors(pb_bulk.tx.dge, method = "TMM")
+drna_bulk.tx.dge <- calcNormFactors(drna_bulk.tx.dge, method = "TMM")
 
 ```
+
 
 # MDS (Merged)
 
@@ -335,18 +254,18 @@ bulk.gene.dge.merge <- cbind(
 )
 
 # Transcript
-ill_bulk.dge$samples$platform <- "Illumina"
-ill_bulk.dge.copy <- ill_bulk.dge
-ill_bulk.dge.copy$genes$EffectiveLength <- NULL
-ont_bulk.dge.oarfish$samples$platform <- "ONT cDNA"
-pb_bulk.dge.oarfish$samples$platform <- "PacBio"
-ont_drna.dge.oarfish$samples$platform <- "ONT dRNA"
+ill_bulk.tx.dge$samples$platform <- "Illumina"
+ill_bulk.tx.dge.copy <- ill_bulk.tx.dge
+ill_bulk.tx.dge.copy$genes$EffectiveLength <- NULL
+ont_bulk.tx.dge$samples$platform <- "ONT cDNA"
+pb_bulk.tx.dge$samples$platform <- "PacBio"
+drna_bulk.tx.dge$samples$platform <- "ONT dRNA"
 
 bulk.tx.dge.merge <- cbind(
-  ill_bulk.dge.copy,
-  ont_bulk.dge.oarfish,
-  pb_bulk.dge.oarfish,
-  ont_drna.dge.oarfish
+  ill_bulk.tx.dge.copy,
+  ont_bulk.tx.dge,
+  pb_bulk.tx.dge,
+  drna_bulk.tx.dge
 )
 ```
 
@@ -392,7 +311,7 @@ mds <- norm_and_mds(bulk.gene.dge.merge[is.human(bulk.gene.dge.merge),])
 p1 <- myMDS(bulk.gene.dge.merge[is.human(bulk.gene.dge.merge), ], mds) + ggtitle("Human gene counts")
 p2 <- myMDS(bulk.gene.dge.merge[is.human(bulk.gene.dge.merge), ], mds) + ggtitle("Human gene counts")  + 
             aes(color = Data.type, shape = Cancer.type) + 
-            scale_color_manual(values = color_palette[c("Illumina", "ONT_1", "ONT_2", "PacBio")] %>% unname())
+            scale_color_manual(values = color_palette[c("Illumina", "ONT cDNA", "ONT dRNA", "PacBio")] %>% unname())
 p1 | p2 
 ```
 
@@ -408,7 +327,7 @@ Here are key observations from the transcript-level MDS plots:
 mds <- norm_and_mds(bulk.tx.dge.merge[is.human(bulk.tx.dge.merge),])
 p1 <- myMDS(bulk.tx.dge.merge[is.human(bulk.tx.dge.merge), ], mds) + ggtitle("Human transcript counts") + 
   aes(color = Data.type, shape = Cancer.type) + 
-  scale_color_manual(values = color_palette[c("Illumina", "ONT_1", "ONT_2", "PacBio")] %>% unname())
+  scale_color_manual(values = color_palette[c("Illumina", "ONT cDNA", "ONT dRNA", "PacBio")] %>% unname())
 
 p2 <- myMDS(bulk.tx.dge.merge[is.human(bulk.tx.dge.merge), ], mds) + ggtitle("Human transcript counts")
 
@@ -486,8 +405,9 @@ pb_bulk.dge_human.list <- DGE.edgeR_human(pb_bulk.gene.dge[is.human(pb_bulk.gene
     -   [ONT dRNA](./DGE_summary/DGE_Glimma_HTML/dRNA_AvsP_volcano_plot.html)
 
 
-##Check Expected DE
-```{r}
+##Check Expected DE ()
+There are some expected DE gene provided, let's check them:
+```{r, include=F, eval=F}
 expected_DE <- read_csv(params$expected_de_table)
 
 add_FC <- function(x){
@@ -530,18 +450,16 @@ add_FC <- function(x){
               ), by = "Gene")
 }
 
-# expected_DE %>%  left_join(mat.AvsL.DE %>% mutate(Gene = sub("\\..*", "", Gene)), by="Gene") %>% add_FC
-# expected_DE %>% left_join(mat.PvsL.DE %>% mutate(Gene = sub("\\..*", "", Gene)), by="Gene") %>% add_FC
-# expected_DE %>% left_join(mat.AvsP.DE %>% mutate(Gene = sub("\\..*", "", Gene)), by="Gene") %>% add_FC
-
-
-
+expected_DE %>%  left_join(mat.AvsL.DE %>% mutate(Gene = sub("\\..*", "", Gene)), by="Gene") %>% add_FC
+expected_DE %>% left_join(mat.PvsL.DE %>% mutate(Gene = sub("\\..*", "", Gene)), by="Gene") %>% add_FC
+expected_DE %>% left_join(mat.AvsP.DE %>% mutate(Gene = sub("\\..*", "", Gene)), by="Gene") %>% add_FC
 ```
 
-### MA plots
-```{r MA plots, fig.height=3, fig.width=13}
+### MA plots with marker highlighted
+```{r MA plots, fig.height=13, fig.width=13}
 library(ggplot2)
 library(ggrepel)
+expected_DE <- read_csv(params$expected_de_table)
 plot.my.ma <- function(dge){
   # Get results and DE decisions
   res <- dge$table %>% 
@@ -563,22 +481,98 @@ plot.my.ma <- function(dge){
   res_nonDE <- res %>% filter(DE == 0)
   res_DE <- res %>% filter(DE != 0)
   # MA plot
-  ggplot() +
-    geom_point(data = res_nonDE, aes(x = logCPM, y = logFC), color = "gray", alpha = 0.4) +
-    geom_point(data = res_DE, aes(x = logCPM, y = logFC, color = DE), alpha = 0.6) +
-    scale_color_manual(values = c("-1" = "blue", "1" = "red")) +
-    geom_point(data = highlighted, aes(x = logCPM, y = logFC), color = "yellow", shape = 21, fill = NA, size = 2, stroke = 1) +
-    geom_text_repel(data = highlighted, aes(x = logCPM, y = logFC, label = Symbol), size = 3, max.overlaps = 100) +
-    geom_hline(yintercept = 0, linetype = "dashed", color = "gray") +
-    labs(x = "Average log CPM", y = "log₂ Fold Change", color = "DE Status") +
-    theme_minimal()x
+library(ggrepel)
+
+ggplot() +
+  geom_point(data = res_nonDE, aes(x = logCPM, y = logFC), color = "gray", alpha = 1, size = 0.5) +
+  geom_point(data = res_DE, aes(x = logCPM, y = logFC, color = DE), alpha = 1, size = 0.5) +
+  scale_color_manual(values = c("-1" = "#80b1d3", "1" = "#fb8072")) +
+  geom_point(data = highlighted, aes(x = logCPM, y = logFC), 
+             color = "yellow", shape = 21, fill = NA, size = 1, stroke = 1) +
+  geom_text_repel(data = highlighted, aes(x = logCPM, y = logFC, label = Symbol), 
+                  size = 3, max.overlaps = 100) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "gray") +
+  labs(x = "Average log CPM", y = "log₂ Fold Change", color = "DE Status") +
+  theme_minimal()
 }
-ill_bulk.dge_human.list %>% map(plot.my.ma) %>% wrap_plots(ncol=3, guides='collect') +  plot_annotation(title = "Illumina")
-ont_bulk.dge_human.list %>% map(plot.my.ma) %>% wrap_plots(ncol=3, guides='collect') +  plot_annotation(title = "ONT cDNA")
-drna_bulk.deg_human.list %>% map(plot.my.ma) %>% wrap_plots(ncol=3, guides='collect') +  plot_annotation(title = "ONT dRNA")
-pb_bulk.dge_human.list %>% map(plot.my.ma) %>% wrap_plots(ncol=3, guides='collect') +  plot_annotation(title = "PacBio")
+
+ill_bulk.dge_human.list %>% map(plot.my.ma) %>% wrap_plots(ncol=3, guides='collect') +  plot_annotation(title = "Illumina") -> p1
+ont_bulk.dge_human.list %>% map(plot.my.ma) %>% wrap_plots(ncol=3, guides='collect') +  plot_annotation(title = "ONT cDNA") -> p2
+drna_bulk.deg_human.list %>% map(plot.my.ma) %>% wrap_plots(ncol=3, guides='collect') +  plot_annotation(title = "ONT dRNA") -> p3
+pb_bulk.dge_human.list %>% map(plot.my.ma) %>% wrap_plots(ncol=3, guides='collect') +  plot_annotation(title = "PacBio") -> p4
+
+(p1 / p2 / p3 / p4) + 
+  plot_layout(guides = "collect") +
+  plot_annotation(title = "Bulk MA Plots", tag_levels = "A")
+
+
 ```
 
+## Total number of DEG
+```{r total DGE, fig.height=3, fig.width=4}
+
+plot_d <- tibble()
+lst <- list(
+  "Illumina" = ill_bulk.dge_human.list$AvsL.DE,
+  "ONT cDNA" = ont_bulk.dge_human.list$AvsL.DE,
+  "PacBio" = pb_bulk.dge_human.list$AvsL.DE,
+  "ONT dRNA" = drna_bulk.deg_human.list$AvsL.DE
+)
+
+# apply decideTests to each list element
+DEGs <- lapply(lst, function(x) {
+  x <- x %>% decideTests(lfc=params$log2FC_cutoff)
+  x <- rownames(x)[x != 0]
+  return(x)
+})
+
+plot_d <- bind_rows(
+  plot_d, stack(DEGs)  %>% mutate(contrast="AvsL")
+)
+lst <- list(
+  "Illumina" = ill_bulk.dge_human.list$PvsL.DE,
+  "ONT cDNA" = ont_bulk.dge_human.list$PvsL.DE,
+  "PacBio" = pb_bulk.dge_human.list$PvsL.DE,
+  "ONT dRNA" = drna_bulk.deg_human.list$PvsL.DE
+)
+
+# apply decideTests to each list element
+DEGs <- lapply(lst, function(x) {
+  x <- x %>% decideTests(lfc=params$log2FC_cutoff)
+  x <- rownames(x)[x != 0]
+  return(x)
+})
+
+plot_d <- bind_rows(
+  plot_d, stack(DEGs)  %>% mutate(contrast="PvsL")
+)
+
+
+lst <- list(
+  "Illumina" = ill_bulk.dge_human.list$AvsP.DE,
+  "ONT cDNA" = ont_bulk.dge_human.list$AvsP.DE,
+  "PacBio" = pb_bulk.dge_human.list$AvsP.DE,
+  "ONT dRNA" = drna_bulk.deg_human.list$AvsP.DE
+)
+
+DEGs <- lapply(lst, function(x) {
+  x <- x %>% decideTests(lfc=params$log2FC_cutoff)
+  x <- rownames(x)[x != 0]
+  return(x)
+})
+
+plot_d <- bind_rows(
+  plot_d, stack(DEGs)  %>% mutate(contrast="AvsP")
+)
+
+ggplot(plot_d %>% mutate(contrast = factor(contrast, levels = c("AvsL", "PvsL", "AvsP"))), aes(x = ind, fill = ind)) +
+  geom_bar() +
+  scale_fill_manual(values = color_palette) +
+  labs(x = "Sequencing protocols", y = "Number of DEGs", title = "Gene Counts per Platform") +
+  facet_wrap(~ contrast) +
+  theme_minimal() +
+  theme(legend.position = "none", axis.text.x = element_text(angle = 45, hjust = 1))
+```
 
 ## Cross-platform comparison DGE human (upset)
 
@@ -696,6 +690,7 @@ df_long %>%
     Category %in% c("Platform-Specific Absence", "Common Absence (also absent in >0 other platform)") ~ -n,
     TRUE ~ n
   )) %>%
+  filter(!Category=="Common Absence (also absent in >0 other platform)") %>%
   ggplot(aes(x = Platform, y = n, fill = Category)) +
   geom_bar(stat = "identity") +
   labs(
@@ -837,7 +832,7 @@ my_complexUpset <- function(data, gene_length_lookup, ensembl, title) {
 }
 
 # Generate the gene length lookup table
-tx_ref_df <- ill_bulk.dge$genes %>%
+tx_ref_df <- ill_bulk.tx.dge$genes %>%
   rownames_to_column("tx_id") %>%
   select(tx_id, Length) %>%
   tibble() %>%
@@ -978,7 +973,7 @@ Here we can scroll through the tables generate for high-confidence genes with th
 ```{r html tables common DGE, echo=TRUE, message=FALSE, warning=FALSE}
 library(kableExtra)
 # Define the color palette with transparency
-color_palette <- c(
+color_palette_2 <- c(
   PacBio = "rgba(223, 25, 149, 0.3)",
   ONT_cDNA = "rgba(4, 71, 108, 0.3)",
   ONT_dRNA = "rgba(36, 205, 205, 0.3)",
@@ -991,16 +986,16 @@ get_color <- function(column_name) {
     return("white")  # No color for metadata columns
   }
   if (grepl("ONT_dRNA", column_name, ignore.case = TRUE)) {
-    return(color_palette["ONT_dRNA"])
+    return(color_palette_2["ONT_dRNA"])
   }
   if (grepl("ONT", column_name, ignore.case = TRUE)) {
-    return(color_palette["ONT_cDNA"])
+    return(color_palette_2["ONT_cDNA"])
   }
   if (grepl("Illumina", column_name, ignore.case = TRUE)) {
-    return(color_palette["Illumina"])
+    return(color_palette_2["Illumina"])
   }
   if (grepl("PacBio", column_name, ignore.case = TRUE)) {
-    return(color_palette["PacBio"])
+    return(color_palette_2["PacBio"])
   }
   return("white")  # Default color
 }
@@ -1141,7 +1136,7 @@ Here we can scroll through the tables generated for platform specific genes with
 
 # Function to assign colors based on platform
 assign_color <- function(platform) {
-  color_palette[platform]
+  color_palette_2[platform]
 }
 
 # Function to generate the colored table for any comparison
@@ -1196,7 +1191,7 @@ In this section, **GO and KEGG enrichment analyses** are performed to identify k
 
 Here GO analysis will be preformed on common DEGs as well as PacBio specific DEGs (top platform specific in this comparison)
 
-```{r GO SCLC_A vs LUCA, echo=TRUE, fig.height=7, fig.width=5, message=FALSE, warning=FALSE}
+```{r GO SCLC_A vs LUCA, echo=TRUE, fig.height=10, fig.width=10, message=FALSE, warning=FALSE}
 library(clusterProfiler)
 
 # SCLC_A vs LUAD
@@ -1662,10 +1657,10 @@ DTE.edgeR_human <- function(dge, norm.method="TMM") {
 
 ```{r get dte scaling, echo=TRUE, message=FALSE, warning=FALSE}
 # scale
-ill_bulk.scale_dge <- ill_bulk.dge
-ont_bulk.scale_dge <- ont_bulk.dge.oarfish
-pb_bulk.scale_dge <- pb_bulk.dge.oarfish
-ont_drna.scale_dge <- ont_drna.dge.oarfish
+ill_bulk.scale_dge <- ill_bulk.tx.dge
+ont_bulk.scale_dge <- ont_bulk.tx.dge
+pb_bulk.scale_dge <- pb_bulk.tx.dge
+ont_drna.scale_dge <- drna_bulk.tx.dge
 
 ill_bulk.scale_dge$counts  <- ill_bulk.scale_dge$counts / ill_bulk.scale_dge$genes$Overdispersion
 ont_bulk.scale_dge$counts  <- ont_bulk.scale_dge$counts / ont_bulk.scale_dge$genes$Overdispersion
@@ -1699,6 +1694,75 @@ Here the platform specific DTE analysis can be further inspected via Glimma repo
     -   [PacBio](./DTE_summary/DTE_Glimma_HTML/PacBio_AvsP_volcano_plot.html)
     -   [ONT cDNA](./DTE_summary/DTE_Glimma_HTML/ONT_AvsP_volcano_plot.html)
     -   [ONT dRNA](./DTE_summary/DTE_Glimma_HTML/dRNA_AvsP_volcano_plot.html)
+
+## Total number of DTE 
+
+
+```{r Total number of DTE , fig.height=3, fig.width=4}
+plot_d <- tibble()
+
+lst <- list(
+  "Illumina" = ill_bulk.scl_dte_human.list$AvsL.DE,
+  "ONT cDNA" = ont_bulk.scl_dte_human.list$AvsL.DE,
+  "PacBio" = pb_bulk.scl_dte_human.list$AvsL.DE,
+  "ONT dRNA" = drna_bulk.scl_dte_human.list$AvsL.DE
+)
+
+DEGs <- lapply(lst, function(x) {
+  x <- x %>% decideTests(lfc=params$log2FC_cutoff)
+  x <- rownames(x)[x != 0]
+  return(x)
+})
+
+plot_d <- bind_rows(
+  plot_d, stack(DEGs)  %>% mutate(contrast="AvsL")
+)
+
+
+lst <- list(
+  "Illumina" = ill_bulk.scl_dte_human.list$PvsL.DE,
+  "ONT cDNA" = ont_bulk.scl_dte_human.list$PvsL.DE,
+  "PacBio" = pb_bulk.scl_dte_human.list$PvsL.DE,
+  "ONT dRNA" = drna_bulk.scl_dte_human.list$PvsL.DE
+)
+
+DEGs <- lapply(lst, function(x) {
+  x <- x %>% decideTests(lfc=params$log2FC_cutoff)
+  x <- rownames(x)[x != 0]
+  return(x)
+})
+
+plot_d <- bind_rows(
+  plot_d, stack(DEGs)  %>% mutate(contrast="PvsL")
+)
+
+lst <- list(
+  "Illumina" = ill_bulk.scl_dte_human.list$AvsP.DE,
+  "ONT cDNA" = ont_bulk.scl_dte_human.list$AvsP.DE,
+  "PacBio" = pb_bulk.scl_dte_human.list$AvsP.DE,
+  "ONT dRNA" = drna_bulk.scl_dte_human.list$AvsP.DE
+)
+
+DEGs <- lapply(lst, function(x) {
+  x <- x %>% decideTests(lfc=params$log2FC_cutoff)
+  x <- rownames(x)[x != 0]
+  return(x)
+})
+
+plot_d <- bind_rows(
+  plot_d, stack(DEGs)  %>% mutate(contrast="AvsP")
+)
+
+
+
+ggplot(plot_d %>% mutate(contrast = factor(contrast, levels = c("AvsL", "PvsL", "AvsP"))), aes(x = ind, fill = ind)) +
+  geom_bar() +
+  scale_fill_manual(values = color_palette) +
+  labs(x = "Sequencing protocols", y = "Number of DETs", title = "DE transcript per Platform") +
+  facet_wrap(~ contrast) +
+  theme_minimal() +
+  theme(legend.position = "none", axis.text.x = element_text(angle = 45, hjust = 1))
+```
 
 ## Cross-platform comparison DTE human (upset)
 
@@ -1865,6 +1929,7 @@ df_long %>%
     Category %in% c("Platform-Specific Absence", "Common Absence (also absent in >0 other platform)") ~ -n,
     TRUE ~ n
   )) %>%
+  filter(!Category=="Common Absence (also absent in >0 other platform)") %>%
   ggplot(aes(x = Platform, y = n, fill = Category)) +
   geom_bar(stat = "identity") +
   labs(
@@ -1910,7 +1975,24 @@ output_list[["PvsL.DTE.all"]] <- mat.PvsL.DTE %>%
   filter(rowSums(select(., where(is.numeric))) == 4) %>% pull(Gene)
 output_list[["PvsL.DTE.any"]] <- mat.PvsL.DTE %>% 
   filter(rowSums(select(., where(is.numeric))) > 0) %>% pull(Gene)
-#
+
+
+dge_lists <- list(
+  ill = ill_bulk.dge_human.list,
+  ont = ont_bulk.dge_human.list,
+  pb = pb_bulk.dge_human.list,
+  drna = drna_bulk.deg_human.list
+)
+
+dte_lists <- list(
+  ill = ill_bulk.scl_dte_human.list,
+  ont = ont_bulk.scl_dte_human.list,
+  pb = pb_bulk.scl_dte_human.list,
+  drna = drna_bulk.scl_dte_human.list
+)
+
+output_list[['dge_lists']] <- dge_lists
+output_list[['dte_lists']] <- dte_lists
 
 # output the rds
 dir.create(dirname(params$output_rds), recursive = TRUE, showWarnings = FALSE)
@@ -2023,3 +2105,315 @@ table_AvsL
 table_PvsL
 table_AvsP
 ```
+
+
+
+# BCV (Not included in manuscript)
+```{r} 
+ill_bulk.gene.dge <- ill_bulk.gene.dge %>% estimateDisp()
+ont_bulk.gene.dge <- ont_bulk.gene.dge %>% estimateDisp()
+pb_bulk.gene.dge <- pb_bulk.gene.dge %>% estimateDisp()
+drna_bulk.gene.dge <- drna_bulk.gene.dge %>% estimateDisp() 
+
+
+ill_bulk.tx.dge <- ill_bulk.tx.dge %>% estimateDisp
+drna_bulk.tx.dge <- drna_bulk.tx.dge %>% estimateDisp
+pb_bulk.tx.dge <-  pb_bulk.tx.dge %>% estimateDisp
+ont_bulk.tx.dge <-  ont_bulk.tx.dge %>% estimateDisp
+
+
+ill_bulk.scale_dge <- ill_bulk.scale_dge %>% estimateDisp
+ont_drna.scale_dge <- ont_drna.scale_dge %>% estimateDisp
+pb_bulk.scale_dge <-  pb_bulk.scale_dge %>% estimateDisp
+ont_bulk.scale_dge <-  ont_bulk.scale_dge %>% estimateDisp
+
+
+```
+
+```{r BCV  plot, fig.height=3, fig.width=8}
+color_palette <- c(
+  PacBio = "#df1995",
+  "ONT dRNA" = "#00789b",
+  "ONT cDNA" = "#04476c", # ONT cDNA
+  # ONT dRNA = "#24cdcd", # ONT dRNA
+  Illumina = "#e88b20"
+)
+# Gene level
+
+common_disp <- data.frame(
+  Dataset = c("Illumina", "ONT dRNA", "PacBio", "ONT cDNA"),
+  BCV = c(
+    sqrt(ill_bulk.gene.dge$common.dispersion),
+    sqrt(ont_bulk.gene.dge$common.dispersion),
+    sqrt(pb_bulk.gene.dge$common.dispersion),
+    sqrt(drna_bulk.gene.dge$common.dispersion)
+  )
+)
+
+p.gene <- ggplot(common_disp, aes(x = Dataset, y = BCV, fill = Dataset)) +
+  geom_col(width = 0.7) +
+  scale_fill_manual(values = color_palette) +
+  labs(
+    y = "BCV",
+    x = "Sequencing protocols",
+    title = "Gene-level BCV"
+  ) +
+  theme_minimal() +
+  theme(
+    legend.position = "none",
+    axis.text.x = element_text(angle = 45, hjust = 1)
+  )
+
+
+# Create BCV dataframe scale 
+common_disp <- data.frame(
+  Dataset = c("Illumina", "ONT dRNA", "PacBio", "ONT cDNA"),
+  BCV = c(
+    sqrt(ill_bulk.tx.dge$common.dispersion),
+    sqrt(drna_bulk.tx.dge$common.dispersion),
+    sqrt(pb_bulk.tx.dge$common.dispersion),
+    sqrt(ont_bulk.tx.dge$common.dispersion)
+  )
+)
+
+# Plot
+p.tx <- ggplot(common_disp, aes(x = Dataset, y = BCV, fill = Dataset)) +
+  geom_col(width = 0.7) +
+  scale_fill_manual(values = color_palette) +
+  labs(
+    y = "BCV",
+    x = "Sequencing protocols",
+    title = "Transcript-level BCV"
+  ) +
+  theme_minimal() +
+  theme(
+    legend.position = "none",
+    axis.text.x = element_text(angle = 45, hjust = 1)
+  )
+
+# scaling
+common_disp <- data.frame(
+  Dataset = c("Illumina", "ONT dRNA", "PacBio", "ONT cDNA"),
+  BCV = c(
+      sqrt(ill_bulk.scale_dge$common.dispersion),
+      sqrt(ont_drna.scale_dge$common.dispersion),
+      sqrt(pb_bulk.scale_dge$common.dispersion),
+      sqrt(ont_bulk.scale_dge$common.dispersion)
+  )
+)
+
+p.tx.scale <- ggplot(common_disp, aes(x = Dataset, y = BCV, fill = Dataset)) +
+  geom_col(width = 0.7) +
+  scale_fill_manual(values = color_palette) +
+  labs(
+    y = "BCV",
+    x = "Sequencing protocols",
+    title = "Transcript-level BCV (with scaling)"
+  ) +
+  theme_minimal() +
+  theme(
+    legend.position = "none",
+    axis.text.x = element_text(angle = 45, hjust = 1)
+  )
+
+# Combine the two plots
+p.gene | p.tx | p.tx.scale 
+```
+
+```{r BCV  plot separate cancer type, fig.height=5, fig.width=8, include=FALSE, eval=FALSE}
+
+individual_bcv <- function(cell_line, dge, platform) {
+  dge <- dge[, dge$samples$group == cell_line] %>%
+    calcNormFactors() %>%
+    estimateDisp()
+  tibble(
+    platform = platform,
+    cell_line = cell_line,
+    common_bcv = dge$common.dispersion %>% sqrt()
+  )
+}
+
+cell_lines <- unique(ill_bulk.gene.dge$samples$group)
+bcv_data.gene <- bind_rows(
+  lapply(cell_lines, function(cell_line) {
+    list(
+      individual_bcv(cell_line, ill_bulk.gene.dge, "Illumina"),
+      individual_bcv(cell_line, ont_bulk.gene.dge, "ONT cDNA"),
+      individual_bcv(cell_line, pb_bulk.gene.dge, "PacBio"),
+      individual_bcv(cell_line, drna_bulk.gene.dge, "ONT dRNA")
+    )
+  })
+)
+
+bcv_data.tx <- bind_rows(
+  lapply(cell_lines, function(cell_line) {
+    list(
+      individual_bcv(cell_line, ill_bulk.tx.dge, "Illumina"),
+      individual_bcv(cell_line, drna_bulk.tx.dge, "ONT dRNA"),
+      individual_bcv(cell_line, pb_bulk.dge.oarfish, "PacBio"),
+      individual_bcv(cell_line, ont_bulk.tx.dge, "ONT cDNA")
+    )
+  })
+)
+
+# plot BCV
+p.bcv.gene <- ggplot(bcv_data.gene, aes(x = cell_line, y = common_bcv, fill = platform)) +
+  geom_col(position = "dodge", width = 0.7) +
+  scale_fill_manual(values = color_palette) +
+  labs(
+    y = "BCV",
+    x = "Cancer Cell Line",
+    title = "Gene level BCV"
+  ) +
+  theme_minimal() +
+  theme(
+    legend.position = "bottom",
+    axis.text.x = element_text(angle = 45, hjust = 1)
+  )
+
+p.bcv.tx <- ggplot(bcv_data.tx, aes(x = cell_line, y = common_bcv, fill = platform)) +
+  geom_col(position = "dodge", width = 0.7) +
+  scale_fill_manual(values = color_palette) +
+  labs(
+    y = "BCV",
+    x = "Cancer Cell Line",
+    title = "Transcript level BCV"
+  ) +
+  theme_minimal() +
+  theme(
+    legend.position = "bottom",
+    axis.text.x = element_text(angle = 45, hjust = 1)
+  )
+
+(p.bcv.gene | p.bcv.tx) +
+  plot_layout(guides = "collect") &
+  theme(legend.position = "bottom")
+```
+
+# Comparing DTE and DGE
+```{r, fig.height=10, fig.width=8}
+venn_grobs <- list()
+
+for (platform in platforms) {
+  for (comp in comparisons) {
+    dge <- dge_lists[[platform]][[paste0(comp, ".DE")]]$table %>%
+      rownames_to_column("gene_id") %>% filter(PValue < 0.05)
+
+    dte <- dte_lists[[platform]][[paste0(comp, ".DE")]]$table %>%
+      rownames_to_column("transcript_id") %>%
+      mutate(gene_id = str_extract(transcript_id, "ENSG[0-9]+\\.[0-9]+")) %>%
+      filter(PValue < 0.05)
+
+    grob <- venn.diagram(
+      list(Gene = dge$gene_id, Transcript = dte$gene_id),
+      filename = NULL,
+      fill = c("skyblue", "pink"),
+      alpha = 0.5,
+      cat.cex = 1.2,
+      main = paste(toupper(platform), comp)
+    )
+
+    venn_grobs[[paste(platform, comp)]] <- grobTree(grob)
+  }
+}
+
+grid.arrange(grobs = venn_grobs, ncol = 3)
+```
+
+```{r fig-logFC-correlation-6x3-pearson, fig.width=18, fig.height=12, message=FALSE, warning=FALSE}
+library(ggplot2)
+library(dplyr)
+library(stringr)
+library(ggpubr)
+library(purrr)
+
+platforms <- c("Illumina", "ONT cDNA", "PacBio", "ONT dRNA")
+comparisons <- c("AvsL", "PvsL", "AvsP")
+platform_pairs <- combn(platforms, 2, simplify = FALSE)
+
+```
+
+
+```{r}
+get_combined_logfc_plot <- function(level = "gene", p1, p2) {
+  all_data <- purrr::map_dfr(comparisons, function(comp) {
+    df1 <- if (level == "gene") {
+      dge_lists[[p1]][[paste0(comp, ".DE")]]$table %>%
+        tibble::rownames_to_column("gene_id")
+    } else {
+      dte_lists[[p1]][[paste0(comp, ".DE")]]$table %>%
+        tibble::rownames_to_column("transcript_id") %>%
+        mutate(gene_id = str_extract(transcript_id, "ENSG[0-9]+\\.[0-9]+"))
+    }
+
+    df2 <- if (level == "gene") {
+      dge_lists[[p2]][[paste0(comp, ".DE")]]$table %>%
+        tibble::rownames_to_column("gene_id")
+    } else {
+      dte_lists[[p2]][[paste0(comp, ".DE")]]$table %>%
+        tibble::rownames_to_column("transcript_id") %>%
+        mutate(gene_id = str_extract(transcript_id, "ENSG[0-9]+\\.[0-9]+"))
+    }
+
+    df1 <- df1 %>% filter(PValue < 0.05)
+    df2 <- df2 %>% filter(PValue < 0.05)
+
+    joined <- full_join(df1[, c("gene_id", "logFC")], df2[, c("gene_id", "logFC")],
+                        by = "gene_id", suffix = c("_p1", "_p2")) %>%
+      drop_na(logFC_p1, logFC_p2)  # optional: remove rows with missing logFCs
+
+    joined$comparison <- comp
+    joined
+  })
+
+  cors <- all_data %>%
+    group_by(comparison) %>%
+    summarise(r = cor(logFC_p1, logFC_p2, use = "complete.obs")) %>%
+    mutate(corr_label = paste0("r = ", round(r, 2)))
+
+  ggplot(all_data, aes(x = logFC_p1, y = logFC_p2)) +
+    geom_point(alpha = 0.2, size = 0.3) +
+    geom_density_2d(color = "gray60", size = 0.3) +
+    geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "gray50") +
+    facet_wrap(~comparison, ncol = 3) +
+    geom_text(data = cors, aes(x = -Inf, y = Inf, label = corr_label),
+              inherit.aes = FALSE, hjust = -0.1, vjust = 1.2, size = 3.5) +
+    labs(
+      title = paste0(level, ": ", toupper(p1), " vs ", toupper(p2)),
+      x = paste0("logFC (", p1, ")"),
+      y = paste0("logFC (", p2, ")")
+    ) +
+    theme_minimal(base_size = 8)
+}
+
+gene_logfc_combined <- make_6panel_plot("gene")
+tx_logfc_combined <- make_6panel_plot("transcript")
+
+gene_logfc_combined
+tx_logfc_combined
+```
+# Identify Illumina-specific DTEs in A vs P
+```{r}
+get_dte_ids <- function(dte_list, comp) {
+  dte_list[[paste0(comp, ".DE")]]$table %>%
+    rownames() %>%
+    .[dte_list[[paste0(comp, ".DE")]]$table$PValue < 0.05]
+}
+
+ill_dtes <- get_dte_ids(ill_bulk.scl_dte_human.list, "AvsP")
+ont_dtes <- get_dte_ids(ont_bulk.scl_dte_human.list, "AvsP")
+pb_dtes  <- get_dte_ids(pb_bulk.scl_dte_human.list,  "AvsP")
+drna_dtes <- get_dte_ids(drna_bulk.scl_dte_human.list, "AvsP")
+
+# Unique to Illumina
+illumina_unique <- setdiff(ill_dtes, union(union(ont_dtes, pb_dtes), drna_dtes))
+
+
+illumina_unique_df <- tibble(transcript_id = illumina_unique) %>%
+  separate(transcript_id, into = c("tx1", "gene1", "tx2", "gene2", "tx3", "gene3", "length", "biotype"), sep = "\\|") %>%
+  mutate(
+    transcript_length = as.integer(length),
+    gene_id = gene1
+  )
+```
+

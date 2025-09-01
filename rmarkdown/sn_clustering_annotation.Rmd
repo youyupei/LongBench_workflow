@@ -350,7 +350,7 @@ barcode_tibble_post_qc <- readr::read_csv("/home/users/allstaff/you.yu/LongBench
 # Total number of cells (shared across all methods):
 barcode_tibble %>% filter(PacBio & ONT & Illumina) %>% nrow()
 # Total number of cells after QC (shared across all methods):
-barcode_tibble_post_qc %>% filter(filter(PacBio & ONT & Illumina)) %>% nrow()
+barcode_tibble_post_qc %>% filter(PacBio & ONT & Illumina) %>% nrow()
 # Total number of cells after QC  (shared across all methods) and cell line identification:
 barcode_tibble_post_qc %>% filter(PacBio & ONT & Illumina & !merged_cellline_anno %in% c("unassigned", "doublet"))  %>% nrow()
 

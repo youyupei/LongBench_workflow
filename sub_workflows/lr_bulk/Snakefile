@@ -38,6 +38,7 @@ include: "rules/qc.smk"
 include: "rules/internal_priming.smk"
 include: "rules/quantification.smk"
 include: config['main_wf_dir'] + "/modules/utilities.smk"
+include: "rules/mutation.smk"
 
 # make sure the results_dir exists
 shell("mkdir -p {results_dir}")

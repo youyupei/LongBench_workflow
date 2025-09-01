@@ -28,9 +28,8 @@ select <- dplyr::select
 # Set the color palette
 color_palette <- c(
     PacBio = "#df1995",
-    ONT = "#00789b",
+    ONT_2 = "#00789b",# ONT dRNA
     ONT_1 = "#04476c", # ONT cDNA
-    ONT_2 = "#24cdcd", # ONT dRNA
     Illumina = "#e88b20"
 )
 
@@ -216,7 +215,7 @@ p1 <- ggplot(data, aes(x = `Average read count`, y = total.tx.ident, color = pro
     title = "Rarefraction Curve (Transcript)"
   )
 
-# plot the rarefraction curve
+# plot the gene rarefraction curve
 p2 <- ggplot(data, aes(x = `Average read count`, y = total.gene.ident, color = protocols)) +
   geom_point() +
   geom_line() +
@@ -229,7 +228,23 @@ p2 <- ggplot(data, aes(x = `Average read count`, y = total.gene.ident, color = p
     title = "Rarefaction Curve (Gene)"
   )
 
-p1 / p2
+
+# plot the transcripts per gene detected
+p3 <- ggplot(data, aes(x = `Average read count`, y = total.tx.ident / total.gene.ident, color = protocols)) +
+  geom_point() +
+  geom_line() +
+    scale_color_manual(values = color_palette[c("Illumina", "ONT_1", "ONT_2", "PacBio")] %>% unname()) +
+  theme_minimal() +
+  theme(legend.position = "bottom") +
+  labs(
+    x = "Average read count",
+    y = "Transcripts per Gene Detected",
+    title = "Rarefaction Curve (Transcripts per Gene)"
+  )
+
+p1 / p2 / p3
+
+
 
 # split based on length
 
@@ -276,3 +291,34 @@ lapply(labels, function(l) {
       title = "Rarefaction Curve (Gene length {l})" %>% glue()
     )
 }) %>% patchwork::wrap_plots(ncol = 3, guides = "collect") & theme(legend.position = "bottom")
+
+# Plot average transcripts per gene detected
+data <- read_csv(
+  "/vast/projects/LongBench/analysis/main_workflow/result/rarefraction_analysis/rarefraction_tx_g_detection.csv"
+) %>% select(total.tx.ident, total.gene.ident, protocols, sample_rate) %>%
+  mutate(
+    avg_tx_per_gene = total.tx.ident / total.gene.ident
+  )
+
+data <- data %>%
+            mutate(protocols = case_when(
+                protocols == "Illumina" ~ "Illumina",
+                protocols == "ont_bulk" ~ "ONT cDNA",
+                protocols == "dRNA_bulk" ~ "ONT dRNA",
+                protocols == "pb_bulk" ~ "PacBio"
+            )) %>%
+            left_join(read_number_table, by = "protocols") %>%
+            mutate("Average read count" = sample_rate * mean_read_count)
+
+ggplot(data, aes(x = `Average read count`, y = avg_tx_per_gene, color = protocols)) +
+  geom_point() +
+  geom_line() +
+  scale_color_manual(values = color_palette[c("Illumina", "ONT_1", "ONT_2", "PacBio")] %>% unname()) +
+  theme_minimal()
+  theme(legend.position = "bottom") +
+  labs(
+    x = "Average read count",
+    y = "Average transcripts per gene detected",
+    title = "Average Transcripts per Gene Detected"
+  )
+

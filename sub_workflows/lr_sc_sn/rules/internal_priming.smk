@@ -27,16 +27,16 @@ rule bam_F2304_filtering:
     input:
         os.path.join(scratch_dir,"subsample_data/{x}/align2genome_3M.bam")
     output:
-        os.path.join(scratch_dir,"subsample_data/{x}/align2genome.3M.F2304.bam"),
-        os.path.join(scratch_dir,"subsample_data/{x}/align2genome.3M.F2304.bam.bai")
+        bam=os.path.join(scratch_dir,"subsample_data/{x}/align2genome.3M.F2304.bam"),
+        bai=os.path.join(scratch_dir,"subsample_data/{x}/align2genome.3M.F2304.bam.bai")
     resources:
         cpus_per_task=1,
         mem_mb=8000
     shell:
         """
-        mkdir -p $(dirname {output})
-        samtools view -b -F 2304 {input} > {output}
-        samtools index {output}
+        mkdir -p $(dirname {output.bam})
+        samtools view -b -F 2304 {input} > {output.bam}
+        samtools index {output.bam}
 
         """
 

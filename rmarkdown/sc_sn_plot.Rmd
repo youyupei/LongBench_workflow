@@ -1,7 +1,8 @@
 ---
-title: "SC SN plot"
+title: "SC SN QC and preporcessing"
 author: "Yupei"
-date: '2024-12-03'
+date: '`r Sys.Date()`'
+version: 'v1.0'
 output:
   html_document:
     code_folding: hide
@@ -15,11 +16,21 @@ output:
 params:
     fig.path: NULL
     cache_dir: NULL
+    filtered_so_rds_out: '/vast/projects/LongBench/analysis/workflow/rmarkdown/RDS/sc_sn_filtered_so.rds'
 ---
 The cellline annotation is after outlier removal and then filter using vireo result
 
-
 ```{r setup, include=FALSE}
+# this is a repeat of params for direct execution in non-rmarkdown environment
+# check if params is defined
+if (!exists("params")) {
+  params <- list(
+    fig.path = NULL,
+    cache_dir = NULL,
+    filtered_so_rds_out = "/vast/projects/LongBench/analysis/workflow/rmarkdown/RDS/sc_sn_filtered_so.rds"
+  )
+}
+
 library(tidyverse)
 source('/home/users/allstaff/you.yu/LongBench/analysis/workflow/sub_workflows/lr_sc_sn/rmarkdown/sc_long_preprocessing.R')
 
@@ -36,6 +47,8 @@ knitr::opts_chunk$set(
 
 rename <- dplyr::rename
 select <- dplyr::select
+
+
 ```
 
 ```{r}
@@ -239,159 +252,18 @@ cell_line_plots <- map(names(so_list), ~ {
 })
 
 cell_line_plots %>% patchwork::wrap_plots(plots, guides = "collect")
-```
 
 
-```{r feature plot, echo=F, fig.height=15, fig.width=30}
-# Define custom colors
-# Define custom colors
-cell_line_color_palette <- c(
-  "H146" = "#004d1a", "H69" = "#1cad1c", "SHP77" = "#a3d830",  # sclc_a (Greens)
-  "H526" = "#a08544", "H211" = "#efca11",                      # sclc_p (Browns)
-  "H1975" = "#5d4075", "H2228" = "#5c39c4", "HCC827" = "#dd0de4"  # luad (Purple-Gold)
-)
-# Plotting with dynamic titles
 so_list <- list(
   'Illumina SC' =so_ill.sc,
   'PacBio SC' =so_pb.sc, 
-  'ONT SC' = so_ont.sc
+  'ONT SC' = so_ont.sc,
+  'Illumina SN' =so_ill.sn,
+  'PacBio SN' =so_pb.sn,
+  'ONT SN' =so_ont.sn
   )
-# Plotting with dynamic titles
 
-
-genes <- c("CHGA", "NCAM1", "VIM", "REST", "ASCL1", "POU2F3", 
-           "YAP1", "MYC", "TP53", "RB1", "EPCAM", "HLA-A", "HLA-B", "HLA-C", 
-           "MKI67", "CDK4", "CDK6", "SYN1", "SYN2","SYN3","NEUROD1")
-gene_not_found <- c("SYN")
-plots <- map(names(so_list), ~ {
-  seurat_obj <- so_list[[.x]]
-  map(genes, function(gene) {
-    if (gene %in% rownames(seurat_obj)) {
-      FeaturePlot(
-        seurat_obj,
-        features = gene,
-        reduction = "umap.Gene_quant"
-      ) + ggtitle(paste(.x, "-", gene))
-    } else {
-      message(glue::glue("Skipping {gene} in {.x}: gene not found"))
-       ggplot() + 
-        theme_void() + 
-        ggtitle(paste(.x, "-", gene))
-    }
-  })
-}) %>% flatten
-
-
-combined <- c(
-  c(cell_line_plots[1], plots[1:5]),
-  c(cell_line_plots[2], plots[(length(genes) + 1):(length(genes) + 5)]),
-  c(cell_line_plots[3], plots[(2 * length(genes) + 1):(2 * length(genes) + 5)])
-)
-
-wrap_plots(combined, ncol = 5 + 1)
-
-
-combined <- c(
-  c(cell_line_plots[1], plots[6:10]),
-  c(cell_line_plots[2], plots[(length(genes) + 6):(length(genes) + 10)]),
-  c(cell_line_plots[3], plots[(2 * length(genes) + 6):(2 * length(genes) + 10)])
-)
-
-wrap_plots(combined, ncol = 5 + 1)
-
-
-
-combined <- c(
-  c(cell_line_plots[1], plots[11:15]),
-  c(cell_line_plots[2], plots[(length(genes) + 11):(length(genes) + 15)]),
-  c(cell_line_plots[3], plots[(2 * length(genes) + 11):(2 * length(genes) + 15)])
-)
-
-wrap_plots(combined, ncol = 5 + 1)
-
-
-combined <- c(
-  c(cell_line_plots[1], plots[16:21]),
-  c(cell_line_plots[2], plots[(length(genes) + 16):(length(genes) + 21)]),
-  c(cell_line_plots[3], plots[(2 * length(genes) + 16):(2 * length(genes) + 21)])
-)
-
-wrap_plots(combined, ncol = 6 + 1)
-```
-```{r feature plot, echo=F, fig.height=15, fig.width=30}
-# Define custom colors
-# Define custom colors
-cell_line_color_palette <- c(
-  "H146" = "#004d1a", "H69" = "#1cad1c", "SHP77" = "#a3d830",  # sclc_a (Greens)
-  "H526" = "#a08544", "H211" = "#efca11",                      # sclc_p (Browns)
-  "H1975" = "#5d4075", "H2228" = "#5c39c4", "HCC827" = "#dd0de4"  # luad (Purple-Gold)
-)
-# Plotting with dynamic titles
-so_list <- list(
-  'Illumina SC' =so_ill.sc,
-  'PacBio SC' =so_pb.sc, 
-  'ONT SC' = so_ont.sc
-  )
-# Plotting with dynamic titles
-
-
-genes <- c("CHGA", "NCAM1", "VIM", "REST", "ASCL1", "POU2F3", 
-           "YAP1", "MYC", "TP53", "RB1", "EPCAM", "HLA-A", "HLA-B", "HLA-C", 
-           "MKI67", "CDK4", "CDK6", "SYN1", "SYN2","SYN3","NEUROD1")
-gene_not_found <- c("SYN")
-plots <- map(names(so_list), ~ {
-  seurat_obj <- so_list[[.x]]
-  map(genes, function(gene) {
-    if (gene %in% rownames(seurat_obj)) {
-      FeaturePlot(
-        seurat_obj,
-        features = gene,
-        order=T,
-        reduction = "umap.Gene_quant"
-      ) + ggtitle(paste(.x, "-", gene))
-    } else {
-      message(glue::glue("Skipping {gene} in {.x}: gene not found"))
-       ggplot() + 
-        theme_void() + 
-        ggtitle(paste(.x, "-", gene))
-    }
-  })
-}) %>% flatten
-
-
-combined <- c(
-  c(cell_line_plots[1], plots[1:5]),
-  c(cell_line_plots[2], plots[(length(genes) + 1):(length(genes) + 5)]),
-  c(cell_line_plots[3], plots[(2 * length(genes) + 1):(2 * length(genes) + 5)])
-)
-
-wrap_plots(combined, ncol = 5 + 1)
-
-
-combined <- c(
-  c(cell_line_plots[1], plots[6:10]),
-  c(cell_line_plots[2], plots[(length(genes) + 6):(length(genes) + 10)]),
-  c(cell_line_plots[3], plots[(2 * length(genes) + 6):(2 * length(genes) + 10)])
-)
-
-wrap_plots(combined, ncol = 5 + 1)
-
-
-
-combined <- c(
-  c(cell_line_plots[1], plots[11:15]),
-  c(cell_line_plots[2], plots[(length(genes) + 11):(length(genes) + 15)]),
-  c(cell_line_plots[3], plots[(2 * length(genes) + 11):(2 * length(genes) + 15)])
-)
-
-wrap_plots(combined, ncol = 5 + 1)
-
-
-combined <- c(
-  c(cell_line_plots[1], plots[16:21]),
-  c(cell_line_plots[2], plots[(length(genes) + 16):(length(genes) + 21)]),
-  c(cell_line_plots[3], plots[(2 * length(genes) + 16):(2 * length(genes) + 21)])
-)
-
-wrap_plots(combined, ncol = 6 + 1)
+# save the seurat objects
+saveRDS(so_list, file = params$filtered_so_rds_out,compress = FALSE)
+rm(so_list)
 ```

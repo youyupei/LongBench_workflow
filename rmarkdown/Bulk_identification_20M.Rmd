@@ -41,10 +41,10 @@ params <- list(
   sequins_tsv = '/vast/projects/LongBench/reference_files/Sequin_resources/v2.4/rnasequin_isoforms_2.4.tsv',
   human_gtf = '/vast/projects/LongBench/reference_files/GRCh38/gencode.v44.annotation.gtf',
   sirv_csv = '/vast/projects/LongBench/reference_files/SIRV_Set4_Norm_Sequences_20210507/SIRV_set4_concentration.csv',
-  ont_bulk_oarfish_dir <- '/vast/projects/LongBench/analysis/main_workflow/result/rarefraction_analysis/oarfish/ont_bulk/20M'
-  pb_bulk_oarfish_dir <- '/vast/projects/LongBench/analysis/main_workflow/result/rarefraction_analysis/oarfish/pb_bulk/20M'
-  ont_drnd_oarfish_dir <- '/vast/projects/LongBench/analysis/main_workflow/result/rarefraction_analysis/oarfish/dRNA_bulk/20M'
-  ill_bulk_salmon_dir <- '/vast/projects/LongBench/analysis/main_workflow/result/rarefraction_analysis/salmon/20M'
+  ont_bulk_oarfish_dir = '/vast/projects/LongBench/analysis/main_workflow/result/rarefraction_analysis/oarfish/ont_bulk/20M',
+  pb_bulk_oarfish_dir = '/vast/projects/LongBench/analysis/main_workflow/result/rarefraction_analysis/oarfish/pb_bulk/20M',
+  ont_drnd_oarfish_dir = '/vast/projects/LongBench/analysis/main_workflow/result/rarefraction_analysis/oarfish/dRNA_bulk/20M',
+  ill_bulk_salmon_dir = '/vast/projects/LongBench/analysis/main_workflow/result/rarefraction_analysis/salmon/20M',
   bulk_meta = "/vast/projects/LongBench/sequencing_data/illumina_bulk/metadata.txt",
   out.rds= '/vast/projects/LongBench/analysis/reports/RDS/bulk_de_human_summary.rds'
 )
@@ -144,7 +144,6 @@ rm(human_tx)
 human.G.Tx.map$tx_count <- human.G.Tx.map %>% calcTxNum
 ```
 
-
 # Gene discovery analysis
 ```{r Create DGE from input, echo=F}
 bulk.meta <- read.csv(params$bulk_meta)
@@ -163,6 +162,8 @@ ont_bulk.dge.oarfish <- ont_bulk.dge.oarfish[is.human(ont_bulk.dge.oarfish), ]
 pb_bulk.dge.oarfish <- pb_bulk.dge.oarfish[is.human(pb_bulk.dge.oarfish), ]
 ont_drna.dge.oarfish <- ont_drna.dge.oarfish[is.human(ont_drna.dge.oarfish), ]
 ```
+
+
 ### 1. Aggregate transcript counts to gene level using `tximport` with unfiltered transcript counts
 ```{r, echo=F}
 library(tximport) # install latest version from github
@@ -320,6 +321,29 @@ gene_discovery <- gene_discovery %>%
 gene_discovery$biotype <- factor(gene_discovery$biotype, levels = c(sort(unique(gene_discovery$biotype)) %>% setdiff("Others"), "Others"))
 ```
 
+
+Feature in gene_discovery tibble current only contain gene length which is the average length of the transcripts in the gene. Let's adding some more feature for plotting
+
+
+1. Boolean for intronic genes. Each gene is checked if it is located inside the intron of the other gene. The specific definition:
+`findOverlaps(exons, merged_introns, ignore.strand=TRUE, type='within',  select="all", minoverlap =50)`
+```{r Add intronic gene and exon count}
+
+rds_list <- readRDS("/home/users/allstaff/you.yu/LongBench/analysis/workflow/rmarkdown/RDS/intronic_gene_and_exon_count.rds")
+overlaps_tibble <- rds_list$exon_intron_overlaps
+overlaps_tibble$exon_gene <- sub("\\..*","", overlaps_tibble$exon_gene)
+overlaps_tibble$intron_gene <- sub("\\..*", "", overlaps_tibble$intron_gene)
+
+exons_count <- rds_list$exons_count  %>% mutate(Gene = sub("\\..*", "", Gene))
+
+rm(rds_list)
+
+# Merge the intronic gene information into the gene_discovery tibble
+gene_discovery <- gene_discovery %>% mutate(
+  "Intronic Gene" = gene_discovery$gene_id %in% overlaps_tibble[overlaps_tibble$intron_gene %in% gene_discovery$gene_id,]$exon_gene
+)  %>% left_join(exons_count, by = c("gene_id" = "Gene"))
+```
+
 ####  Main Upset plot
 ```{r GENE: Main Upset plot, fig.height=4, fig.width=8}
 library(ComplexUpset)
@@ -366,8 +390,65 @@ ComplexUpset::upset(
   guides='over',
   wrap = TRUE
 )
+
 ```
 
+```{r Gene identification upset with additional feature, fig.height=4, fig.width=8}
+ComplexUpset::upset(
+  gene_discovery %>% mutate(
+    biotype = case_when(
+      biotype =="protein_coding" ~ "Protein-coding",
+      TRUE ~ "Non-protein-coding"
+    )
+  ),
+  intersect = c('Illumina', "ONT cDNA", "PacBio", "ONT dRNA"),
+  annotations = list(
+        # 1st method - passing list:
+        "Gene length" = list(
+          aes = aes(x = intersection, y = `Gene length`),
+          # provide a list if you wish to add several geoms
+          geom = geom_boxplot(na.rm = TRUE, outliers = FALSE)
+        )
+        # ,
+        # "BioType" = list(
+        #   aes = aes(x = intersection, fill = biotype),
+        #   geom = geom_bar(position = "fill")
+        # )
+  ),
+  base_annotations=list(
+        'Intersection size'=ComplexUpset::intersection_size(
+            counts=TRUE,
+            mapping=aes(fill=biotype),
+            text=element_text(size = 3, vjust=-0.2)
+        ) + scale_fill_manual(values = c("Non-protein-coding"="#BAC5CB",
+                              "Protein-coding"='#B5C952'))
+    ),
+  set_sizes=(
+        ComplexUpset::upset_set_size(
+            geom=geom_bar(
+                aes(fill=biotype),
+                width=0.8
+            ) ,
+            position='right'
+        )+ scale_fill_manual(values = c("Non-protein-coding"="#BAC5CB",
+                              "Protein-coding"='#B5C952')) + 
+          theme(legend.position = "none")
+  ),
+  guides='over',
+  wrap = TRUE
+)
+
+```
+```{r platform vs other analysis}
+# Comparing Gene length, intronic gene persentage and single-exon gene between identified and missed features for each platform
+# Definition of missed feature:
+  # The feature is not identified by this platform but identified in two or more other platforms.
+
+
+
+
+
+```
 #### Gene identification Jaccard similarity
 ```{r gene identification Jaccard similarity, fig.height=3, fig.width=4.5}
 

@@ -178,6 +178,29 @@ rule alignQC_analysis:
 #         touch(os.path.join(config['flag_dir'], "sr_bulk_bulk_alginQC.done"))
 
 
+# Coverage
+# rule picard_coverage_data: # doesn't work
+#     input:
+#         bam = join(config["output_path"], "subjunc/bam/{cell_line}.sorted.bam"),
+#         refFlat = '/home/users/allstaff/you.yu/LongBench/reference_files/GRCh38/refFlat.txt',
+#         picard_dir = "/home/users/allstaff/you.yu/project/software/picard.jar"
+#     output:
+#         os.path.join(results_dir, "qc/coverage/{cell_line}.picard.RNA_Metrics")
+#     resources:
+#         cpus_per_task=16,
+#         mem_mb=32000,
+#         slurm_extra="--mail-type=FAIL --mail-user=you.yu@wehi.edu.au"
+#     shell:
+#         """
+#         module load picard-tools
+#         mkdir -p $(dirname {output})
+#         java -jar {input.picard_dir} \
+#             CollectRnaSeqMetrics  \
+#             I={input.bam} O={output} \
+#             REF_FLAT={input.refFlat} \
+#             STRAND_SPECIFICITY=NONE
+#         """
+
 # Entire qc worflow head
 rule qc:
     input:
@@ -193,30 +216,9 @@ rule qc:
         rules.RSeQC.output
     output:
         touch(join(results_dir, "qc/.flag/qc.done"))
-# 
-# # Coverage
-# rule picard_coverage_data:
-#     input:
-#         bam = results_dir + "/GenomeAlignment/{sample}_{cell_line}.sorted.bam",
-#         refFlat = '/home/users/allstaff/you.yu/LongBench/reference_files/GRCh38/refFlat.txt',
-#         picard_dir = "/home/users/allstaff/you.yu/project/software/picard.jar"
-#     output:
-#         os.path.join(results_dir, "qc/coverage/{sample}_{cell_line}.picard.RNA_Metrics")
-#     resources:
-#         cpus_per_task=16,
-#         mem_mb=32000,
-#         slurm_extra="--mail-type=FAIL --mail-user=you.yu@wehi.edu.au"
-#     shell:
-#         """
-#         module load picard-tools
-#         mkdir -p $(dirname {output})
-#         java -jar {input.picard_dir} \
-#             CollectRnaSeqMetrics  \
-#             I={input.bam} O={output} \
-#             REF_FLAT={input.refFlat} \
-#             STRAND_SPECIFICITY=NONE
-#         """
-# 
+
+
+
 # # BamIndexStats
 # rule picard_CollectAlignmentSummaryMetrics:
 #     input:
