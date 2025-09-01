@@ -1,0 +1,253 @@
+---
+title: "Rplot for rarefaction analysis"
+author: "Yupei"
+version: "v1.0"
+output:
+  html_document:
+    code_folding: hide
+    toc: yes
+    toc_float: yes
+    number_sections: yes
+    toc_depth: 4
+  pdf_document:
+    toc: yes
+    toc_depth: '4'
+params:
+  random_seed: 2024
+  cache_dir: NULL
+  sc_sn_dir: "/home/users/allstaff/you.yu/LongBench/analysis/main_workflow/result/rarefraction_analysis/oarfish/sc_sn"
+  bulk_meta: "/vast/projects/LongBench/sequencing_data/illumina_bulk/metadata.txt"
+  human_gtf: '/vast/projects/LongBench/reference_files/GRCh38/gencode.v44.annotation.gtf'
+  pseudo_bulk_count: "/home/users/allstaff/you.yu/LongBench/analysis/lr_sc_sn/result/PseudoBulkQC/pseudo_bulk_read_count.csv"
+  fig.path: NULL
+---
+
+
+```{r include=FALSE, eval=FALSE}
+# make the params list so that it can be used in the code chunks
+params <- list(
+  random_seed = 2024,
+  cache_dir = NULL,
+  sc_sn_dir = "/home/users/allstaff/you.yu/LongBench/analysis/main_workflow/result/rarefraction_analysis/oarfish/sc_sn",
+    bulk_meta = "/vast/projects/LongBench/sequencing_data/illumina_bulk/metadata.txt",
+    human_gtf = '/vast/projects/LongBench/reference_files/GRCh38/gencode.v44.annotation.gtf',
+    pseudo_bulk_count = "/home/users/allstaff/you.yu/LongBench/analysis/lr_sc_sn/result/PseudoBulkQC/pseudo_bulk_read_count.csv",
+  fig.path = NULL
+)
+
+```
+```{r}
+# Setup
+library(tidyverse)
+library(edgeR)
+library(glue)
+library(patchwork)
+library(ggplot2)
+library(tximport)
+rename <- dplyr::rename
+select <- dplyr::select
+
+source("/home/users/allstaff/you.yu/LongBench/analysis/workflow/scripts/Rfunctions.R")
+
+# function for splitting the transcript origin
+is.sequins <- function(dge) {grepl("^R", rownames(dge))}
+is.human <- function(dge) {grepl("^ENS", rownames(dge))}
+is.sirv_or_ercc <- function(dge) {!is.human(dge) & !is.sequins(dge)} # this is the whole SIRV set4 (ERCC + SIRV E0 + Long SIRV)
+is.sirv_E0 <- function(dge) {grepl("^SIRV\\d{3}$", rownames(dge))} 
+is.sirv_all <- function(dge) {grepl("^SIRV", rownames(dge))} # including all SIRV E0 and Long SIRV
+is.long_sirv <- function(dge) {grepl("^SIRV\\d{4}", rownames(dge))}
+is.ercc <- function(dge) {!is.human(dge) & !is.sequins(dge) & !is.sirv_all(dge)}
+
+bulk.meta <- read.csv(params$bulk_meta)
+rownames(bulk.meta) <- bulk.meta$sample
+```
+```{r}
+single_process_oarfish <- function(quant_dir, method = "oarfish", length_interval=c(0,500,1000,2000, 3000, Inf)) {
+    #quant_dir <- "/home/users/allstaff/you.yu/LongBench/analysis/main_workflow/result/rarefraction_analysis/oarfish/sc_sn/ont_sn/full"
+    if (method == "oarfish") {
+        tx.dge <- get_dge_from_oarfish(quant_dir, ".*/")
+        gene.dge <- get_dge_from_txi(file.path(quant_dir %>% list.dirs(full.names = TRUE, recursive = FALSE), ".quant"), ".*/", "oarfish", dropInfReps=TRUE)
+    } else if (method == "salmon") {
+        tx.dge <- get_dge_from_salmon(quant_dir, ".*/")
+        gene.dge <- get_dge_from_txi(file.path(quant_dir %>% list.dirs(full.names = TRUE, recursive = FALSE), "quant.sf"), ".*/", "salmon", dropInfReps=TRUE)
+    } else {
+        stop("method should be either 'oarfish' or 'salmon'")
+    }
+
+    # filter the dge for human genes only
+    tx.dge <- tx.dge[is.human(tx.dge), ]
+    gene.dge <- gene.dge[is.human(gene.dge), ]
+    
+
+    # Create labels dynamically
+    labels <- paste(head(length_interval, -1), tail(length_interval, -1), sep = "-")
+    tx.length <- tx.dge$genes$Length %>% cut(length_interval, labels =labels)
+    gene.length <- gene.dge$genes$Length %>% cut(length_interval, labels =labels)
+
+    rst <- data.frame(
+        file = quant_dir,
+        total.tx.ident = colSums(tx.dge$counts >= 5) %>% mean(),
+        total.gene.ident = colSums(gene.dge$counts >= 10) %>% mean(),
+        H2228.tx.ident = colSums(tx.dge$counts >= 5)["H2228"],
+        H2228.gene.ident = colSums(gene.dge$counts >= 10)["H2228"],
+        H526.tx.ident = colSums(tx.dge$counts >= 5)["H526"],
+        H526.gene.ident = colSums(gene.dge$counts >= 10)["H526"],
+        H69.tx.ident = colSums(tx.dge$counts >= 5)["H69"],
+        H69.gene.ident = colSums(gene.dge$counts >= 10)["H69"],
+        H146.tx.ident = colSums(tx.dge$counts >= 5)["H146"],
+        H146.gene.ident = colSums(gene.dge$counts >= 10)["H146"],
+        H1975.tx.ident = colSums(tx.dge$counts >= 5)["H1975"],
+        H1975.gene.ident = colSums(gene.dge$counts >= 10)["H1975"],
+        H211.tx.ident = colSums(tx.dge$counts >= 5)["H211"],
+        H211.gene.ident = colSums(gene.dge$counts >= 10)["H211"],
+        HCC827.tx.ident = colSums(tx.dge$counts >= 5)["HCC827"],
+        HCC827.gene.ident = colSums(gene.dge$counts >= 10)["HCC827"],
+        SHP77.tx.ident = colSums(tx.dge$counts >= 5)["SHP77"],
+        SHP77.gene.ident = colSums(gene.dge$counts >= 10)["SHP77"]
+    )
+    
+    
+    # add count by length bins
+    for (x in labels) {
+      rst[glue("{x}.tx.ident")] <- colSums(tx.dge[tx.length == x, ]$counts >= 5) %>% mean
+      rst[glue("{x}.gene.ident")] <- colSums(gene.dge[gene.length == x, ]$counts >= 10) %>% mean
+    }
+    return(rst)
+}
+```
+```{r}
+# read and put together the results
+protocols <- c("ont_sc", "ont_sn", "pb_sc", "pb_sn")
+sample_rate <- c("0.1", "0.2", "0.3", "0.4", "0.5", "0.6", "0.7", "0.8", "0.9", "full")
+combination <- expand.grid(protocols = protocols, sample_rate = sample_rate)
+sc_sn_quant_dirs <- glue::glue(
+    "{params$sc_sn_dir}/{combination$protocols}/{combination$sample_rate}"
+)
+
+lr_rst <- map(sc_sn_quant_dirs, single_process_oarfish, method = "oarfish") %>%
+    do.call(rbind, .)
+
+lr_rst <- lr_rst %>%
+    mutate(
+        protocols = map_chr(file, ~ strsplit(.x, "/")[[1]] %>%
+            tail(2) %>%
+            .[1]),
+        sample_rate = map_chr(file, ~ strsplit(.x, "/")[[1]] %>%
+            tail(1)) %>% as.numeric()
+    ) %>%
+    mutate(
+        protocols = case_when(
+            protocols == "salmon" ~ "Illumina",
+            TRUE ~ protocols
+        )
+    ) %>% select(-file)
+
+# save the results as a csv file
+lr_rst$sample_rate[is.na(lr_rst$sample_rate)] <- 1
+write.csv(lr_rst, "/vast/projects/LongBench/analysis/main_workflow/result/rarefraction_analysis/sc_sc_rarefraction_tx_g_detection.csv", row.names = FALSE)
+rm(lr_rst)
+```
+
+```{r}
+# plotting
+# get read length table
+pseudo_bulk_read_number_table <- read_csv(params$pseudo_bulk_count)%>%
+  unite("protocols", platform, protocol, sep = "_") %>%
+  group_by(protocols) %>%
+  summarise(
+      mean_read_count = mean(Count),
+      total_read_count = sum(Count)
+  ) 
+
+color_palette <- c(
+    "ONT SC" = "#00789B",
+    "ONT SN" = "#B4D7E2",
+    "PacBio SC" = "#DE1995",
+    "PacBio SN" = "#F5BBE0"
+)
+
+# read csv
+data <- read.csv(
+    "/vast/projects/LongBench/analysis/main_workflow/result/rarefraction_analysis/sc_sc_rarefraction_tx_g_detection.csv",
+    check.names = FALSE
+)
+data <- data %>%
+            left_join(pseudo_bulk_read_number_table, by = "protocols") %>%
+            mutate(protocols = case_when(
+                protocols == "ont_sc" ~ "ONT SC",
+                protocols == "ont_sn" ~ "ONT SN",
+                protocols == "pb_sc" ~ "PacBio SC",
+                protocols == "pb_sn" ~ "PacBio SN"
+            )) %>%
+            mutate("Average read count" = sample_rate * mean_read_count)
+
+
+#plot the rarefraction curve (Full dataset, not split by cell lines)
+p1 <- ggplot(data, aes(x = `Average read count`, y = total.tx.ident, color = protocols)) +
+  geom_point() +
+  geom_line() +
+  scale_color_manual(values = color_palette) +
+  theme_minimal() +
+  theme(legend.position = "bottom") +
+  labs(
+    x = "Average read count",
+    y = "Transcripts Detected",
+    title = "Rarefraction Curve (Transcript)"
+  )
+
+# plot the rarefraction curve
+p2 <- ggplot(data, aes(x = `Average read count`, y = total.gene.ident, color = protocols)) +
+  geom_point() +
+  geom_line() +
+  scale_color_manual(values = color_palette) +
+  theme_minimal() +
+  theme(legend.position = "bottom") +
+  labs(
+    x = "Average read count",
+    y = "Genes Detected",
+    title = "Rarefaction Curve (Gene)"
+  )
+
+p1 / p2
+
+# # split based on cell lines
+cell_lines <- c("H2228", "H526", "H69", "H146", "H1975", "H211", "HCC827", "SHP77")
+plots <- list()
+for (cl in cell_lines) {
+  plot_d <- data %>%
+    left_join(pseudo_bulk_read_number_table %>% filter(cell_line == cl), by = "protocols") %>%
+    mutate(protocols = case_when(
+                protocols == "ont_sc" ~ "ONT SC",
+                protocols == "ont_sn" ~ "ONT SN",
+                protocols == "pb_sc" ~ "PacBio SC",
+                protocols == "pb_sn" ~ "PacBio SN") ) %>%
+    mutate(Count = Count * sample_rate)
+  p1 <- ggplot(plot_d , aes_string(x = "Count", y = paste0(cl, ".tx.ident"), color = "protocols")) +
+    geom_point() +
+    geom_line() +
+    scale_color_manual(values = color_palette) +
+    theme_minimal() +
+    theme(legend.position = "bottom") +
+    labs(
+      x = "Read count",
+      y = paste0(cl, " Transcripts Detected"),
+      title = paste0("Rarefaction Curve for ", cl, " (Transcript)")
+    )
+
+  p2 <- ggplot(plot_d, aes_string(x = "Count", y = paste0(cl, ".gene.ident"), color = "protocols")) +
+    geom_point() +
+    geom_line() +
+    scale_color_manual(values = color_palette) +
+    theme_minimal() +
+    theme(legend.position = "bottom") +
+    labs(
+      x = "Read count",
+      y = paste0(cl, " Genes Detected"),
+      title = paste0("Rarefaction Curve for ", cl, " (Gene)")
+    )
+  plots[[cl]] <- p2 | p1
+}
+
+
+  ```
+

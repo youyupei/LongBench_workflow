@@ -1,0 +1,1859 @@
+---
+title: "Mutation/Variant Calling"
+author: "Yupei & Margaux"
+output:
+  html_document:
+    code_folding: hide
+    toc: yes
+    toc_float: yes
+    number_sections: yes
+    toc_depth: 4
+  pdf_document:
+    toc: yes
+    toc_depth: '4'
+params:
+  lr_bulk_dir: "/vast/projects/LongBench/analysis/lr_bulk/result/Mutation"
+  sr_bulk_dir: "/vast/projects/LongBench/analysis/sr_bulk/result/Mutation"
+  summary_dir: "/vast/projects/LongBench/analysis/variant_allele_specific_analysis/"
+  longcallR_dir: "/vast/projects/LongBench/analysis/lr_bulk/result/LongcallR"
+  random_seed: 2024
+  cache_dir: NULL
+  fig.path: NULL
+---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  cache = TRUE,
+  fig.width = 8, 
+  fig.height = 6, 
+  warning = F, 
+  fig.path = params$fig.path, 
+  dev = c("png", "svg"),
+  cache.path = ifelse(is.null(params$cache_dir), 
+                      paste0(tools::file_path_sans_ext(knitr::current_input()), "_cache/"), 
+                      params$cache_dir))
+
+
+```
+
+```{r, include=FALSE}
+library(tidyverse)
+library(dplyr)
+library(ggplot2)
+
+
+# # Temporarily add params as a runable list
+# params <- list(
+#   lr_bulk_dir = "/vast/projects/LongBench/analysis/lr_bulk/result/Mutation",
+#   sr_bulk_dir = "/vast/projects/LongBench/analysis/sr_bulk/result/Mutation",
+#   summary_dir = "/vast/projects/LongBench/analysis/variant_allele_specific_analysis/",
+#   longcallR_dir = "/vast/projects/LongBench/analysis/lr_bulk/result/LongcallR",
+#   random_seed = 2024,
+#   cache_dir = NULL,
+#   fig.path = NULL
+# )
+
+color_map <- c(
+  "Illumina"               = "#E87D24",
+  "Illumina_DV"   = "#914f19",
+  "PacBio"                 = "#DA1884",
+  "ONT dRNA"               = "#007EA7",
+  "ONT cDNA"               = "#003F5C"
+)
+```
+
+# Part 1: Genomic region covered by >=30 read_tsv
+```{r Genomic region coverage >=30, fig.height=2, fig.width=3}
+files <- list.files(params$lr_bulk_dir, pattern = "\\.genomic_coverage\\.txt$", full.names = TRUE)
+files <- c(files, list.files(params$sr_bulk_dir, pattern = "\\.genomic_coverage\\.txt$", full.names = TRUE))
+
+extract_coverage <- function(file) {
+    table <- read_tsv(file, col_names = TRUE)
+    table$file <- basename(file)
+    return(table)
+}
+
+# Apply the function to all files and combine results
+coverage_df <- lapply(files, extract_coverage) %>% bind_rows()
+# Separate the file name to extract sample ID and Cell line
+coverage_df %>%
+    mutate(file = sub("\\.genomic_coverage\\.txt$", "", file)) %>%
+    mutate(pct_covered = Covered / Total * 100) %>%
+    mutate(
+        Protocols = case_when(
+            # match substring in file name
+            grepl("dRNA", file) ~ "ONT dRNA",
+            grepl("ont", file) ~ "ONT cDNA",
+            grepl("pb", file) ~ "PacBio",
+            TRUE ~ "Illumina"
+        ),
+        # remove any the before _
+        Cell_lines = sub(".*_", "", file)
+    ) %>%
+    select(-file) -> coverage_df
+
+# Assuming your data frame is called coverage_df
+
+coverage.p <- coverage_df %>%
+  ggplot(aes(x = Protocols, y = Covered/1000000, color = Protocols)) +
+  geom_boxplot(outlier.shape = NA, alpha = 0.7) +
+  geom_jitter(aes(color = Protocols), width = 0.2, size = 1, alpha = 0.5) +
+  facet_wrap(~ Region, nrow = 1) +
+  labs(title = "Genome Coverage (>=30 reads)",
+       x = "Protocol",
+       y = "Genome (Mbp) Covered by ≥30 Reads ",
+       fill = "Protocol") +
+  scale_fill_manual(values = color_map) +
+  scale_color_manual(values = color_map) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+
+
+# Assuming your data frame is called coverage_df
+coverage.p.pct <- coverage_df %>%
+  ggplot(aes(x = Protocols, y = pct_covered, color = Protocols)) +
+  geom_boxplot(outlier.shape = NA, alpha = 0.7) +
+  geom_jitter(aes(color = Protocols), width = 0.2, size = 1, alpha = 0.5) +
+  facet_wrap(~ Region, nrow = 1) +
+  labs(title = "Genome Coverage (>=30 reads)",
+       x = "Protocol",
+       y = "Percent Covered by ≥30 Reads (%)",
+       fill = "Protocol") +
+  scale_color_manual(values = color_map) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+coverage.p / coverage.p.pct
+```
+
+
+# Part 2: Variant calling and phasing summary
+## Whatshap stat:
+```{r parse the whatshap stat files, echo=FALSE, fig.height=3, fig.width=3}
+# List all .stat files
+files <- list.files(params$lr_bulk_dir, pattern = "\\.vcf\\.stat$", full.names = TRUE)
+files <- c(files, list.files(params$sr_bulk_dir, pattern = "\\.vcf\\.stat$", full.names = TRUE))
+
+# Function to extract summary stats per file
+valid_chr <- c(as.character(1:22), "X", "Y")
+
+extract_and_sum <- function(file) {
+  lines <- readLines(file)
+  chr <- NA
+  stats <- tibble()
+
+  for (i in seq_along(lines)) {
+    line <- lines[i]
+    if (grepl("^---------------- Chromosome ", line)) {
+      chr <- sub("^---------------- Chromosome chr(.+) ----------------$", "\\1", line)
+    }
+
+    if (grepl("Variants in VCF:", line)) {
+        vcf_variants <- as.integer(trimws(strsplit(line, ":")[[1]][2]))
+    }
+    if (grepl("^\\s*Heterozygous:", line)) {
+    matches <- regmatches(line, regexec("Heterozygous:\\s+([0-9]+).*?\\((\\s*[0-9]+)\\s+SNVs\\)", line))[[1]]
+    heterozygous <- as.integer(matches[2])
+    heterozygous_snv <- as.integer(matches[3])
+    }
+    if (grepl("^\\s*Phased:", line)) {
+    matches <- regmatches(line, regexec("Phased:\\s+([0-9]+).*?\\((\\s*[0-9]+)\\s+SNVs\\)", line))[[1]]
+    phased <- as.integer(matches[2])
+    phased_snv <- as.integer(matches[3])
+    }
+    if (grepl("Longest block:", line)) {
+      longest_block <- as.numeric(gsub("bp", "", trimws(strsplit(line, ":")[[1]][2])))
+    }
+    # end of the chunk
+    if (grepl("Block NG50:", line)) {
+      if (!is.na(chr) && chr %in% valid_chr) {
+        stats <- bind_rows(stats, tibble(
+          file = basename(file),
+          chromosome = chr,
+          vcf_variants = vcf_variants,
+          heterozygous = heterozygous,
+            heterozygous_snv = heterozygous_snv,
+          phased = phased,
+            phased_snv = phased_snv,
+          longest_block = longest_block
+        ))
+      }
+    }
+  }
+
+stats %>%
+  group_by(file) %>%
+  summarise(
+    across(c(vcf_variants, heterozygous, heterozygous_snv, phased, phased_snv), sum, na.rm = TRUE),
+    longest_block = max(longest_block, na.rm = TRUE),
+    .groups = "drop"
+  )
+}
+
+# Apply the function to all files and combine results
+stats_df <- lapply(files, extract_and_sum) %>% bind_rows()
+# Separate the file name to extract sample ID and Cell line
+stats_df %>%
+    mutate(file = sub("\\.phased\\.vcf\\.stat$", "", file)) %>%
+    mutate(
+        Protocols = case_when(
+            # match substring in file name
+            grepl("dRNA", file) ~ "ONT dRNA",
+            grepl("ont", file) ~ "ONT cDNA",
+            grepl("pb", file) ~ "PacBio",
+            TRUE ~ "Illumina"
+        ),
+        # remove any the before _ 
+        Cell_lines = sub(".*_", "", file)
+    ) %>%
+    select(-file) -> stats_df
+```
+
+```{r phased variance summary, fig.height=3, fig.width=8}
+# Plot 1: Total variants per protocol with given color map
+stats_df %>%
+    ggplot() +
+    geom_bar(aes(x = Cell_lines, y = vcf_variants, fill = Protocols), stat = "identity", position = "dodge", alpha = 1) +
+    facet_wrap(~Protocols, nrow = 1) +
+    labs(title = "Total Variants per Protocol",
+         x = "Cell Lines", y = "Total Variants") +
+    theme_minimal() +
+    scale_fill_manual(values = color_map) +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+# Add Phasing status
+stats_df %>%
+    mutate(
+        "Unphased heterozygous" = heterozygous - phased,
+        Homosygous = vcf_variants - heterozygous
+    ) %>%
+    rename(`Phased heterozygous` = phased) %>%
+    select(Cell_lines, Protocols, `Phased heterozygous`, `Unphased heterozygous`, Homosygous) %>%
+    pivot_longer(cols = c(`Unphased heterozygous`, `Phased heterozygous`, Homosygous), names_to = "variant_type", values_to = "count") %>%
+    mutate(variant_type = factor(variant_type, levels = c("Homosygous", "Unphased heterozygous", "Phased heterozygous"))) %>%
+    group_by(Cell_lines, Protocols) %>%
+    mutate(total = sum(count)) %>%
+    ungroup() %>%
+    ggplot(aes(x = Cell_lines)) +
+    # Stacked bars
+    geom_bar(aes(y = count, fill = Protocols, alpha = variant_type), stat = "identity", position = "stack") +
+    geom_col(aes(y = total, color = Protocols, group = Protocols), fill = NA, position = position_dodge(width = 0.9), linewidth = 0.1) +
+    facet_wrap(~Protocols, nrow = 1) +
+    scale_alpha_manual(values = c(`Phased heterozygous` = 1, `Unphased heterozygous` = 0.5, Homosygous = 0.0)) +
+    scale_fill_manual(values = color_map) +
+    scale_color_manual(values = color_map) +
+  labs(title = "Phased vs Unphased Heterozygous Variants per Cell Line",
+       x = "Cell Lines", y = "Variant Count", alpha = "Variant Type") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+
+# Plot 2: longest_block per protocol with given color map
+## Doesn't really make sense to plot this, but keeping it for reference
+# stats_df %>%
+#     ggplot(aes(x = Cell_lines, y = longest_block, fill = Protocols)) +
+#     geom_bar(stat = "identity", position = "dodge") +
+#     labs(
+#         title = "Longest Block per Protocol",
+#         x = "Cell Lines", y = "Longest Block (bp)"
+#     ) +
+#     theme_minimal() +
+#     scale_fill_manual(values = color_map) +
+#     theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+## Variance calls summary
+```{r Variance calls summary, fig.height=5, fig.width=6}
+var_summary <- readRDS("/vast/projects/LongBench/clair3_mutations_region_type.RDS")
+
+var_summary <- var_summary %>%
+  mutate(
+    Protocols = recode(protocol,
+      "ont" = "ONT cDNA",
+      "drna" = "ONT dRNA",
+      "pacbio" = "PacBio",
+      "illumina" = "Illumina"
+    ),
+    intronic = !exonic & !intergenic
+  ) %>% select(-protocol)
+
+# Plot1 Total number of variants per protocol, stacked by intergenic, exonic, intronic
+p.box <- var_summary %>%
+  group_by(Protocols, cell_line) %>%
+  summarise(
+    total_variants = n(),
+    intergenic = sum(intergenic),
+    exonic = sum(exonic),
+    intronic = sum(intronic),
+    .groups = "drop"
+  ) %>%
+  pivot_longer(cols = c(intergenic, exonic, intronic), names_to = "region_type", values_to = "count") %>%
+  ggplot(aes(x = Protocols, y = count, color = Protocols)) +
+  geom_boxplot(outlier.shape = NA, alpha = 0.7) +
+  geom_jitter(aes(color = Protocols), width = 0.2, size = 1, alpha = 0.5) +
+  #geom_bar(stat = "identity", position = "stack") +
+  facet_wrap(~region_type, nrow = 1) +
+  labs(title = "Total Variants per Protocol by Region Type",
+       x = "Cell Lines", y = "Total Variants") +
+  scale_color_manual(values = color_map) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+p.bar <- var_summary %>%
+  group_by(Protocols) %>%
+  summarise(
+    total_variants = n(),
+    intergenic = sum(intergenic),
+    exonic = sum(exonic),
+    intronic = sum(intronic),
+    .groups = "drop"
+  ) %>%
+  pivot_longer(cols = c(intergenic, exonic, intronic), names_to = "region_type", values_to = "count") %>%
+  ggplot(aes(x = Protocols, y = count, fill = Protocols)) +
+  geom_bar(stat = "identity", position = "stack") +
+  facet_wrap(~region_type, nrow = 1) +
+  labs(title = "Total Variants per Protocol by Region Type",
+       x = "Cell Lines", y = "Total Variants") +
+  scale_fill_manual(values = color_map) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+coverage.p / p.box
+```
+
+```{r, upset plot overlap site and genotype, fig.height=3, fig.width=10}
+variants.upset.mat <- var_summary %>%
+  mutate(var_pos = paste(CHROM, POS, sep = "_")) %>%
+  mutate(variant_id = paste(CHROM, POS, REF, ALT, cell_line, sep = "_")) %>%
+  distinct(variant_id, Protocols, .keep_all = TRUE) %>%
+  mutate(present = TRUE) %>%
+  pivot_wider(id_cols = variant_id, names_from = Protocols, values_from = present, values_fill = FALSE)
+
+
+variants.upset.mat <- variants.upset.mat %>% left_join(
+  var_summary %>%
+    mutate(variant_id = paste(CHROM, POS, REF, ALT, cell_line, sep = "_")) %>%
+    mutate(genomic_region = case_when(
+      intergenic ~ "intergenic",
+      exonic ~ "exonic",
+      TRUE ~ "intronic"
+    )) %>%
+    distinct(variant_id, genomic_region),
+  by = "variant_id"
+)
+
+
+ComplexUpset::upset(
+  variants.upset.mat %>% 
+    filter((`ONT cDNA` | PacBio | `ONT dRNA` | Illumina) & genomic_region == "exonic"),
+  intersect = c("ONT dRNA", "ONT cDNA", "PacBio", "Illumina"),
+  name = "Variant Count",
+  width_ratio = 0.25
+)
+
+
+
+
+```
+```{r, upset plot overlap site, include=F, eval=F}
+variants.pos.upset.mat <- var_summary %>%
+  mutate(variant_id = paste(CHROM, POS, cell_line, sep = "_")) %>%
+  distinct(variant_id, Protocols, .keep_all = TRUE) %>%
+  mutate(present = TRUE) %>%
+  pivot_wider(id_cols = variant_id, names_from = Protocols, values_from = present, values_fill = FALSE)
+
+
+variants.pos.upset.mat <- variants.pos.upset.mat %>% left_join(
+  var_summary %>%
+    mutate(variant_id = paste(CHROM, POS, cell_line, sep = "_")) %>%
+    mutate(genomic_region = case_when(
+      intergenic ~ "intergenic",
+      exonic ~ "exonic",
+      TRUE ~ "intronic"
+    )) %>%
+    distinct(variant_id, genomic_region),
+  by = "variant_id"
+)
+
+
+ComplexUpset::upset(
+  variants.pos.upset.mat %>% 
+    filter((`ONT cDNA` | PacBio | `ONT dRNA` | Illumina) & genomic_region == "exonic"),
+  intersect = c("ONT dRNA", "ONT cDNA", "PacBio", "Illumina"),
+  name = "Variant Count",
+  width_ratio = 0.25
+)
+```
+
+
+# Part 2.5: Blacklist?
+```{r, fig.height=4, fig.width=10}
+library(VariantAnnotation)
+library(rtracklayer)
+library(dplyr)
+
+# --- Load blacklist regions ---
+blacklist <- import("/home/users/allstaff/you.yu/LongBench/analysis/variant_allele_specific_analysis/encBlacklist.bb", format = "bigBed") # GRanges
+# Apply to all files
+
+process_each_line <- function(cell_line){
+  vcf_files <- c(
+ paste0('/home/users/allstaff/you.yu/LongBench/analysis/variant_allele_specific_analysis/Clair3-RNA/dRNA/',cell_line,'/output.vcf'),
+ paste0('/home/users/allstaff/you.yu/LongBench/analysis/variant_allele_specific_analysis/Clair3-RNA/ont/',cell_line,'/output.vcf'),
+ paste0('/home/users/allstaff/you.yu/LongBench/analysis/variant_allele_specific_analysis/Clair3-RNA/pacbio/',cell_line,'/output.vcf'),
+ paste0('/home/users/allstaff/you.yu/vast/LongBench/tmp/Clair3-illumina/',cell_line,'/merge_output.vcf.gz')
+)
+  protocols <- protocols <- c("ONT dRNA", "ONT cDNA", "PacBio", "Illumina")
+  results <- mapply(
+  function(file, prot, cell_line) {
+      vars_in_blacklist <- count_blacklist_variants(file, blacklist)
+      if (is.null(vars_in_blacklist)) return(NULL)
+      df <- as.data.frame(vars_in_blacklist)
+      df$protocol <- prot
+      df$sample <- cell_line
+      df
+  },
+    vcf_files,
+    protocols,
+    cell_line,
+    SIMPLIFY = FALSE
+) %>% bind_rows()
+
+return(results)
+}
+
+results <- lapply(c("H146", "H1975", "H211", "H2228", "H526", "H69", "HCC827", "SHP77"), process_each_line)
+combined_df <- do.call(rbind, results) 
+# suppose your dataframe is df
+counts <- combined_df %>%
+  group_by(protocol, sample) %>%
+  summarise(n = n(), .groups = "drop")
+
+# boxplot: number of rows per protocol
+ggplot(counts, aes(x = protocol, y = n, color=protocol)) +
+  geom_boxplot() +
+  geom_jitter(width = 0.2, alpha = 0.6) +
+  scale_color_manual(values = color_map) +
+  labs(y = "Number of variants identified", x = "Sequencing protocols") +
+  theme_minimal()
+
+library(ComplexUpset)
+
+complex_df <- results %>%
+  select(seqnames, start, end, protocol) %>%
+  mutate(variant_id = paste(seqnames, start, end, sep = "_"),
+         present = TRUE) %>%
+  pivot_wider(names_from = protocol, values_from = present, values_fill = FALSE)
+
+ComplexUpset::upset(
+  complex_df,
+  intersect = c( 'dRNA',  'cDNA' , 'PacBio', 'illumina')
+)
+```
+```{r}
+library(VariantAnnotation)
+library(rtracklayer)
+library(dplyr)
+
+# --- Load blacklist regions ---
+blacklist <- import("/home/users/allstaff/you.yu/LongBench/analysis/variant_allele_specific_analysis/encBlacklist.bb", format = "bigBed") # GRanges
+
+# --- Define your VCF files and protocols ---
+vcf_files <- c(
+ '/home/users/allstaff/you.yu/LongBench/analysis/variant_allele_specific_analysis/Clair3-RNA/dRNA/H146/output.vcf',
+ '/home/users/allstaff/you.yu/LongBench/analysis/variant_allele_specific_analysis/Clair3-RNA/ont/H146/output.vcf',
+  '/home/users/allstaff/you.yu/LongBench/analysis/variant_allele_specific_analysis/Clair3-RNA/pacbio/H146/output.vcf',
+ '/home/users/allstaff/you.yu/LongBench/analysis/variant_allele_specific_analysis/Clair3-illumina/H146/merge_output.vcf.gz'
+ 
+)
+
+protocols <- c("dRNA", "cDNA", "PacBio", "illumina")
+
+# --- Function to count blacklist variants after filtering ---
+filter_vr <- function(vcf_path) {
+  vcf <- readVcf(vcf_path)
+  
+  # Filter PASS + QUAL
+  pass_idx <- VariantAnnotation::fixed(vcf)$FILTER == "PASS" & VariantAnnotation::fixed(vcf)$QUAL >= 10
+  
+  # Get DP from FORMAT (per-sample) or INFO
+  if ("DP" %in% names(geno(vcf))) {
+    dp_values <- geno(vcf)$DP[, 1]  # per-sample depth
+  } else if ("DP" %in% names(info(vcf))) {
+    dp_values <- info(vcf)$DP
+  } else {
+    stop("No DP field found in VCF: ", vcf_path)
+  }
+  
+  dp_idx <- !is.na(dp_values) & dp_values >= 30
+  keep_idx <- pass_idx & dp_idx
+  if (!any(keep_idx)) return(NULL)
+  
+  vr <- rowRanges(vcf)[keep_idx]
+  return(vr)
+}
+
+# Apply to all files
+results <- mapply(
+  function(file, prot) {
+    vr.filtered <- filter_vr(file)
+    if (is.null(vr.filtered)) return(NULL)
+    df <- as.data.frame(vr.filtered)
+    df$protocol <- prot
+    df$sample <- basename(file)
+    df
+  },
+  vcf_files,
+  protocols,
+  SIMPLIFY = FALSE
+) %>% bind_rows()
+
+library(ComplexUpset)
+
+complex_df <- results %>%
+  select(seqnames, start, end, protocol) %>%
+  mutate(variant_id = paste(seqnames, start, end, sep = "_"),
+         present = TRUE) %>%
+  pivot_wider(names_from = protocol, values_from = present, values_fill = FALSE)
+
+ComplexUpset::upset(
+  complex_df,
+  intersect = c( 'dRNA',  'cDNA' , 'PacBio', 'illumina')
+)
+```
+
+
+# Part 3: Accuracy of mutation calling using Spike-in  and CCLE
+```{r}
+# Load the data
+FP.matrix <- read_tsv(file.path(params$summary_dir, "Muatation_calling_summary/mutations_FP_QUAL_detail.tsv"))
+TP.matrix <- read_tsv(file.path(params$summary_dir, "Muatation_calling_summary/mutations_TP_GT_QUAL_detail.tsv"))
+```
+
+### Plotting the number of FP  per method
+```{r FP}
+# Organize the data
+FP.matrix <- FP.matrix %>%
+  # Split the SNP_ID column into two new columns: sample and locus
+  separate(SNP_ID, into = c("sample", "locus"), sep = ":", extra = "merge") %>%
+  rename(
+    PacBio = pacbio,
+    `ONT dRNA` = drna,
+    `ONT cDNA` = ont,
+    Illumina = illumina,
+    Illumina_DV = deepvariant
+  )
+
+```
+
+
+```{r Spikein_FP, fig.height=3, fig.width=4}
+
+# Correct color map
+color_map <- c(
+  "Illumina"               = "#E87D24",
+  "Illumina_DV"   = "#914f19",
+  "PacBio"                 = "#DA1884",
+  "ONT dRNA"               = "#007EA7",
+  "ONT cDNA"               = "#003F5C"
+)
+
+# Label mapping
+# label_map <- c(
+#   illumina_clair3 = "Illumina clair3",
+#   illumina_DV     = "Illumina deepvariant",
+#   pacbio          = "PacBio",
+#   drna            = "ONT dRNA",
+#   ont             = "ONT cDNA"
+# )
+FP.summary <- FP.matrix %>%
+  select(-locus) %>%
+  group_by(sample) %>%
+  summarise(across(everything(), sum, na.rm = TRUE), .groups = "drop")
+
+# Prepare data
+FP.summary %>%
+  select(-Illumina_DV) %>%
+  pivot_longer(-sample, names_to = "platform", values_to = "false_positives") %>%
+  ggplot(aes(x = platform, y = false_positives, color = platform)) +
+    geom_jitter(width = 0.3, size = 1.5) +  # smaller dots
+    #scale_y_log10() +
+    scale_color_manual(values = color_map) +
+    labs(title = "False Positives by Platform",
+        x = "Platform", y = "False Positives", color = "Platform") +
+    theme_minimal(base_size = 14) +  # larger base text
+    theme(
+      axis.text.x = element_text(angle = 20, hjust = 1),
+      legend.title = element_text(size = 13),
+      legend.text = element_text(size = 12)
+    )
+
+
+# Sup  with DV
+# Prepare data
+FP.summary %>%
+  pivot_longer(-sample, names_to = "platform", values_to = "false_positives") %>%
+  ggplot(aes(x = platform, y = false_positives, color = platform)) +
+    geom_jitter(width = 0.3, size = 1.5) +  # smaller dots
+    #scale_y_log10() +
+    scale_color_manual(values = color_map) +
+    labs(title = "False Positives by Platform",
+        x = "Platform", y = "False Positives", color = "Platform") +
+    theme_minimal(base_size = 14) +  # larger base text
+    theme(
+      axis.text.x = element_text(angle = 20, hjust = 1),
+      legend.title = element_text(size = 13),
+      legend.text = element_text(size = 12)
+    )
+```
+
+### Explore illumina
+```{r, include=F, eval=T}
+library(GenomicRanges)
+library(rtracklayer)
+gtf <- import('/vast/projects/LongBench/reference_files/GRCh38.add.spikein/gencode.v44.transcripts.add.spikein.gtf')
+
+exons <- gtf[gtf$type == "exon"]
+genes <- gtf[gtf$type == "gene"]
+
+FP.matrix.split <- FP.matrix %>%
+  # filter for examples only TRUE for illumina
+  #filter(Illumina & !PacBio & !`ONT dRNA` & !`ONT cDNA`) %>%
+  separate(locus, into = c("chr", "pos", "REF", "ALT"), sep = ":", extra = "merge") 
+
+# Convert to GRanges
+pos_gr <- GRanges(
+  seqnames = FP.matrix.split$chr,
+  ranges = IRanges(as.integer(FP.matrix.split$pos), width = 1)
+)
+
+FP.matrix.split$is.exonic <- countOverlaps(pos_gr, exons) > 0
+
+color_map <- c(
+  "Illumina"     = "#E87D24",
+  #"Illumina_DV"  = "#914f19",
+  "PacBio"       = "#DA1884",
+  "ONT dRNA"     = "#007EA7",
+  "ONT cDNA"     = "#003F5C"
+)
+
+# Plotting the proportion of exonic and non-exonic variants called by each platform
+FP.matrix.split %>%
+  pivot_longer(cols = names(color_map),
+               names_to = "platform", values_to = "called") %>%
+  filter(called == TRUE) %>%
+  group_by(platform) %>%
+  summarise(proportion_exonic = mean(is.exonic == TRUE)) %>%
+  ggplot(aes(x = platform, y = proportion_exonic, fill = platform)) +
+  geom_col() +
+  scale_fill_manual(values = color_map) +
+  labs(y = "Proportion exonic", x = "Platform") +
+  theme_minimal()
+
+# Plotting the proportion of non-exonic variants called by each platform
+FP.matrix.split %>%
+  select(-Illumina_DV) %>%
+  pivot_longer(cols = names(color_map),
+               names_to = "platform", values_to = "called") %>%
+  filter(called == TRUE) %>%
+  group_by(platform) %>%
+  summarise(proportion_non_exonic = mean(is.exonic == FALSE)) %>%
+  ggplot(aes(x = platform, y = proportion_non_exonic, fill = platform)) +
+  geom_col() +
+  scale_fill_manual(values = color_map) +
+  labs(y = "Proportion non-exonic variants", x = "Platform") +
+  theme_minimal()
+
+# FP on exonic only
+FP.summary <- FP.matrix.split %>%
+  filter(is.exonic == TRUE) %>%
+  select( -c(chr, pos, REF, ALT, is.exonic)) %>%
+  group_by(sample) %>%
+  summarise(across(everything(), sum, na.rm = TRUE), .groups = "drop")
+
+# Prepare data
+FP.summary %>%
+  select(-Illumina_DV) %>%
+  pivot_longer(-sample, names_to = "platform", values_to = "false_positives") %>%
+  ggplot(aes(x = platform, y = false_positives, color = platform)) +
+    geom_jitter(width = 0.3, size = 1.5) +  # smaller dots
+    #scale_y_log10() +
+    scale_color_manual(values = color_map) +
+    labs(title = "False Positives by Platform (on exonic variants only)",
+        x = "Platform", y = "False Positives", color = "Platform") +
+    theme_minimal(base_size = 14) +  # larger base text
+    theme(
+      axis.text.x = element_text(angle = 20, hjust = 1),
+      legend.title = element_text(size = 13),
+      legend.text = element_text(size = 12)
+    )
+
+  
+
+# FP on SIRV only
+FP.matrix.split %>%
+  mutate(panel = case_when(
+    str_starts(chr, "SIRV") ~ "SIRV",
+    str_starts(chr, "ERCC") ~ "ERCC",
+    str_starts(chr, "chrIS") ~ "chrIS",
+    TRUE ~ NA_character_
+  )) %>%
+  pivot_longer(
+    cols = c(PacBio, `ONT dRNA`, `ONT cDNA`, Illumina),
+    names_to = "platform", values_to = "called"
+  ) %>%
+  group_by(panel, platform, sample) %>%
+  summarise(
+    called = sum(called),
+    .groups = "drop"
+  ) %>%
+  ggplot(aes(x = platform, y = called, fill = platform)) +
+  geom_boxplot() +
+  facet_wrap(~panel) +
+  scale_fill_manual(values = color_map) +
+  theme_minimal() +
+  # rotate x-axis labels
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) 
+```
+
+## TP
+
+### Add genomic region type
+```{r }
+pos_gr <- GRanges(
+  seqnames = TP.matrix$CHROM,
+  ranges = IRanges(as.integer(TP.matrix$POS), width = 1)
+)
+is.exonic <- countOverlaps(pos_gr, exons) > 0
+is.gene <- countOverlaps(pos_gr, genes) > 0
+is.intronic <- is.gene & !is.exonic
+is.intergenic <- !is.gene
+
+TP.matrix$region <- ifelse(is.exonic, "exonic",
+                     ifelse(is.intronic, "intronic", "intergenic"))
+```
+
+```{r CCLE TP}
+# Main without DV
+TP.matrix %>%
+  select(variant_type, ends_with("_STATUS"), region) %>%
+  select(-DV_illumina_STATUS) %>%
+  filter(variant_type %in% c("SNP", "indel")) %>%
+  pivot_longer(
+    cols = ends_with("_STATUS"),
+    names_to = "platform",
+    values_to = "status"
+  ) %>%
+  mutate(
+    status = recode(
+      status,
+      "match" = "Match",
+      "discordant" = "Discordant",
+      "lowqual" = "Low Quality",
+      "not_called" = "Not Called"
+    )
+  )  %>%
+  #filter(!(status %in% c("Not Called", "Low Quality"))) %>%
+  mutate(
+    platform = sub("_STATUS", "", platform),
+    platform = recode(platform,
+                      "illumina" = "Illumina",
+                      "DV_illumina" = "Illumina deepvariant",
+                      "pacbio" = "PacBio",
+                      "ont" = "ONT cDNA",
+                      "drna" = "ONT dRNA")
+  )  %>%   # consider lowqual and not_called as "Not Called"
+  mutate(status = recode(status, "Low Quality" = "Not Called")) %>%
+  mutate(status = factor(status, levels = c("Not Called", "Discordant",  "Match")))-> TP.summary.mtx
+
+# Plotting
+TP.summary.mtx %>%
+  group_by(variant_type, platform, status, region) %>%
+  summarise(count = n(), .groups = "drop") %>%
+  ggplot(aes(x = platform, y = count, fill = status)) +
+  geom_col(position = "stack") +
+  facet_wrap(~  region + variant_type, scales = "free_y") +
+  scale_fill_manual(values = c("Not Called" = "#C9C9C9", "Match" = "#1b9e77", "Discordant" = "#CF9741")) +
+  labs(x = "Status", y = "Count", fill = "Platform") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+# Facet by region
+TP.summary.mtx %>%
+  group_by(platform, status, region) %>%
+  summarise(count = n(), .groups = "drop") %>%
+  ggplot(aes(x = platform, y = count, fill = status)) +
+  geom_col(position = "stack") +
+  facet_wrap(~  region, scales = "free_y") +
+  scale_fill_manual(values = c("Not Called" = "#C9C9C9", "Match" = "#1b9e77", "Discordant" = "#CF9741")) +
+  labs(x = "Status", y = "Count", fill = "Platform") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+# Facet by variant type
+TP.summary.mtx %>%
+  group_by(platform, status, variant_type) %>%
+  summarise(count = n(), .groups = "drop") %>%
+  ggplot(aes(x = platform, y = count, fill = status)) +
+  geom_col(position = "stack") +
+  facet_wrap(~  variant_type, scales = "free_y") +
+  scale_fill_manual(values = c("Not Called" = "#C9C9C9", "Match" = "#1b9e77", "Discordant" = "#CF9741")) +
+  labs(x = "Status", y = "Count", fill = "Platform") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+# Sup with DV
+# TP.matrix %>%
+#   select(variant_type, ends_with("_STATUS")) %>%
+#   filter(variant_type %in% c("SNP", "indel")) %>%
+#   pivot_longer(
+#     cols = ends_with("_STATUS"),
+#     names_to = "platform",
+#     values_to = "status"
+#   ) %>%
+#     mutate(
+#     status = recode(
+#       status,
+#       "match" = "Match",
+#       "discordant" = "Discordant",
+#       "lowqual" = "Low Quality",
+#       "not_called" = "Not Called"
+#     )
+#   ) %>% 
+#   mutate(
+#     platform = sub("_STATUS", "", platform),
+#     platform = recode(platform,
+#                       "illumina" = "Illumina",
+#                       "DV_illumina" = "Illumina deepvariant",
+#                       "pacbio" = "PacBio",
+#                       "ont" = "ONT cDNA",
+#                       "drna" = "ONT dRNA")
+#   ) %>%
+#   group_by(variant_type, platform, status) %>%
+#   summarise(count = n(), .groups = "drop") %>%
+#   ggplot(aes(x = status, y = count, fill = platform)) +
+#   geom_col(position = "dodge") +
+#   facet_wrap(~ variant_type, scales = "free_y") +
+#   scale_y_log10() +
+#   scale_fill_manual(values = color_map) +
+#   labs(x = "Status", y = "Count (log scale)", fill = "Platform") +
+#   theme_minimal() +
+#   theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+
+
+
+
+
+
+# Part 3.5 (v2, enable phasing): Accuracy of mutation calling using Spike-in  and CCLE 
+```{r}
+# Load the data
+
+FP.matrix.phase <- read_tsv(file.path(params$summary_dir, "Muatation_calling_summary/mutations_FP_QUAL_phasing_detail.tsv"))
+TP.matrix.phase <- read_tsv(file.path(params$summary_dir, "Muatation_calling_summary/mutations_TP_GT_QUAL_phasing_detail.tsv"))
+```
+
+### Plotting the number of FP  per method
+```{r FP phasing model}
+# Organize the data
+FP.matrix.phase <- FP.matrix.phase %>%
+  # Split the SNP_ID column into two new columns: sample and locus
+  separate(SNP_ID, into = c("sample", "locus"), sep = ":", extra = "merge") %>%
+  rename(
+    `PacBio phased` = pacbio,
+    `ONT dRNA phased` = drna,
+    `ONT cDNA phased` = ont
+  ) %>% full_join(FP.matrix, by=c('sample', 'locus')) %>%
+  mutate(across(everything(), ~replace_na(.x, FALSE)))
+
+```
+
+
+```{r Spikein_FP phasing model, fig.height=3, fig.width=6}
+
+# Correct color map
+color_map <- c(
+  "Illumina"               = "#E87D24",
+  "Illumina_DV"   = "#914f19",
+  "PacBio"                 = "#DA1884",
+  "ONT dRNA"               = "#007EA7",
+  "ONT cDNA"               = "#003F5C",
+  "PacBio phased" = "#DA1884",
+  "ONT dRNA phased" = "#007EA7",
+  "ONT cDNA phased" = "#003F5C"
+)
+
+FP.summary <- FP.matrix.phase %>%
+  select(-locus) %>%
+  group_by(sample) %>%
+  summarise(across(everything(), sum, na.rm = TRUE), .groups = "drop")
+
+# Prepare data
+FP.summary %>%
+  pivot_longer(-sample, names_to = "platform", values_to = "false_positives") %>%
+  ggplot(aes(x = platform, y = false_positives, color = platform)) +
+    geom_boxplot(width = 0.3, size = 1) +  # smaller dots
+    #scale_y_log10() +
+    scale_color_manual(values = color_map) +
+    labs(title = "False Positives by Platform",
+        x = "Platform", y = "False Positives", color = "Platform") +
+    theme_minimal(base_size = 14) +  # larger base text
+    theme(
+      axis.text.x = element_text(angle = 20, hjust = 1),
+      legend.title = element_text(size = 13),
+      legend.text = element_text(size = 12)
+    )
+```
+
+
+## TP
+```{r CCLE TP}
+# Main without DV
+TP.matrix.phase %>%
+  pivot_longer(
+    cols = ends_with("_STATUS"),
+    names_to = "platform",
+    values_to = "status"
+  ) %>%
+  mutate(
+    status = recode(
+      status,
+      "match" = "Match",
+      "discordant" = "Discordant",
+      "lowqual" = "Low Quality",
+      "not_called" = "Not Called"
+    )
+  )  %>%
+  mutate(
+    platform = sub("_STATUS", "", platform),
+    platform = recode(platform,
+                      "pacbio" = "PacBio phased",
+                      "ont" = "ONT cDNA phased",
+                      "drna" = "ONT dRNA phased")
+  )  %>%   # consider lowqual and not_called as "Not Called"
+  mutate(status = recode(status, "Low Quality" = "Not Called")) %>%
+  mutate(status = factor(status, levels = c("Not Called", "Discordant",  "Match")))-> TP.summary.mtx.phase
+```
+
+
+```{r CCLE TP plot, fig.height=3,fig.width=4}
+
+TP.matrix %>%
+  select(variant_type, ends_with("_STATUS"), region) %>%
+  pivot_longer(
+    cols = ends_with("_STATUS"),
+    names_to = "platform",
+    values_to = "status"
+  ) %>%
+  mutate(
+    status = recode(
+      status,
+      "match" = "Match",
+      "discordant" = "Discordant",
+      "lowqual" = "Low Quality",
+      "not_called" = "Not Called"
+    )
+  )  %>%
+  #filter(!(status %in% c("Not Called", "Low Quality"))) %>%
+  mutate(
+    platform = sub("_STATUS", "", platform),
+    platform = recode(platform,
+                      "illumina" = "Illumina",
+                      "DV_illumina" = "Illumina deepvariant",
+                      "pacbio" = "PacBio",
+                      "ont" = "ONT cDNA",
+                      "drna" = "ONT dRNA")
+  )  %>%   # consider lowqual and not_called as "Not Called"
+  mutate(status = recode(status, "Low Quality" = "Not Called")) %>%
+  mutate(status = factor(status, levels = c("Not Called", "Discordant",  "Match")))-> TP.summary.mtx
+
+
+
+# Plotting
+TP.summary.mtx.phase %>%
+  select(platform, status) %>%
+  bind_rows(TP.summary.mtx %>% select(platform, status)) %>%
+  group_by(platform, status) %>%
+  summarise(count = n(), .groups = "drop") %>%
+  ggplot(aes(x = platform, y = count, fill = status)) +
+  geom_col(position = "stack") +
+  scale_fill_manual(values = c("Not Called" = "#C9C9C9", "Match" = "#1b9e77", "Discordant" = "#CF9741")) +
+  labs(x = "Status", y = "Count", fill = "Platform") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+
+
+
+
+
+# Part 4:  Allelic imbalance
+## 1. Allele frequency distribution by platform
+### 1.1. Read and arrange the data
+```{r AF distribution DP > 30, fig.height=3, fig.width=4}
+
+full_table <- read_tsv(file.path(params$summary_dir, "Allelic_imbalance/summary.tsv"))
+
+colnames(full_table) <- c("CHROM","POS","ID","REF","ALT","QUAL","FILTER","INFO","FORMAT","SAMPLE","ont","pacbio","drna","illumina")
+
+
+split_platform <- function(df, colname, prefix) {
+  format_keys <- strsplit(df$FORMAT[1], ":")[[1]]
+  col_names <- paste0(prefix, "_", format_keys)
+
+  df %>%
+    separate_wider_delim(
+      !!sym(colname),
+      delim = ":",
+      names = col_names,
+      too_few = "align_start"
+    ) %>%
+    mutate(
+      across(all_of(paste0(prefix, "_AD")), ~ as.integer(.)), # keep AD as string if comma-separated
+      across(all_of(paste0(prefix, "_DP")), ~ as.integer(.))
+    ) 
+}
+
+# Start processing
+processed <- full_table %>%
+  split_platform("ont", "ont") %>%
+  split_platform("pacbio", "pb") %>%
+  split_platform("drna", "drna") %>%
+  split_platform("illumina", "ill") %>%
+  select(
+    -c(INFO, FILTER, FORMAT),
+    -matches("(_PL|_ALL|_OTH)$")
+  ) %>% # filter for all columns that end with _DP >=20
+  filter(across(matches("_DP$"), ~ . >= 30))
+
+af_long <- processed %>%
+  mutate(
+    `ONT cDNA` = ont_AD / ont_DP,
+    PacBio     = pb_AD / pb_DP,
+    `ONT dRNA` = drna_AD / drna_DP,
+    Illumina   = ill_AD / ill_DP
+  ) %>%
+  pivot_longer(cols = c(`ONT cDNA`, PacBio, `ONT dRNA`, Illumina), names_to = "Platform", values_to = "AF") %>%
+  filter(!is.na(AF), AF >= 0, AF <= 1) %>%
+  mutate(GT = case_when(
+    Platform == "ONT cDNA" ~ ont_GT,
+    Platform == "ONT dRNA" ~ drna_GT,
+    Platform == "PacBio" ~ pb_GT,
+    Platform == "Illumina" ~ ill_GT,
+    TRUE ~ NA_character_
+  ), DP = case_when(
+    Platform == "ONT cDNA" ~ ont_DP,
+    Platform == "ONT dRNA" ~ drna_DP,
+    Platform == "PacBio" ~ pb_DP,
+    Platform == "Illumina" ~ ill_DP,
+    TRUE ~ NA_integer_
+  )) %>%
+  filter(GT %in% c("0/1", "1/0"))
+
+ggplot(af_long, aes(x = Platform, y = AF, color = Platform)) +
+  geom_violin(trim = FALSE, fill = NA) +
+  geom_boxplot(width = 0.1, outlier.size = 0.5) +
+  scale_color_manual(values = color_map) +
+  theme_minimal() +
+  labs(title = "Allele Frequency Distribution by Platform",
+       x = "Platform",
+       y = "ALT Allele Frequency") +
+  theme(legend.position = "none") +
+  coord_flip()
+
+
+# Depth distribution
+ggplot(af_long, aes(x = Platform, y = DP, color = Platform)) +
+  geom_boxplot(outliers = F) +
+  scale_color_manual(values = color_map) +
+  theme_minimal() +
+  labs(
+    title = "Depth Distribution by Platform (Filtered for DP >= 30 already)",
+    x = "Platform",
+    y = "Read Depth"
+  ) +
+  scale_y_log10() +  # Log scale for better visibility
+  theme(legend.position = "none") +
+  coord_flip()
+```
+
+# 3. Binomial Test: Detection of allelic imbalance in full data with dp>=30
+
+```{r Binomial test p value distribution}
+binom_test_p <- function(alt, dp) {
+  if (is.na(alt) || is.na(dp) || dp == 0) return(NA)
+  binom.test(alt, dp, p = 0.5)$p.value
+}
+
+processed_with_binom_p <- processed %>%
+  # filter all *_GT columns that are not NA and not equal to "0/0"
+  filter(across(matches("_GT$"), ~ !is.na(.) & . != "0/0")) %>%
+  mutate(
+    p_ont  = mapply(binom_test_p, ont_AD, ont_DP),
+    p_pb   = mapply(binom_test_p, pb_AD, pb_DP),
+    p_drna = mapply(binom_test_p, drna_AD, drna_DP),
+    p_ill  = mapply(binom_test_p, ill_AD, ill_DP)
+  ) %>%
+  mutate(
+    adj_p_ont  = p.adjust(p_ont, method = "BH"),
+    adj_p_pb   = p.adjust(p_pb, method = "BH"),
+    adj_p_drna = p.adjust(p_drna, method = "BH"),
+    adj_p_ill  = p.adjust(p_ill, method = "BH")
+  )
+
+# plotting the  p-values distribution
+p <- ggplot(processed_with_binom_p, aes(x = p_ont)) +
+  stat_bin(bins = 20, color = color_map["ONT cDNA"], alpha = 0.7,geom="step") +
+  stat_bin(aes(x = p_pb), bins = 20, color = color_map["PacBio"], alpha = 0.7,geom="step") +
+  stat_bin(aes(x = p_drna), bins = 20, color = color_map["ONT dRNA"], alpha = 0.7,geom="step") +
+  stat_bin(aes(x = p_ill), bins = 20, color = color_map["Illumina"], alpha = 0.7,geom="step") +
+  labs(
+    title = "Distribution of p-values for Allelic Imbalance",
+    x = "p-value",
+    y = "Count"
+  ) +
+  theme_minimal()
+
+p 
+```
+
+## Upset plot for binomial test
+```{r Upset binomial test, fig.height=3, fig.width=8}
+## Upset plot for beta-binomial test
+library(ComplexUpset)
+  processed_with_binom_p %>% mutate(
+    `ONT cDNA` = adj_p_ont < 0.05,
+    PacBio = adj_p_pb < 0.05,
+    `ONT dRNA` = adj_p_drna < 0.05,
+    Illumina = adj_p_ill < 0.05
+  ) -> processed_with_binom_p
+
+# Upset plot for binomial test results
+ComplexUpset::upset(
+  processed_with_binom_p %>% filter(
+    `ONT cDNA` | PacBio | `ONT dRNA` | Illumina
+  ),
+  intersect = c("ONT dRNA", "ONT cDNA", "PacBio", "Illumina"),
+  name = "Allelic Imbalance",
+  width_ratio = 0.25
+)
+
+# Specific detect/absence analysis
+
+df_long <- processed_with_binom_p %>% 
+  filter (
+    `ONT dRNA` | `ONT cDNA` | `PacBio` | Illumina
+  ) %>%
+  pivot_longer(c(`ONT dRNA`, `ONT cDNA`, `PacBio`, Illumina), names_to = "Platform", values_to = "Detected") %>%
+  group_by(CHROM, POS, SAMPLE) %>%
+  mutate(TotalDetected = sum(Detected)) %>%
+  ungroup() %>%
+  mutate(
+    Category = case_when(
+      Detected == 1 & TotalDetected == 1 ~ "Platform-Specific Detection",  # Only detected by this platform
+      Detected == 0 & TotalDetected == 3 ~ "Platform-Specific Absence",      # Not detected by this platform but present elsewhere
+      Detected == 1 & TotalDetected > 1 ~ "Common Detection (also detected in >0 other platform)",
+      Detected == 0 & TotalDetected < 3 ~ "Common Absence (also absent in >0 other platform)", # Detected by this platform + at least one other
+      TRUE ~ "Other"
+    )
+  ) %>%
+  count(Platform, Category)
+
+# Convert to factor for proper ordering in plot
+df_long$Category <- factor(df_long$Category, 
+                           levels = c(
+                                      "Platform-Specific Absence", 
+                                      "Common Absence (also absent in >0 other platform)",
+                                      "Platform-Specific Detection", 
+                                      "Common Detection (also detected in >0 other platform)"
+                                      ))
+df_long %>%
+  filter(Category %in% c("Platform-Specific Absence", "Common Detection (also detected in >0 other platform)", "Platform-Specific Detection")) %>%
+  mutate(n = if_else(Category == "Platform-Specific Absence", -n, n)) %>%
+  ggplot(aes(x = Platform, y = n, fill = Category)) +
+  geom_bar(stat = "identity") +
+  labs(
+    y = "Number of Loci",
+    x = "Platform",
+    fill = "Category"
+  ) +
+  theme_minimal() +
+  scale_fill_manual(
+    values = c(
+      "Common Detection (also detected in >0 other platform)" = "#8fbbd4",
+      "Platform-Specific Detection" = "#0072B2",
+      "Platform-Specific Absence" = "#E69F00"
+    )
+  ) +
+  coord_flip() +
+  theme(
+    axis.text.x = element_text(angle = 0),
+    axis.title.x = element_text(size = 12),
+    axis.text.y = element_text(size = 10)
+  )
+
+
+```
+
+## Binomial test with standardised power (Subsample reads)
+```{r}
+dp_target <- 30
+set.seed(params$seed)
+downsample_ad <- function(AD, DP, target = dp_target) {
+  prob <- AD / DP
+  rbinom(1, size = target, prob = prob)
+}
+
+downsample_platform <- function(df, ad_col, dp_col, prefix) {
+  df %>%
+    mutate(
+      !!ad_col := map2_dbl(.data[[ad_col]], .data[[dp_col]],
+                                             ~downsample_ad(.x, .y)),
+      !!dp_col := dp_target
+    )
+}
+
+# Apply to all platforms
+processed_ds <- processed %>%
+  downsample_platform("ont_AD",  "ont_DP",  "ont") %>%
+  downsample_platform("pb_AD",   "pb_DP",   "pb") %>%
+  downsample_platform("drna_AD", "drna_DP", "drna") %>%
+  downsample_platform("ill_AD",  "ill_DP",  "ill")
+
+  # Compute downsampled AF
+af_long <- processed_ds %>%
+  mutate(
+    `ONT cDNA` = ont_AD / ont_DP,
+    PacBio     = pb_AD / pb_DP,
+    `ONT dRNA` = drna_AD / drna_DP,
+    Illumina   = ill_AD / ill_DP
+  ) %>%
+  pivot_longer(cols = c(`ONT cDNA`, PacBio, `ONT dRNA`, Illumina), names_to = "Platform", values_to = "AF") %>%
+  filter(!is.na(AF), AF >= 0, AF <= 1) %>%
+  mutate(GT = case_when(
+    Platform == "ONT cDNA" ~ ont_GT,
+    Platform == "ONT dRNA" ~ drna_GT,
+    Platform == "PacBio" ~ pb_GT,
+    Platform == "Illumina" ~ ill_GT,
+    TRUE ~ NA_character_
+  ), DP = case_when(
+    Platform == "ONT cDNA" ~ ont_DP,
+    Platform == "ONT dRNA" ~ drna_DP,
+    Platform == "PacBio" ~ pb_DP,
+    Platform == "Illumina" ~ ill_DP,
+    TRUE ~ NA_integer_
+  )) %>%
+  filter(GT %in% c("0/1", "1/0"))
+
+ggplot(af_long, aes(x = Platform, y = AF, color = Platform)) +
+  geom_violin(trim = FALSE, fill = NA) +
+  geom_boxplot(width = 0.1, outlier.size = 0.5) +
+  scale_color_manual(values = color_map) +
+  theme_minimal() +
+  labs(title = "Allele Frequency Distribution by Platform",
+       x = "Platform",
+       y = "ALT Allele Frequency") +
+  theme(legend.position = "none") +
+  coord_flip()
+```
+
+
+
+# 3. Binomial Test: Detection of allelic imbalance in full data with dp>=30
+
+```{r}
+
+processed_with_binom_p <- processed_ds %>%
+  # filter all *_GT columns that are not NA and not equal to "0/0"
+  filter(across(matches("_GT$"), ~ !is.na(.) & . != "0/0")) %>%
+  mutate(
+    p_ont  = mapply(binom_test_p, ont_AD, ont_DP),
+    p_pb   = mapply(binom_test_p, pb_AD, pb_DP),
+    p_drna = mapply(binom_test_p, drna_AD, drna_DP),
+    p_ill  = mapply(binom_test_p, ill_AD, ill_DP)
+  ) %>%
+  mutate(
+    adj_p_ont  = p.adjust(p_ont, method = "BH"),
+    adj_p_pb   = p.adjust(p_pb, method = "BH"),
+    adj_p_drna = p.adjust(p_drna, method = "BH"),
+    adj_p_ill  = p.adjust(p_ill, method = "BH")
+  )
+
+```
+
+## Upset plot for binomial test
+```{r, fig.width=6, fig.height=3}
+## Upset plot for beta-binomial test
+library(ComplexUpset)
+  processed_with_binom_p %>% mutate(
+    `ONT cDNA` = adj_p_ont < 0.05,
+    PacBio = adj_p_pb < 0.05,
+    `ONT dRNA` = adj_p_drna < 0.05,
+    Illumina = adj_p_ill < 0.05
+  ) -> processed_with_binom_p
+
+# Upset plot for binomial test results
+ComplexUpset::upset(
+  processed_with_binom_p %>% filter(
+    `ONT cDNA` | PacBio | `ONT dRNA` | Illumina
+  ),
+  intersect = c("ONT dRNA", "ONT cDNA", "PacBio", "Illumina"),
+  name = "Allelic Imbalance",
+  width_ratio = 0.25
+)
+
+# Specific detect/absence analysis
+
+df_long <- processed_with_binom_p %>% 
+  filter (
+    `ONT dRNA` | `ONT cDNA` | `PacBio` | Illumina
+  ) %>%
+  pivot_longer(c(`ONT dRNA`, `ONT cDNA`, `PacBio`, Illumina), names_to = "Platform", values_to = "Detected") %>%
+  group_by(CHROM, POS, SAMPLE) %>%
+  mutate(TotalDetected = sum(Detected)) %>%
+  ungroup() %>%
+  mutate(
+    Category = case_when(
+      Detected == 1 & TotalDetected == 1 ~ "Platform-Specific Detection",  # Only detected by this platform
+      Detected == 0 & TotalDetected == 3 ~ "Platform-Specific Absence",      # Not detected by this platform but present elsewhere
+      Detected == 1 & TotalDetected > 1 ~ "Common Detection (also detected in >0 other platform)",
+      Detected == 0 & TotalDetected < 3 ~ "Common Absence (also absent in >0 other platform)", # Detected by this platform + at least one other
+      TRUE ~ "Other"
+    )
+  ) %>%
+  count(Platform, Category)
+
+# Convert to factor for proper ordering in plot
+df_long$Category <- factor(df_long$Category, 
+                           levels = c(
+                                      "Platform-Specific Absence", 
+                                      "Common Absence (also absent in >0 other platform)",
+                                      "Platform-Specific Detection", 
+                                      "Common Detection (also detected in >0 other platform)"
+                                      ))
+df_long %>%
+  filter(Category %in% c("Platform-Specific Absence", "Common Detection (also detected in >0 other platform)", "Platform-Specific Detection")) %>%
+  mutate(n = if_else(Category == "Platform-Specific Absence", -n, n)) %>%
+  ggplot(aes(x = Platform, y = n, fill = Category)) +
+  geom_bar(stat = "identity") +
+  labs(
+    y = "Number of Loci",
+    x = "Platform",
+    fill = "Category"
+  ) +
+  theme_minimal() +
+  scale_fill_manual(
+    values = c(
+      "Common Detection (also detected in >0 other platform)" = "#8fbbd4",
+      "Platform-Specific Detection" = "#0072B2",
+      "Platform-Specific Absence" = "#E69F00"
+    )
+  ) +
+  coord_flip() +
+  theme(
+    axis.text.x = element_text(angle = 0),
+    axis.title.x = element_text(size = 12),
+    axis.text.y = element_text(size = 10)
+  )
+
+
+df_long %>%
+  filter(Category %in% c("Platform-Specific Absence", "Common Detection (also detected in >0 other platform)", "Platform-Specific Detection")) %>%
+  mutate(n = if_else(Category == "Platform-Specific Absence", 0, n)) %>%
+  ggplot(aes(x = Platform, y = n, fill=Platform)) +
+  geom_bar(stat = "identity") +
+  labs(
+    y = "Number of Loci",
+    x = "Platform",
+    fill = "Sequencing Protocols"
+  ) +
+  theme_minimal() +
+  scale_fill_manual(values = color_map) +
+  theme(
+    axis.text.x = element_text(angle = 0),
+    axis.title.x = element_text(size = 12),
+    axis.text.y = element_text(size = 10)
+  )
+
+```
+
+# 4. Beta-binomial test with loci dp>=30 convervative overdispersion (0.001)
+```{r}
+library(VGAM)
+
+# fit a global beta-binomial model
+
+
+# Estimating platform-specific overdispersion parameters
+# estimate_rho <- function(alt, dp) {
+#   fit <- vglm(cbind(alt, dp - alt) ~ 1, betabinomial, trace = TRUE)
+#   return(fit)
+#   #return(Coef(fit)['rho'])
+# }
+# 
+# estimate_rho(processed %>% filter(ont_GT == "1/0") %>% pull(ont_AD), processed %>% filter(ont_GT == "1/0") %>% pull(ont_DP)) -> rho_ont
+# estimate_rho(processed %>% filter(pb_GT == "1/0") %>% pull(pb_AD), processed %>% filter(pb_GT == "1/0") %>% pull(pb_DP)) -> rho_pb
+# estimate_rho(processed %>% filter(drna_GT == "1/0") %>% pull(drna_AD), processed %>% filter(drna_GT == "1/0") %>% pull(drna_DP)) -> rho_dr
+# estimate_rho(processed %>% filter(ill_GT == "1/0") %>% pull(ill_AD), processed %>% filter(ill_GT == "1/0") %>% pull(ill_DP)) -> rho_ill
+
+beta_binom_pval <- function(alt, dp, p = 0.5, rho = 0.01) {
+  2 * min(
+    pbetabinom(alt, size = dp, prob=p, rho = rho),
+    1 - pbetabinom(alt - 1, size = dp, prob=p, rho = rho)
+  )
+}
+
+processed_with_beta_binom_p <- processed %>%
+  mutate(
+    p_ont  = mapply(beta_binom_pval, ont_AD, ont_DP, rho = 0.001),
+    p_pb   = mapply(beta_binom_pval, pb_AD, pb_DP, rho = 0.001),
+    p_drna = mapply(beta_binom_pval, drna_AD, drna_DP, rho = 0.001),
+    p_ill  = mapply(beta_binom_pval, ill_AD, ill_DP, rho = 0.001)
+  ) %>%
+  mutate(
+    adj_p_ont  = p.adjust(p_ont, method = "BH"),
+    adj_p_pb   = p.adjust(p_pb, method = "BH"),
+    adj_p_drna = p.adjust(p_drna, method = "BH"),
+    adj_p_ill  = p.adjust(p_ill, method = "BH")
+  )
+
+# plotting the  p-values distribution
+p <- ggplot(processed_with_beta_binom_p, aes(x = p_ont)) +
+  stat_bin(bins = 20, color = color_map["ONT cDNA"], alpha = 0.7,geom="step") +
+  stat_bin(aes(x = p_pb), bins = 20, color = color_map["PacBio"], alpha = 0.7,geom="step") +
+  stat_bin(aes(x = p_drna), bins = 20, color = color_map["ONT dRNA"], alpha = 0.7,geom="step") +
+  stat_bin(aes(x = p_ill), bins = 20, color = color_map["Illumina"], alpha = 0.7,geom="step") +
+  labs(
+    title = "Distribution of p-values for Allelic Imbalance",
+    x = "p-value",
+    y = "Count"
+  ) +
+  theme_minimal()
+
+p 
+
+
+```
+
+
+## Upset plot for beta-binomial test
+```{r Upset plot for beta-binomial test}
+library(ComplexUpset)
+ComplexUpset::upset(
+  processed_with_beta_binom_p %>% mutate(
+    `ONT cDNA` = adj_p_ont < 0.05,
+    PacBio = adj_p_pb < 0.05,
+    `ONT dRNA` = adj_p_drna < 0.05,
+    Illumina = adj_p_ill < 0.05
+  ) %>% filter(
+    `ONT cDNA` | PacBio | `ONT dRNA` | Illumina
+  ),
+  intersect = c("ONT dRNA", "ONT cDNA", "PacBio", "Illumina"),
+  name = "Allelic Imbalance",
+  width_ratio = 0.25
+)
+```
+
+
+```{r}
+  processed_with_beta_binom_p %>% mutate(
+    `ONT cDNA` = adj_p_ont < 0.05,
+    PacBio = adj_p_pb < 0.05,
+    `ONT dRNA` = adj_p_drna < 0.05,
+    Illumina = adj_p_ill < 0.05
+  ) %>% filter(
+    `ONT cDNA` & PacBio & `ONT dRNA` & Illumina
+  )
+```
+
+
+
+
+# Part 5: Allele specific expression (1-R^2)
+
+
+```{r, allele specific splicing, fig.height=7, fig.width=4}
+ASE <- read_tsv(file.path(params$summary_dir,"Allelic_imbalance/CoverageDiv_summary.tsv")) %>% rename(
+    "ONT dRNA" = div_drna,
+    "ONT cDNA" =  div_ont,
+     "PacBio" = div_pacbio,
+     "Illumina" = div_illumina
+) %>%  mutate(across(everything(), ~ replace_na(., 0)))
+
+
+library(pheatmap)
+
+# Step 1: Filter rows with max > 0.5
+ASE_filtered <- ASE %>%
+  filter(pmax(PacBio, `ONT cDNA`, `ONT dRNA`, Illumina) > 0.2)
+
+# Step 2: Convert to matrix and order by max value
+mat <- ASE_filtered %>%
+  column_to_rownames("locus") %>%
+  as.matrix()
+
+row_order <- order(apply(mat, 1, max), decreasing = TRUE)
+mat_ordered <- mat[row_order, ]
+
+# Step 3: Plot heatmap
+pheatmap(mat_ordered,
+         cluster_rows = FALSE,
+         cluster_cols = FALSE,
+         scale = "none",
+         color = viridis::viridis(100),
+         fontsize_row = 6)
+
+mat_ordered
+```
+
+
+
+```{r, allele specific splicing, fig.height=4, fig.width=8}
+threshold <- 0.0
+ComplexUpset::upset(
+  ASE %>% 
+  mutate(across(c(`PacBio`, `ONT cDNA`, `ONT dRNA`, Illumina), ~ .x > threshold)) %>% 
+  filter (
+    `ONT dRNA` | `ONT cDNA` | `PacBio` | Illumina
+  ),
+  intersect = c("ONT dRNA", "ONT cDNA", "PacBio", "Illumina"),
+  name = "Allele Specific Splicing Events",
+  width_ratio = 0.25
+)
+```
+
+```{r ass platform specific plot, include=F, eval=F}
+# Pivot to long format
+  df_long <- ASE %>% 
+  mutate(across(c(`PacBio`, `ONT cDNA`, `ONT dRNA`, Illumina), ~ .x > threshold)) %>% 
+  filter (
+    `ONT dRNA` | `ONT cDNA` | `PacBio` | Illumina
+  ) %>%
+  pivot_longer(-c(sample_locus,sample), names_to = "Platform", values_to = "Detected") %>%
+  group_by(sample_locus) %>%
+  mutate(TotalDetected = sum(Detected)) %>%
+  ungroup() %>%
+  mutate(
+    Category = case_when(
+      Detected == 1 & TotalDetected == 1 ~ "Platform-Specific Detection",  # Only detected by this platform
+      Detected == 0 & TotalDetected == 3 ~ "Platform-Specific Absence",      # Not detected by this platform but present elsewhere
+      Detected == 1 & TotalDetected > 1 ~ "Common Detection (also detected in >0 other platform)",
+      Detected == 0 & TotalDetected < 3 ~ "Common Absence (also absent in >0 other platform)" # Detected by this platform + at least one other
+    )
+  ) %>%
+  count(Platform, Category)
+
+# Convert to factor for proper ordering in plot
+df_long$Category <- factor(df_long$Category, 
+                           levels = c(
+                                      "Platform-Specific Absence", 
+                                      "Common Absence (also absent in >0 other platform)",
+                                      "Platform-Specific Detection", 
+                                      "Common Detection (also detected in >0 other platform)"
+                                      ))
+df_long %>%
+  filter(Category %in% c("Platform-Specific Absence", "Platform-Specific Detection")) %>%
+  mutate(n = if_else(Category == "Platform-Specific Absence", -n, n)) %>%
+  ggplot(aes(x = Platform, y = n, fill = Category)) +
+  geom_bar(stat = "identity") +
+  labs(
+    y = "Number of Loci",
+    x = "Platform",
+    fill = "Category"
+  ) +
+  theme_minimal() +
+  scale_fill_manual(
+    values = c(
+      "Platform-Specific Detection" = "#0072B2",
+      "Platform-Specific Absence" = "#E69F00"
+    )
+  ) +
+  coord_flip() +
+  theme(
+    axis.text.x = element_text(angle = 0),
+    axis.title.x = element_text(size = 12),
+    axis.text.y = element_text(size = 10)
+  )
+
+```
+
+
+
+# Part 6: LongcallR
+```{r ase upsetplot, include=F}
+# read the LongcallR results filename format: ont_bulk_SHP77.longcallR.ase.tsv
+# file format:
+# #Gene_name      Chr     PS      H1      H2      P_value
+# ENSG00000286448 chr1    268516  36      88      4.889481077926783e-05
+# LINC01128       chr1    827711  155     145     0.7688568707321477
+# NOC2L   chr1    946247  84      92      0.7497061901593022
+# SDF4    chr1    1228546 43      158     3.107685875265821e-13
+# CCNL2   chr1    1386888 60      74      0.4236188636412654
+# ANKRD65 chr1    1418680 30      19      0.26399695363170533
+# INTS11  chr1    1312114 349     284     0.09212980880995306
+# ENSG00000290854 chr1    1729416 17      31      0.12466733035158703
+# MRPL20-AS1      chr1    1386888 131     100     0.13998886322429233
+longcallR_files <- list.files(
+  file.path(params$longcallR_dir),
+  pattern = "\\.ase\\.tsv$",
+  full.names = TRUE
+)
+
+# Read and process the LongcallR results
+longcallR_results.ase <- lapply(longcallR_files, function(x) {
+  read_tsv(x) %>%
+    mutate(file = sub("\\.longcallR\\.ase\\.tsv$", "", basename(x)))%>%
+    mutate(
+        Protocols = case_when(
+            # match substring in file name
+            grepl("dRNA", file) ~ "ONT dRNA",
+            grepl("ont", file) ~ "ONT cDNA",
+            grepl("pb", file) ~ "PacBio",
+            TRUE ~ "Illumina"
+        ),
+        # remove any the before _
+        Cell_lines = sub(".*_", "", file)
+    )
+})  %>%
+    bind_rows() %>% 
+    select(-file) %>% 
+    rename(
+        Gene_name = `#Gene_name`
+    ) 
+```
+
+## Plotting the LongcallR results (upset plot)
+```{r, include=F}
+library(ComplexUpset)
+# Create a binary matrix for upset plot
+LongcallR.ase.upset.mat <-
+  longcallR_results.ase %>%
+  filter(P_value < 0.05) %>% # filter for significant results
+  mutate(depth_pass = H1 + H2 >= 30) %>% # calculate total depth
+  group_by(Gene_name, Cell_lines, Protocols) %>%
+  filter(all(depth_pass)) %>%
+  distinct(Gene_name, Cell_lines, Protocols, depth_pass) %>%
+  mutate(found = TRUE) %>%
+  pivot_wider(names_from = Protocols, values_from = found, values_fill = FALSE)
+
+# Create the upset plot
+ComplexUpset::upset(
+  LongcallR.ase.upset.mat %>% filter(
+    `ONT dRNA` | `ONT cDNA` | `PacBio`
+  ),
+  intersect = c("ONT dRNA", "ONT cDNA", "PacBio"),
+  name = "LongcallR ASE Results",
+  width_ratio = 0.25
+)
+```
+
+
+```{r ase example}
+LongcallR.ase.upset.example <-
+  longcallR_results.ase %>%
+  filter(P_value < 0.05) %>% # filter for significant results
+  mutate(depth_pass = H1 + H2 >= 300,
+         minor_af = min(H1,H2)/(H1 + H2)) %>% # calculate total depth
+  group_by(Gene_name, Cell_lines, Protocols) %>%
+  filter(all(depth_pass) & all(minor_af < 0.1)) %>%
+  distinct(Gene_name, Cell_lines, Protocols, depth_pass) %>%
+  mutate(found = TRUE) %>%
+  pivot_wider(names_from = Protocols, values_from = found, values_fill = FALSE)
+
+# SHP77 (an arbitury pick)
+LongcallR.ase.upset.example %>% filter(
+  Cell_lines == "SHP77" & `ONT dRNA` & `ONT cDNA` & `PacBio`
+) %>% pull(Gene_name)
+
+
+example <- longcallR_results.ase %>% # find ZCCHC17 in SHP77
+  filter(Gene_name == "ZCCHC17" & Cell_lines == "SHP77") %>%
+  select(Gene_name, Cell_lines, Protocols, H1, H2, P_value) %>%
+  arrange(Protocols)
+
+# Make sure H1 is smaller than H2, swap if necessary
+example <- example %>%
+  mutate(
+    H1.plot = pmin(H1, H2),
+    H2.plot = pmax(H1, H2)
+  )
+
+# barplot of the results, x-axis is Protocols, y-axis is H1 and H2
+# use color CE9478 and 77A3D1
+
+example_long <- example %>%
+  pivot_longer(cols = c(H1.plot, H2.plot), names_to = "Allele", values_to = "Read_Count")
+
+ggplot(example_long, aes(x = Protocols, y = Read_Count, fill = Allele)) +
+  geom_bar(stat = "identity") +
+  labs(
+    title = paste("LongcallR Results for", example$Gene_name[1], "in", example$Cell_lines[1]),
+    x = "Protocols",
+    y = "Read Count",
+    fill = "Allele"
+  ) +
+  scale_fill_manual(values = c("H1.plot" = "#CE9478", "H2.plot" = "#77A3D1")) +
+  theme_minimal() +
+  scale_y_continuous(expand = expansion(mult = c(0, 0.1)))
+
+
+
+# Make a barplot of the number of genes found in each protocol
+```
+```{r, MORE ASE example}
+example <- longcallR_results.ase %>% # find SERINC2 in SHP77
+  filter(Gene_name == "SERINC2" & Cell_lines == "SHP77") %>%
+  select(Gene_name, Cell_lines, Protocols, H1, H2, P_value) %>%
+  arrange(Protocols)
+
+# Make sure H1 is smaller than H2, swap if necessary
+example <- example %>%
+  mutate(
+    H1.plot = pmin(H1, H2),
+    H2.plot = pmax(H1, H2)
+  )
+
+# barplot of the results, x-axis is Protocols, y-axis is H1 and H2
+# use color CE9478 and 77A3D1
+
+example_long <- example %>%
+  pivot_longer(cols = c(H1.plot, H2.plot), names_to = "Allele", values_to = "Read_Count")
+
+ggplot(example_long, aes(x = Protocols, y = Read_Count, fill = Allele)) +
+  geom_bar(stat = "identity") +
+  labs(
+    title = paste("LongcallR Results for", example$Gene_name[1], "in", example$Cell_lines[1]),
+    x = "Protocols",
+    y = "Read Count",
+    fill = "Allele"
+  ) +
+  scale_fill_manual(values = c("H1.plot" = "#CE9478", "H2.plot" = "#77A3D1")) +
+  theme_minimal() +
+  scale_y_continuous(expand = expansion(mult = c(0, 0.1)))
+
+
+example <- longcallR_results.ase %>% # find TM2D1 in SHP77
+  filter(Gene_name == "TM2D1" & Cell_lines == "SHP77") %>%
+  select(Gene_name, Cell_lines, Protocols, H1, H2, P_value) %>%
+  arrange(Protocols)
+
+# Make sure H1 is smaller than H2, swap if necessary
+example <- example %>%
+  mutate(
+    H1.plot = pmin(H1, H2),
+    H2.plot = pmax(H1, H2)
+  )
+
+# barplot of the results, x-axis is Protocols, y-axis is H1 and H2
+# use color CE9478 and 77A3D1
+
+example_long <- example %>%
+  pivot_longer(cols = c(H1.plot, H2.plot), names_to = "Allele", values_to = "Read_Count")
+
+ggplot(example_long, aes(x = Protocols, y = Read_Count, fill = Allele)) +
+  geom_bar(stat = "identity") +
+  labs(
+    title = paste("LongcallR Results for", example$Gene_name[1], "in", example$Cell_lines[1]),
+    x = "Protocols",
+    y = "Read Count",
+    fill = "Allele"
+  ) +
+  scale_fill_manual(values = c("H1.plot" = "#CE9478", "H2.plot" = "#77A3D1")) +
+  theme_minimal() +
+  scale_y_continuous(expand = expansion(mult = c(0, 0.1)))
+
+```
+
+## ASJ gene
+```{r}
+longcallR_files <- list.files(
+  file.path(params$longcallR_dir),
+  pattern = "merged_genes_exons\\.asj_gene\\.tsv$",
+  full.names = TRUE
+)
+
+longcallR_results.asj <- lapply(longcallR_files, function(x) {
+  read_tsv(x) %>%
+    mutate(file = sub("\\.merged_genes_exons\\.asj_gene\\.tsv$", "", basename(x)))%>%
+    mutate(
+        Protocols = case_when(
+            # match substring in file name
+            grepl("dRNA", file) ~ "ONT dRNA",
+            grepl("ont", file) ~ "ONT cDNA",
+            grepl("pb", file) ~ "PacBio",
+            TRUE ~ "Illumina"
+        ),
+        # remove any the before _
+        Cell_lines = sub(".*_", "", file)
+    )
+})  %>%
+    bind_rows() %>% 
+    select(-file) %>% 
+    rename(
+        Gene_name = `#Gene_name`
+    ) 
+
+# gene coverage
+longcallR_files <- list.files(
+  file.path(params$longcallR_dir),
+  pattern = "\\.merged_genes_exons\\.gene_coverage\\.tsv$",
+  full.names = TRUE
+)
+
+longcallR_results.cov <- lapply(longcallR_files, function(x) {
+  read_tsv(x) %>%
+    mutate(file = sub("\\.merged_genes_exons\\.gene_coverage\\.tsv$", "", basename(x))) %>%
+    mutate(
+      Protocols = case_when(
+        # match substring in file name
+        grepl("dRNA", file) ~ "ONT dRNA",
+        grepl("ont", file) ~ "ONT cDNA",
+        grepl("pb", file) ~ "PacBio",
+        TRUE ~ "Illumina"
+      ),
+      # remove any the before _
+      Cell_lines = sub(".*_", "", file)
+    )
+}) %>%
+  bind_rows() %>%
+  select(-file) %>%
+  rename(
+    Gene_name = `#Gene_name`
+  )
+
+longcallR_results.asj <- longcallR_results.asj %>% left_join(
+  longcallR_results.cov,
+  by = c("Chr", "Gene_name", "Protocols", "Cell_lines")
+)
+
+# Filter by Num_reads
+longcallR_results.asj <- longcallR_results.asj %>%
+  group_by(Cell_lines, Gene_name) %>%
+  filter(n_distinct(Protocols) == 3) %>%
+  filter(all(Num_reads > 30)) %>%
+  ungroup()
+
+```
+
+```{r}
+# Create a binary matrix for upset plot
+LongcallR.asj.upset.mat <-
+  longcallR_results.asj %>%
+  filter(P_value < 0.05) %>% # filter for significant results
+  group_by(Gene_name, Cell_lines, Protocols) %>%
+  distinct(Gene_name, Cell_lines, Protocols) %>%
+  mutate(found = TRUE) %>%
+  pivot_wider(names_from = Protocols, values_from = found, values_fill = FALSE)
+
+# Create the upset plot
+ComplexUpset::upset(
+  LongcallR.asj.upset.mat %>% filter(
+    `ONT dRNA` | `ONT cDNA` | `PacBio`
+  ),
+  intersect = c("ONT dRNA", "ONT cDNA", "PacBio"),
+  name = "LongcallR ASJ Genes",
+  width_ratio = 0.25
+)
+
+```

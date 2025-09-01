@@ -1,0 +1,605 @@
+---
+title: "Benchmarking long-read DE gene and transcript analysis with edgeR"
+author: "Yupei"
+date: '`r Sys.Date()`'
+version: 'v0.1'
+output:
+  html_document:
+    code_folding: show
+    toc: yes
+    toc_float: yes
+    number_sections: yes
+    toc_depth: 4
+  pdf_document:
+    toc: yes
+    toc_depth: '4'
+params:
+  random_seed: 2024
+  cache_dir: NULL
+  fig.path: NULL
+  input_DGEobject_rds: "/vast/projects/LongBench/analysis/workflow/rmarkdown/RDS/bulk_DGE.obj.rds"
+  output_rds: "/vast/projects/LongBench/analysis/workflow/rmarkdown/RDS/bulk_DE.rds"  
+  expected_de_table: '/vast/projects/LongBench/reference_files/Expected_DE.csv'
+  log2FC_cutoff: 0
+editor_options: 
+  markdown: 
+    wrap: 72
+bibliography: reference.bib
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+	echo = TRUE,
+	fig.height = 5,
+	fig.width = 7,
+	warning = FALSE,
+	cache = FALSE
+)
+```
+
+# Introduction:
+
+LongBench is a comprehensive benchmarking resource for evaluating
+long-read RNA-seq analysis tools and methods. It provides a collection
+of datasets, reference files, and analysis workflows to facilitate the
+assessment of various aspects of long-read RNA-seq data analysis. In
+this tutorial, we will focus on differential gene expression (DGE) and
+differential transcript expression (DTE) analysis using edgeR and
+compare the results across different sequencing platforms, including
+Illumina, PacBio, and Oxford Nanopore Technologies (ONT) (cDNA and dRNA
+sequencing).
+
+**Bulk RNA-seq** was performed to analyse gene and transcript expression
+across various cancer cell lines using both short- and long-read
+sequencing platforms.
+
+1.  **Samples**:
+
+    Total: 8 cancer cell lines (H146, H69, H526, H211, SHP77, H1975,
+    H2228, HCC827) for each platform.
+
+2.  **Sequencing Platforms**:
+
+    -   **Short-Read Sequencing**:
+
+        -   Illumina
+
+    -   **Long-Read Sequencing**:
+
+        -   PacBio
+
+        -   ONT PCR cDNA
+
+        -   ONT direct RNA (dRNA)
+
+3.  **Groups by Cancer Cell Type**:
+
+    1.  **Small Cell Lung Cancer (SCLC)**:
+
+        -   **Subtype A (SCLC_A)**: H146, H69, SHP77.
+
+        -   **Subtype P (SCLC_P)**: H526, H211.
+
+    2.  **Lung Adenocarcinoma (LUAD)**: H1975, H2228, HCC827.
+
+**Note:** In this tutorial, we will focus on comparing SCLC_A vs LUAD.
+However, the same analysis can be applied to other comparisons, such as
+SCLC_P vs LUAD and SCLC_A vs SCLC_P.
+
+```{r Libraries, include=FALSE}
+library(limma)
+library(edgeR)
+library(tidyverse)
+# library(RColorBrewer)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(ggrepel)
+# library(glue)
+library(ggplot2)
+# library(gridExtra)
+# library(ggExtra)
+library(knitr)
+# library(kableExtra)
+library(rtracklayer)
+library(scales)
+# library(UpSetR)
+# library(ggtree)
+# library(aplot)
+library(patchwork)
+library(ComplexUpset)
+
+# resolve potential conflict functions
+rename <- dplyr::rename
+select <- dplyr::select
+```
+
+```{r Set up color for plots, include=TRUE}
+# Define a consistent color palette for the sequencing platforms
+color_palette <- c(
+  PacBio = "#df1995",
+  "ONT dRNA" = "#00789b",
+  "ONT cDNA" = "#04476c",
+  Illumina = "#e88b20"
+)
+
+```
+
+# Preprocess the count matrices
+
+## Load count matrices from AWS
+
+The code below will read the RDS file directly from AWS S3 and load the
+following **DGE objects** into the global environment:
+
+```{r Get the data from AWS, include=TRUE, eval=FALSE, echo=TRUE}
+# read RDS file directly (TBD)
+obj <- aws.s3::s3readRDS(object = "path/to/file.Rds", bucket = "bucket-name")
+
+# load to global environment
+list2env(obj, .GlobalEnv)
+
+# remove the object from memory
+rm(obj)
+```
+
+```{r Get the count data, message=FALSE, warning=FALSE, include=FALSE, results='hide'}
+list2env(readRDS(params$input_DGEobject_rds), .GlobalEnv)
+```
+
+### Gene-level count DGE objects
+
+-   `ill_bulk.gene.dge`: Illumina
+-   `ont_bulk.gene.dge`: ONT cDNA
+-   `pb_bulk.gene.dge`: PacBio
+-   `drna_bulk.gene.dge`: ONT dRNA
+
+### Transcript-level count DGE objects
+
+-   `ill_bulk.tx.dge`: Illumina
+-   `ont_bulk.tx.dge`: ONT cDNA
+-   `pb_bulk.tx.dge`: PacBio
+-   `drna_bulk.tx.dge`: ONT dRNA
+
+After loading the DGE objects, we will filter for human genes only based
+on Ensembl IDs from Spike-ins.
+
+```{r Filter for human genes only, echo=TRUE, message=FALSE, warning=FALSE, results='hide'}
+# Function to identify human genes based on Ensembl IDs from Spike-ins
+is.human <- function(dge) {grepl("^ENS", rownames(dge))}
+
+ill_bulk.gene.dge <- ill_bulk.gene.dge[is.human(ill_bulk.gene.dge), ]
+ont_bulk.gene.dge <- ont_bulk.gene.dge[is.human(ont_bulk.gene.dge), ]
+pb_bulk.gene.dge <- pb_bulk.gene.dge[is.human(pb_bulk.gene.dge), ]
+drna_bulk.gene.dge <- drna_bulk.gene.dge[is.human(drna_bulk.gene.dge), ]
+
+ill_bulk.tx.dge <- ill_bulk.tx.dge[is.human(ill_bulk.tx.dge), ]
+ont_bulk.tx.dge <- ont_bulk.tx.dge[is.human(ont_bulk.tx.dge), ]
+pb_bulk.tx.dge <- pb_bulk.tx.dge[is.human(pb_bulk.tx.dge), ]
+drna_bulk.tx.dge <- drna_bulk.tx.dge[is.human(drna_bulk.tx.dge), ]
+```
+
+Let's first examine the library sizes across different sequencing
+platforms.
+
+```{r total count plot, fig.height=3, fig.width=3, message=FALSE, warning=FALSE}
+# Build combined data frame of library sizes
+lib_sizes <- data.frame(
+  Sample = colnames(ill_bulk.tx.dge),
+  LibSize = colSums(ill_bulk.tx.dge$counts),
+  Dataset = "Illumina"
+) %>%
+  rbind(data.frame(
+    Sample = colnames(drna_bulk.tx.dge),
+    LibSize = colSums(drna_bulk.tx.dge$counts),
+    Dataset = "ONT dRNA"
+  )) %>%
+  rbind(data.frame(
+    Sample = colnames(pb_bulk.tx.dge),
+    LibSize = colSums(pb_bulk.tx.dge$counts),
+    Dataset = "PacBio"
+  )) %>%
+  rbind(data.frame(
+    Sample = colnames(ont_bulk.tx.dge),
+    LibSize = colSums(ont_bulk.tx.dge$counts),
+    Dataset = "ONT cDNA"
+  ))
+
+
+# Plot with custom colors
+ggplot(lib_sizes, aes(x = Dataset, y = LibSize, fill = Dataset)) +
+  geom_boxplot(outlier.shape = NA, alpha = 0.9) +
+  geom_jitter(width = 0.2, alpha = 0.6, size = 1) +
+  scale_fill_manual(values = color_palette) +
+  scale_y_continuous(labels = scales::comma) +
+  labs(
+    title = "Library Size per Sample",
+    y = "Total Counts (Library Size)",
+    x = "Sequencing protocols"
+  ) +
+  ylim(0, 65000000) +
+  theme_minimal() +
+  theme(legend.position = "none") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+```
+
+## Filter out lowly expressed genes and transcripts
+
+For benchmarking purposes, only genes and transcripts common to all
+datasets will be retained for downstream differential expression
+analysis. Genes and transcripts are filtered using
+`edgeR::filterByExpr`: the gene-level count matrix uses the default
+minimum count threshold of 5, while the transcript-level count matrix
+uses a reduced minimum count threshold of 5.
+
+```{r filtering for DE testable feature, echo=TRUE, message=FALSE, warning=FALSE, results='hide'}
+#GENE 
+## 1. get common genes
+common_genes <- Reduce(intersect, lapply(list(ill_bulk.gene.dge, ont_bulk.gene.dge, pb_bulk.gene.dge, drna_bulk.gene.dge), rownames))
+
+ill_bulk.gene.dge <- ill_bulk.gene.dge[common_genes, ]
+ont_bulk.gene.dge <- ont_bulk.gene.dge[common_genes, ]
+pb_bulk.gene.dge <- pb_bulk.gene.dge[common_genes, ]
+drna_bulk.gene.dge <- drna_bulk.gene.dge[common_genes, ]
+
+## 2. filter by expression
+keep <- filterByExpr(ill_bulk.gene.dge, group = ill_bulk.gene.dge$samples$group) &
+          filterByExpr(ont_bulk.gene.dge, group = ont_bulk.gene.dge$samples$group) &
+          filterByExpr(pb_bulk.gene.dge, group = pb_bulk.gene.dge$samples$group) &
+          filterByExpr(drna_bulk.gene.dge, group = drna_bulk.gene.dge$samples$group)
+
+#table(keep)
+ill_bulk.gene.dge <- ill_bulk.gene.dge[keep, ]
+ont_bulk.gene.dge <- ont_bulk.gene.dge[keep, ]
+pb_bulk.gene.dge <- pb_bulk.gene.dge[keep, ]
+drna_bulk.gene.dge <- drna_bulk.gene.dge[keep, ]
+
+# Transcript
+## 1. get common transcripts
+common_tx <- Reduce(intersect, lapply(list(ill_bulk.tx.dge, ont_bulk.tx.dge, pb_bulk.tx.dge, drna_bulk.tx.dge), rownames))
+
+ill_bulk.tx.dge <- ill_bulk.tx.dge[common_tx, ]
+ont_bulk.tx.dge <- ont_bulk.tx.dge[common_tx, ]
+pb_bulk.tx.dge <- pb_bulk.tx.dge[common_tx, ]
+drna_bulk.tx.dge <- drna_bulk.tx.dge[common_tx, ]
+
+## 2. filter by expression
+keep <- filterByExpr(ill_bulk.tx.dge, group = ill_bulk.tx.dge$samples$group, min.count=5) &
+          filterByExpr(ont_bulk.tx.dge, group = ont_bulk.tx.dge$samples$group, min.count=5) &
+          filterByExpr(pb_bulk.tx.dge, group = pb_bulk.tx.dge$samples$group, min.count=5) &
+          filterByExpr(drna_bulk.tx.dge, group = drna_bulk.tx.dge$samples$group, min.count=5)
+#table(keep)
+
+ill_bulk.tx.dge <- ill_bulk.tx.dge[keep, ]
+ont_bulk.tx.dge <- ont_bulk.tx.dge[keep, ]
+pb_bulk.tx.dge <- pb_bulk.tx.dge[keep, ]
+drna_bulk.tx.dge <- drna_bulk.tx.dge[keep, ]
+```
+
+## Normalisation
+
+Next, the gene and transcript counts using `calcNormFactors` with "TMM"
+methods for each dataset.
+
+```{r TMM normalisation, echo=TRUE, message=FALSE, warning=FALSE, results='hide'}
+ill_bulk.gene.dge <- calcNormFactors(ill_bulk.gene.dge, method = "TMM")
+ont_bulk.gene.dge <- calcNormFactors(ont_bulk.gene.dge, method = "TMM")
+pb_bulk.gene.dge <- calcNormFactors(pb_bulk.gene.dge, method = "TMM")
+drna_bulk.gene.dge <- calcNormFactors(drna_bulk.gene.dge, method = "TMM")
+
+ill_bulk.tx.dge <- calcNormFactors(ill_bulk.tx.dge, method = "TMM")
+ont_bulk.tx.dge <- calcNormFactors(ont_bulk.tx.dge, method = "TMM")
+pb_bulk.tx.dge <- calcNormFactors(pb_bulk.tx.dge, method = "TMM")
+drna_bulk.tx.dge <- calcNormFactors(drna_bulk.tx.dge, method = "TMM")
+```
+
+# Explore the data using dimensionality reduction
+
+Up until now, we have prepared the DGElist objects for each dataset
+(gene and transcript level) and normalised the counts using TMM. Let's
+now explore the data using MDS plots and then proceed to differential
+expression analysis.
+
+To explore the data across all datasets, we will merge the DGElist
+objects from each dataset (gene and transcript level) into a single
+DGElist object for gene-level and transcript-level counts, respectively.
+Please NOTE: The merged DGElist will only be used for the MDS plot. The
+DE analysis will be done separately for each dataset.
+
+```{r Merge DGEs, include=FALSE}
+# Gene level
+
+## Adding platform information to each DGElist
+ill_bulk.gene.dge$samples$platform <- "Illumina"
+ont_bulk.gene.dge$samples$platform <- "ONT cDNA"
+pb_bulk.gene.dge$samples$platform <- "PacBio"
+drna_bulk.gene.dge$samples$platform <- "ONT dRNA"
+bulk.gene.dge.merge <- cbind(
+  ill_bulk.gene.dge,
+  ont_bulk.gene.dge,
+  pb_bulk.gene.dge,
+  drna_bulk.gene.dge
+)
+
+# Transcript level
+ill_bulk.tx.dge$samples$platform <- "Illumina"
+ill_bulk.tx.dge.copy <- ill_bulk.tx.dge
+ill_bulk.tx.dge.copy$genes$EffectiveLength <- NULL
+ont_bulk.tx.dge$samples$platform <- "ONT cDNA"
+pb_bulk.tx.dge$samples$platform <- "PacBio"
+drna_bulk.tx.dge$samples$platform <- "ONT dRNA"
+
+bulk.tx.dge.merge <- cbind(
+  ill_bulk.tx.dge.copy,
+  ont_bulk.tx.dge,
+  pb_bulk.tx.dge,
+  drna_bulk.tx.dge
+)
+```
+
+Now let's create MDS plots to visualize the relationships between
+samples based on their gene and transcript expression profiles.
+
+We first set up a function and `myMDS` to create the MDS plot using
+ggplot2, so that we can easily reuse it for both gene-level and
+transcript-level data and for different platforms
+
+```{r include=FALSE}
+norm_and_mds <- function(dge) {
+  # dge <- calcNormFactors(dge, method = "TMM")
+  mds <- plotMDS(dge, plot = FALSE)
+  return(mds)
+}
+myMDS <- function(dge, mds) {
+  # normalisation
+  mds_data <- data.frame(
+    Dim1 = mds$x,
+    Dim2 = mds$y,
+    cell.line = dge$sample$sample,
+    Cancer.type = dge$sample$group,
+    Data.type = dge$sample$platform,
+    Sequins.mix = dge$samples$sequins
+  )
+
+  p <- ggplot(mds_data, aes(x = Dim1, y = Dim2, color = Cancer.type, shape = Data.type, label=cell.line)) +
+    geom_point(size = 3, alpha = 0.6) + # Plot points
+    #geom_text_repel(size = 3) +
+    labs(title = "MDS plot", 
+        x = paste0("Dimension 1 (", round(mds$var.explained[1]*100, 2), "%)" ) , 
+        y = paste0("Dimension 2 (", round(mds$var.explained[2]*100, 2), "%)" )) +
+    scale_color_viridis_d() + # Set color scale
+    theme_minimal() 
+  return(p)
+}
+```
+
+-   Plot Gene-level MDS plot
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, fig.height=3, fig.width=8 }
+mds <- norm_and_mds(bulk.gene.dge.merge)
+p1 <- myMDS(bulk.gene.dge.merge[is.human(bulk.gene.dge.merge), ], mds) + ggtitle("Human gene counts")
+p2 <- myMDS(bulk.gene.dge.merge[is.human(bulk.gene.dge.merge), ], mds) + ggtitle("Human gene counts")  + 
+            aes(color = Data.type, shape = Cancer.type) + 
+            scale_color_manual(values = color_palette[c("Illumina", "ONT cDNA", "ONT dRNA", "PacBio")] %>% unname())
+p1 | p2 
+```
+
+-   \Plot Transcript-level MDS plot
+
+```{r echo=FALSE, fig.width=15, message=FALSE, warning=FALSE, fig.height=3, fig.width=8 }
+mds <- norm_and_mds(bulk.tx.dge.merge[is.human(bulk.tx.dge.merge),])
+p1 <- myMDS(bulk.tx.dge.merge[is.human(bulk.tx.dge.merge), ], mds) + ggtitle("Human transcript counts") + 
+  aes(color = Data.type, shape = Cancer.type) + 
+  scale_color_manual(values = color_palette[c("Illumina", "ONT cDNA", "ONT dRNA", "PacBio")] %>% unname())
+
+p2 <- myMDS(bulk.tx.dge.merge[is.human(bulk.tx.dge.merge), ], mds) + ggtitle("Human transcript counts")
+
+p2 | p1
+```
+
+From the MDS plot, we can clearly see that samples cluster by cancer
+type (LUAD, SCLC type a, SCLC type p). However, at the transcript level,
+the samples also cluster by sequencing platform (Illumina, ONT cDNA, ONT
+dRNA, PacBio), suggesting that technical differences between platforms
+also contribute to the observed variation.
+
+# Differential gene expression
+
+Now, let's proceed to differential gene expression (DGE) analysis using
+the edgeR Quasi-Likelihood pipeline. We will perform DGE analysis
+separately for each dataset (Illumina, ONT cDNA, ONT dRNA, PacBio) using
+the filtered and normalised DGElist objects created earlier.**SCLC type
+A vs. LUAD** with the model:
+
+***Model: `model.matrix(~0 + group, data = dge$samples)`***
+
+Differential expression gene and transcript lists are defined using
+`DecideTests` with a log2 fold change cutoff of `r params$log2FC_cutoff`
+and FDR\<0.05.
+
+Let's first set up the workflow as a function so we can repeat it across
+different platforms:
+
+```{r echo=TRUE, message=FALSE, warning=FALSE, results='hide'}
+DGE.edgeR_human <- function(dge, norm.method = "TMM") {
+  design <- model.matrix(~0 + group, data = dge$samples)
+  dge <- estimateDisp(dge, design)
+  qlfit <- glmQLFit(dge, design)
+  
+  contrasts <- makeContrasts(
+    AvsL = groupsclc_a - groupluad,
+    levels = design
+  )
+  
+  AvsL.QLF.test <- glmQLFTest(qlfit, contrast = contrasts[, "AvsL"])
+  
+  list(
+    AvsL.DE = AvsL.QLF.test
+  )
+}
+
+
+```
+
+Now, let's apply the function to the `DGElist` objects.
+
+```{r}
+# DEG analsysis on human genes only 
+ill_bulk.dge_human.list <- DGE.edgeR_human(ill_bulk.gene.dge)
+ont_bulk.dge_human.list <- DGE.edgeR_human(ont_bulk.gene.dge)
+drna_bulk.deg_human.list <- DGE.edgeR_human(drna_bulk.gene.dge)
+pb_bulk.dge_human.list <- DGE.edgeR_human(pb_bulk.gene.dge)
+```
+
+## Cross-platform comparison DGE human (upset plot)
+
+After we get the DE genes from each sequencing platform, we can overlap
+the DE genes and visualise them using an upset plot with `ComplexUpset`
+
+Again, let's first set up the function for the plot:
+
+```{r upset plot function, include=FALSE}
+
+complex_upset_plot <- function(lst) {
+  # apply decideTests to each list element
+  DEGs <- lapply(lst, function(x) {
+    x <- x %>% decideTests(lfc=params$log2FC_cutoff)
+    x <- rownames(x)[x != 0]
+    return(x)
+  })
+
+  long_df <- stack(DEGs)
+
+  # Make the binary membership matrix
+  binary_matrix <- long_df %>%
+    mutate(present = 1) %>%
+    pivot_wider(names_from = ind, values_from = present, values_fill = 0)
+
+  p <- ComplexUpset::upset(
+    binary_matrix %>% select(-values) %>% as.data.frame(),
+    intersect = names(lst),
+    base_annotations=list(
+        'Intersection size'=ComplexUpset::intersection_size(
+            counts=TRUE,
+            text=element_text(size = 3, vjust=-0.2)
+        )
+    ),
+    wrap = TRUE
+  )
+
+  return(list(
+    plot = p,
+    matrix = binary_matrix %>% rename(Gene = values)
+  ))
+}
+```
+
+Now we can plot the upset plot.
+
+```{r upset plot dge human, echo=FALSE, fig.height=5, fig.width=8}
+# Upset plot
+lst <- list(
+  "Illumina" = ill_bulk.dge_human.list$AvsL.DE,
+  "ONT cDNA" = ont_bulk.dge_human.list$AvsL.DE,
+  "PacBio" = pb_bulk.dge_human.list$AvsL.DE,
+  "ONT dRNA" = drna_bulk.deg_human.list$AvsL.DE
+)
+p1 <- complex_upset_plot(lst)$plot + ggtitle("SCLC_A vs LUAD") + theme(plot.title = element_text(size =10))
+mat.AvsL.DE <- complex_upset_plot(lst)$matrix
+
+p1 + patchwork::plot_annotation(
+  title = "DGE Human",
+  theme = theme(plot.title = element_text(size =15))
+)
+```
+
+The results show that differentially expressed genes are largely
+consistent across platforms, with PacBio detecting the most DE genes,
+followed by ONT dRNA.
+
+# Differential transcript expression
+
+The same analysis can be done at the transcript level. Since the
+read-to-transcript assignment is sometimes uncertain, we applied the
+pipeline suggested in @baldoni2024dividing.
+
+1.  The transcript level counts are scaled by the dispersion values
+    recovered from Bootstrap sampling (50 Bootstrap sampling runs for
+    each sample)
+
+2.  Normalisation: Scaled transcript counts are normalised using the
+    `calcNormFactors` function in edgeR with the `TMM` method for each
+    subset.
+
+3.  Differential Expression: Differential expression is assessed using a
+    GLM-based model with the `glmQLFit` and `glmQLFTest` functions
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+DTE.edgeR_human <- function(dge, norm.method="TMM") {
+  # Scale
+  dge.scaled <- dge
+  dge.scaled$counts <- dge.scaled$counts / dge.scaled$genes$Overdispersion
+  
+  # Normalisation
+  if (!is.null(norm.method)) {
+     dge <- calcNormFactors(dge, method = norm.method)
+  }
+  
+  design <- model.matrix(~0+group, data = dge.scaled$samples)
+  dge.scaled <- estimateDisp(dge.scaled, design)
+  qlfit <- glmQLFit(dge.scaled, design)
+  
+  contrasts <- makeContrasts(
+    AvsL = groupsclc_a - groupluad,
+    levels = design
+  )
+  
+  AvsL.QLF.test <- glmQLFTest(qlfit, contrast = contrasts[, "AvsL"])
+  
+  list(
+    AvsL.DE = AvsL.QLF.test
+  )
+  
+}
+```
+
+## DTE edgeR+scaling
+
+```{r, echo=TRUE, message=FALSE, warning=FALSE}
+# get human list
+ill_bulk.scl_dte_human.list <- DTE.edgeR_human(ill_bulk.tx.dge)
+ont_bulk.scl_dte_human.list <- DTE.edgeR_human(ont_bulk.tx.dge)
+pb_bulk.scl_dte_human.list <- DTE.edgeR_human(pb_bulk.tx.dge)
+drna_bulk.scl_dte_human.list <- DTE.edgeR_human(drna_bulk.tx.dge)
+```
+
+## Cross-platform comparison DTE human (upset)
+
+```{r upset plot dte human edgeR with scaling, echo=TRUE, fig.height=5, fig.width=8, message=FALSE, warning=FALSE}
+
+# Upset plot
+## SCLC_A vs LUCA (AvsL)
+lst <- list(
+  "Illumina" = ill_bulk.scl_dte_human.list$AvsL.DE,
+  "ONT cDNA" = ont_bulk.scl_dte_human.list$AvsL.DE,
+  "PacBio" = pb_bulk.scl_dte_human.list$AvsL.DE,
+  "ONT dRNA" = drna_bulk.scl_dte_human.list$AvsL.DE
+)
+p <- complex_upset_plot(lst)$plot + ggtitle("SCLC_A vs LUCA") + theme(plot.title = element_text(size = 20))
+mat.AvsL.DTE <- complex_upset_plot(lst)$matrix
+
+p + patchwork::plot_annotation(
+  title = "DTE Human",
+  theme = theme(plot.title = element_text(size =25))
+)
+```
+
+Here, the differential transcript expression (DTE) results visualised in
+the upset plots show less consistency when comparing the gene-level DE
+results.
+
+# References
+
+::: {#refs}
+:::

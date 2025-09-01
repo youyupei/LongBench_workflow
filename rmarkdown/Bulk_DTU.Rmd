@@ -1,0 +1,1202 @@
+---
+title: "DTU_analysis (DTUrtle/DRIMseq)"
+author: "Ashleigh"
+date: "2025-03-31"
+output:
+  html_document:
+    code_folding: hide
+    toc: yes
+    toc_float: yes
+    number_sections: yes
+    toc_depth: 4
+  pdf_document:
+    toc: yes
+    toc_depth: '4'
+params:
+  random_seed: 2024
+  cache_dir: NULL
+  fig.path: NULL
+  ncore: 16
+  sirv_ercc_gtf: '/vast/projects/LongBench/reference_files/SIRV_Set4_Norm_Sequences_20210507/SIRV_ERCC_longSIRV_multi-fasta_20210507.gtf'
+  sequins_gtf: '/vast/projects/LongBench/reference_files/Sequin_resources/v2.4/rnasequin_annotation_2.4.gtf'
+  sequins_tsv: '/vast/projects/LongBench/reference_files/Sequin_resources/v2.4/rnasequin_isoforms_2.4.tsv'
+  human_gtf: '/vast/projects/LongBench/reference_files/GRCh38/gencode.v44.annotation.gtf'
+  ont_bulk_oarfish_dir: '/vast/projects/LongBench/analysis/lr_bulk/result/oarfish_cov_output/ont_bulk'
+  pb_bulk_oarfish_dir: '/vast/projects/LongBench/analysis/lr_bulk/result/oarfish_cov_output/pb_bulk'
+  ont_drnd_oarfish_dir: '/vast/projects/LongBench/analysis/lr_bulk/result/oarfish_cov_output/dRNA_bulk'
+  ill_bulk_salmon_dir: '/vast/projects/LongBench/analysis/sr_bulk/result/salmon/salmon_quant'
+  bulk_meta: '/vast/projects/LongBench/sequencing_data/illumina_bulk/metadata.txt'
+---
+
+```{r Load libraries, include=FALSE}
+#library(DTUrtle)
+library(sparseDRIMSeq)
+library(dplyr)
+library(GenomicFeatures)
+library(BiocParallel)
+library(Matrix)
+library(tximport)
+library(ggplot2)
+library(patchwork)
+library(edgeR)
+library(tidyr)
+source("/vast/projects/LongBench/analysis/bulk_dturtle_analysis/dtu_Rfunction.R")
+if (!is.null(params$ncore)){
+  biocpar <- BiocParallel::MulticoreParam(params$ncore)
+} else {
+  biocpar <- BiocParallel::MulticoreParam(1)
+}
+
+
+# Set cache.path only if params$cache_dir is not NULL
+knitr::opts_chunk$set(
+  cache = !is.null(params$cache_dir),  # Enable caching only if cache_dir is provided
+	fig.height = 5,
+	fig.width = 7,                # Set default figure height
+  warning = FALSE,                    # Suppress warnings in the output
+  fig.path = params$fig.path,         # Set figure path (NULL if not provided)
+  dev = if (!is.null(params$fig.path)) c("png", "svg") else NULL  # Set output devices if fig.path is provided
+)
+
+# Set cache.path only if params$cache_dir is not NULL
+if (!is.null(params$cache_dir)) {
+  knitr::opts_chunk$set(cache.path = params$cache_dir)
+}
+
+
+  
+```
+
+
+```{r Input filename setup, include=FALSE, eval=F}
+params <- list(
+  random_seed = 2024,
+  cache_dir = NULL,
+  sirv_ercc_gtf = '/vast/projects/LongBench/reference_files/SIRV_Set4_Norm_Sequences_20210507/SIRV_ERCC_longSIRV_multi-fasta_20210507.gtf',
+  sequins_gtf = '/vast/projects/LongBench/reference_files/Sequin_resources/v2.4/rnasequin_annotation_2.4.gtf',
+  sequins_tsv = '/vast/projects/LongBench/reference_files/Sequin_resources/v2.4/rnasequin_isoforms_2.4.tsv',
+  human_gtf = '/vast/projects/LongBench/reference_files/GRCh38/gencode.v44.annotation.gtf',
+  ont_bulk_oarfish_dir = "/vast/projects/LongBench/analysis/lr_bulk/result/oarfish_cov_output/ont_bulk",
+  pb_bulk_oarfish_dir = "/vast/projects/LongBench/analysis/lr_bulk/result/oarfish_cov_output/pb_bulk",
+  ont_drnd_oarfish_dir = "/vast/projects/LongBench/analysis/lr_bulk/result/oarfish_cov_output/dRNA_bulk",
+  ill_bulk_salmon_dir = "/vast/projects/LongBench/analysis/sr_bulk/result/salmon/salmon_quant",
+  bulk_meta = "/vast/projects/LongBench/sequencing_data/illumina_bulk/metadata.txt"
+)
+```
+
+
+```{r color code, include=FALSE}
+color_palette <- c(
+  PacBio = "#df1995",
+  ONT = "#00789b",
+  ONT_1 = "#04476c", # ONT cDNA
+  ONT_2 = "#24cdcd", # ONT dRNA
+  Illumina = "#e88b20"
+)
+```
+
+
+```{r function for splitting the transcript origin, echo=TRUE, results='hide', message=FALSE, warning=FALSE}
+is.sequins <- function(dge) {grepl("^R", rownames(dge))}
+is.human <- function(dge) {grepl("^ENS", rownames(dge))}
+is.sirv_or_ercc <- function(dge) {!is.human(dge) & !is.sequins(dge)} # this is the whole SIRV set4 (ERCC + SIRV E0 + Long SIRV)
+is.sirv_E0 <- function(dge) {grepl("^SIRV\\d{3}$", rownames(dge))} 
+is.sirv_all <- function(dge) {grepl("^SIRV", rownames(dge))} # including all SIRV E0 and Long SIRV
+is.long_sirv <- function(dge) {grepl("^SIRV\\d{4}", rownames(dge))}
+is.ercc <- function(dge) {!is.human(dge) & !is.sequins(dge) & !is.sirv_all(dge)}
+```
+
+# Setup 
+
+## Sample metdata
+We need a sample metadata data frame, specifying which sample belongs to which comparison group. 
+```{r echo=TRUE}
+bulk_meta <- read.delim(params$bulk_meta, header = TRUE, sep = ",", stringsAsFactors = FALSE)
+bulk_meta <- data.frame("id" = bulk_meta$sample,
+                        "group"= bulk_meta$group,
+                        "sequins"=bulk_meta$sequins,
+                        stringsAsFactors = FALSE)
+bulk_meta
+```
+
+## Prepare tx2gene (GTF annotation importing and processing)
+
+```{r GTF annotation importing, echo=TRUE}
+calcTxNum <- function(G.Tx.map){
+  geneid = rep(NA, nrow(G.Tx.map))
+  txcount = table(G.Tx.map$gene_id)
+  txnum = as.numeric(txcount[match(G.Tx.map$gene_id, names(txcount))])
+}
+# SIRV
+SIRV_tx <- GenomicFeatures::makeTxDbFromGFF(params$sirv_ercc_gtf, format = "gtf") %>% GenomicFeatures::transcripts(columns = c("tx_id", "tx_name", "gene_id"))
+SIRV.G.Tx.map <- tibble(
+  gene_id = SIRV_tx$gene_id %>% unlist,
+  tx_name = SIRV_tx$tx_name,
+  seqnames = as.character(seqnames(SIRV_tx))
+)
+rm(SIRV_tx)
+SIRV.G.Tx.map$tx_count <- SIRV.G.Tx.map %>% calcTxNum
+
+# Sequins
+sequins_tx  <- GenomicFeatures::makeTxDbFromGFF(params$sequins_gtf, format = "gtf") %>% GenomicFeatures::transcripts(columns = c("tx_id", "tx_name", "gene_id"))
+sequins.G.Tx.map <- tibble(
+  gene_id = sequins_tx$gene_id %>% unlist,
+  tx_name = sequins_tx$tx_name,
+  seqnames = as.character(seqnames(sequins_tx))
+)
+rm(sequins_tx)
+sequins.G.Tx.map$tx_count <- sequins.G.Tx.map %>% calcTxNum
+
+# Human
+human_tx  <- GenomicFeatures::makeTxDbFromGFF(params$human_gtf, format = "gtf") %>% GenomicFeatures::transcripts(columns = c("tx_id", "tx_name", "gene_id"))
+human.G.Tx.map <- tibble(
+  gene_id = human_tx$gene_id %>% unlist,
+  tx_name = human_tx$tx_name,
+  seqnames = as.character(seqnames(human_tx))
+)
+rm(human_tx)
+human.G.Tx.map$tx_count <- human.G.Tx.map %>% calcTxNum
+
+```
+
+
+```{r GTF annotation processing, echo=TRUE}
+# Merge all tx2gene - > need all genes for tximport to run properly but we will do dtu only on the human genes 
+sequins_tx2gene <- sequins.G.Tx.map[, c("tx_name", "gene_id", "seqnames")]
+SIRV_tx2gene <- SIRV.G.Tx.map[, c("tx_name", "gene_id", "seqnames")]
+human_tx2gene <- human.G.Tx.map[, c("tx_name", "gene_id", "seqnames")]
+tx2gene <- rbind(human_tx2gene, sequins_tx2gene, SIRV_tx2gene)
+tx2gene <- as.data.frame(tx2gene)
+head(tx2gene)
+
+```
+
+
+## Read quantification data (salmon/oarfish)
+Here `salmon` used to quantify the short-read sequencing transcript data (Illumina) whilst `oarfish` used to quantify long-read sequencing data (Oxford Nanopore Technologies (ONT) (`ONT_1` (cDNA sequencing), `ONT_2` (dRNA sequencing))
+```{r Get quantification files, echo=TRUE}
+
+# Get quant.sf file paths
+get_quant_paths <- function(dirs, file_name) {
+  # Generate file paths for quantification files
+  quant_paths <- file.path(dirs, file_name)
+  return(quant_paths)
+}
+
+# Define directories with their corresponding expected file names
+oarfish_dirs <- list(
+  ill_bulk = list(dir = params$ill_bulk_salmon_dir, file_name = "quant.sf"),
+  ont_bulk = list(dir = params$ont_bulk_oarfish_dir, file_name = ".quant"),
+  pb_bulk = list(dir = params$pb_bulk_oarfish_dir, file_name = ".quant"),
+  drna_bulk = list(dir = params$ont_drnd_oarfish_dir, file_name = ".quant")
+)
+
+# Apply function to each directory to get all quant file paths
+quant_paths <- lapply(oarfish_dirs, function(dir_info) {
+  # Get the directory and file name from dir_info
+  dir <- dir_info$dir
+  file_name <- dir_info$file_name
+  
+  # List all subdirectories and get the quant file paths
+  sub_dirs <- list.dirs(dir, full.names = TRUE, recursive = FALSE)
+  get_quant_paths(sub_dirs, file_name)
+})
+
+# Flatten the list of quant_paths into a named list
+quant_paths <- lapply(quant_paths, unlist)
+
+```
+
+
+## Create counts matrix (tximport)
+Here we create a tx level count matrix with the `tximport` function from the `tximport` library. The estimated counts are generated using abundance estimates, where counts are scaled using the median transcript length among isoforms of a gene, and then the library size (`countsFromAbundance = "dtuScaledTPM"`)
+```{r Get tx counts, echo=TRUE}
+# Function to import tx counts with tximport
+get_dtu_from_txi <- function(quant_dir, sample_prefix_regex, type, tx2gene) {
+  txi <- tximport(quant_dir,
+                  type = type,
+                  tx2gene = tx2gene,
+                  ignoreAfterBar = TRUE,
+                  countsFromAbundance = "no", # dtu scaledTPM counts used for the analysis
+                  txOut = TRUE) # output tx level counts matrix 
+  counts <- as.data.frame(txi$counts, stringAsFactors = FALSE)
+  sample_names <- gsub(sample_prefix_regex, '', basename(dirname(quant_dir)))
+  colnames(counts) <- sample_names
+  rownames(counts) <- tx2gene$tx_name[match(rownames(counts), tx2gene$tx_name)]
+  sparse_counts <- as(counts, "sparseMatrix")
+  return(sparse_counts)
+}
+
+
+# Process each quant path for different bulk types
+ill_bulk.tx.dtu <- get_dtu_from_txi(quant_paths$ill_bulk, ".*/", "salmon", tx2gene = tx2gene[1:2])
+ont_bulk.tx.dtu <- get_dtu_from_txi(quant_paths$ont_bulk, ".*/", "oarfish", tx2gene = tx2gene[1:2])
+pb_bulk.tx.dtu <- get_dtu_from_txi(quant_paths$pb_bulk, ".*/", "oarfish",tx2gene = tx2gene[1:2])
+drna_bulk.tx.dtu <- get_dtu_from_txi(quant_paths$drna_bulk, ".*/", "oarfish", tx2gene = tx2gene[1:2])
+
+```
+
+# Filter human tx counts
+```{r}
+# Filter only human tx counts 
+ill_bulk.txhuman.dtu <- ill_bulk.tx.dtu[is.human(ill_bulk.tx.dtu),]
+ont_bulk.txhuman.dtu <- ont_bulk.tx.dtu[is.human(ont_bulk.tx.dtu),]
+pb_bulk.txhuman.dtu <- pb_bulk.tx.dtu[is.human(pb_bulk.tx.dtu),]
+drna_bulk.txhuman.dtu <- drna_bulk.tx.dtu[is.human(drna_bulk.tx.dtu),]
+```
+
+## Filtering common tx & expression (human)
+```{r transcript filtering for DTU, echo=TRUE, message=FALSE, warning=FALSE, results='hide'}
+# Human transcript
+# 1. get common transcripts
+common_tx <- Reduce(intersect, lapply(list(ill_bulk.txhuman.dtu, ont_bulk.txhuman.dtu, pb_bulk.txhuman.dtu, drna_bulk.txhuman.dtu), rownames))
+
+ill_bulk.txhuman.dtu <- ill_bulk.txhuman.dtu[common_tx, ]
+ont_bulk.txhuman.dtu <- ont_bulk.txhuman.dtu[common_tx, ]
+pb_bulk.txhuman.dtu <- pb_bulk.txhuman.dtu[common_tx, ]
+drna_bulk.txhuman.dtu <- drna_bulk.txhuman.dtu[common_tx, ]
+
+## 2. filter by expression (union instead of the intersection |)
+bulk_meta
+keep <- filterByExpr(ill_bulk.txhuman.dtu, group = bulk_meta %>% arrange(match(id, colnames(ill_bulk.txhuman.dtu))) %>% pull(group), min.count = 5)  & 
+        filterByExpr(ont_bulk.txhuman.dtu, group = bulk_meta %>% arrange(match(id, colnames(ont_bulk.txhuman.dtu))) %>% pull(group), min.count = 5)  & 
+        filterByExpr(pb_bulk.txhuman.dtu, group = bulk_meta %>% arrange(match(id, colnames(pb_bulk.txhuman.dtu))) %>% pull(group), min.count = 5)  & 
+        filterByExpr(drna_bulk.txhuman.dtu, group = bulk_meta %>% arrange(match(id, colnames(drna_bulk.txhuman.dtu))) %>% pull(group), min.count = 5)  
+
+table(keep)
+ill_bulk.txhuman.dtu <- ill_bulk.txhuman.dtu[keep, ]
+ont_bulk.txhuman.dtu <- ont_bulk.txhuman.dtu[keep, ]
+pb_bulk.txhuman.dtu <- pb_bulk.txhuman.dtu[keep, ]
+drna_bulk.txhuman.dtu <- drna_bulk.txhuman.dtu[keep, ]
+
+```
+
+## Major Isoform analysis (H146)
+
+```{r}
+H146.df <- tibble(
+  'Illumina' = ill_bulk.tx.dtu[,'H146'],
+  
+)
+
+
+```
+
+
+## Filtering for DTU requirements  
+```{r}
+
+# DTU filtering
+# 1. Remove genes with < 1 transcript 
+# 2. Remove 0 counts across samples for groups within comparisons
+
+dtu_filter <- getFromNamespace("sparse_filter", "DTUrtle")
+
+run_dtu_filtering <- function(counts, meta, tx2gene, comparisons, ...) {
+  # Initialize a list to store filtered counts per comparison
+  result <- list()
+  
+  # Loop over each comparison (each element is a vector of two groups, e.g., c("luad", "sclc_a"))
+  for (comp in comparisons) {
+    comp_name <- paste(comp, collapse = "_vs_")
+    message("Processing comparison: ", comp_name)
+    
+    # Subset metadata to samples belonging to the groups in this comparison
+    meta_comp <- meta[meta$group %in% comp, ]
+    samples_to_keep <- meta_comp$id
+    
+    # Subset the counts matrix to these samples
+    counts_comp <- counts[, samples_to_keep, drop = FALSE]
+    cat("Before filtering for", comp_name, ": ", nrow(counts_comp), "features\n")
+    
+    # Apply dtu_filter, e.g., obtained with getFromNamespace("sparse_filter", "DTUrtle")
+    filtered_counts <- dtu_filter(
+      counts = counts_comp,
+      tx2gene = tx2gene,
+      BPPARAM = BiocParallel::SerialParam(),
+      min_samps_gene_expr = 0,
+      min_gene_expr = 0,
+      min_samps_feature_expr = 0,
+      min_feature_expr = 0,
+      min_samps_feature_prop = 0,
+      min_feature_prop = 0,
+      run_gene_twice = FALSE
+    )
+    
+    cat("For comparison", comp_name, ": retained", nrow(filtered_counts), "features\n\n")
+    
+    # Store the filtered counts under the comparison name
+    result[[comp_name]] <- filtered_counts
+  }
+  
+  return(result)
+}
+
+```
+
+```{r}
+comparisons_human <- list(
+  c("luad", "sclc_a"),
+  c("luad", "sclc_p"),
+  c("sclc_a", "sclc_p")
+)
+
+ill_bulk.txhuman_filtered.dtu <- run_dtu_filtering(ill_bulk.txhuman.dtu, bulk_meta, human_tx2gene, comparisons_human, dtu_filter)
+ont_bulk.txhuman_filtered.dtu <- run_dtu_filtering(ont_bulk.txhuman.dtu, bulk_meta, human_tx2gene, comparisons_human, dtu_filter)
+drna_bulk.txhuman_filtered.dtu <- run_dtu_filtering(drna_bulk.txhuman.dtu, bulk_meta, human_tx2gene, comparisons_human, dtu_filter)
+pb_bulk.txhuman_filtered.dtu <- run_dtu_filtering(pb_bulk.txhuman.dtu, bulk_meta, human_tx2gene, comparisons_human, dtu_filter)
+
+```
+## Filtering common features after DTU filter
+```{r}
+# Repeat filter common features for each comparison across platforms
+# 1. Get common feature luad_vs_sclc_a
+common_tx <- Reduce(intersect, lapply(list(ill_bulk.txhuman_filtered.dtu$luad_vs_sclc_a,
+                                                          ont_bulk.txhuman_filtered.dtu$luad_vs_sclc_a,
+                                                          pb_bulk.txhuman_filtered.dtu$luad_vs_sclc_a,
+                                                          drna_bulk.txhuman_filtered.dtu$luad_vs_sclc_a),rownames))
+
+ill_bulk.txhuman_filtered.dtu$luad_vs_sclc_a <- ill_bulk.txhuman_filtered.dtu$luad_vs_sclc_a[common_tx, ]
+ont_bulk.txhuman_filtered.dtu$luad_vs_sclc_a <- ont_bulk.txhuman_filtered.dtu$luad_vs_sclc_a[common_tx, ]
+pb_bulk.txhuman_filtered.dtu$luad_vs_sclc_a <- pb_bulk.txhuman_filtered.dtu$luad_vs_sclc_a[common_tx, ]
+drna_bulk.txhuman_filtered.dtu$luad_vs_sclc_a <- drna_bulk.txhuman_filtered.dtu$luad_vs_sclc_a[common_tx, ]
+
+
+# 2. Get common feature luad_vs_sclc_p
+common_tx <- Reduce(intersect, lapply(list(ill_bulk.txhuman_filtered.dtu$luad_vs_sclc_p,
+                                                          ont_bulk.txhuman_filtered.dtu$luad_vs_sclc_p,
+                                                          pb_bulk.txhuman_filtered.dtu$luad_vs_sclc_p,
+                                                          drna_bulk.txhuman_filtered.dtu$luad_vs_sclc_p),rownames))
+
+ill_bulk.txhuman_filtered.dtu$luad_vs_sclc_p <- ill_bulk.txhuman_filtered.dtu$luad_vs_sclc_p[common_tx, ]
+ont_bulk.txhuman_filtered.dtu$luad_vs_sclc_p <- ont_bulk.txhuman_filtered.dtu$luad_vs_sclc_p[common_tx, ]
+pb_bulk.txhuman_filtered.dtu$luad_vs_sclc_p <- pb_bulk.txhuman_filtered.dtu$luad_vs_sclc_p[common_tx, ]
+drna_bulk.txhuman_filtered.dtu$luad_vs_sclc_p <- drna_bulk.txhuman_filtered.dtu$luad_vs_sclc_p[common_tx, ]
+
+
+# 3. Get common feature sclc_a_vs_sclc_p
+common_tx <- Reduce(intersect, lapply(list(ill_bulk.txhuman_filtered.dtu$sclc_a_vs_sclc_p,
+                                                          ont_bulk.txhuman_filtered.dtu$sclc_a_vs_sclc_p,
+                                                          pb_bulk.txhuman_filtered.dtu$sclc_a_vs_sclc_p,
+                                                          drna_bulk.txhuman_filtered.dtu$sclc_a_vs_sclc_p),rownames))
+
+ill_bulk.txhuman_filtered.dtu$sclc_a_vs_sclc_p <- ill_bulk.txhuman_filtered.dtu$sclc_a_vs_sclc_p[common_tx, ]
+ont_bulk.txhuman_filtered.dtu$sclc_a_vs_sclc_p <- ont_bulk.txhuman_filtered.dtu$sclc_a_vs_sclc_p[common_tx, ]
+pb_bulk.txhuman_filtered.dtu$sclc_a_vs_sclc_p <- pb_bulk.txhuman_filtered.dtu$sclc_a_vs_sclc_p[common_tx, ]
+drna_bulk.txhuman_filtered.dtu$sclc_a_vs_sclc_p <- drna_bulk.txhuman_filtered.dtu$sclc_a_vs_sclc_p[common_tx, ]
+
+```
+
+
+
+# Filter sequins tx counts
+```{r}
+
+# Filter only sequins tx counts 
+ill_bulk.txsequin.dtu <- ill_bulk.tx.dtu[is.sequins(ill_bulk.tx.dtu),]
+ont_bulk.txsequin.dtu <- ont_bulk.tx.dtu[is.sequins(ont_bulk.tx.dtu),]
+pb_bulk.txsequin.dtu <- pb_bulk.tx.dtu[is.sequins(pb_bulk.tx.dtu),]
+drna_bulk.txsequin.dtu <- drna_bulk.tx.dtu[is.sequins(drna_bulk.tx.dtu),]
+
+```
+
+
+## Filtering common tx & expression (sequin)
+```{r}
+
+# Transcript
+## 1. get common transcripts for sequins
+common_tx <- Reduce(intersect, lapply(list(ill_bulk.txsequin.dtu, ont_bulk.txsequin.dtu, pb_bulk.txsequin.dtu, drna_bulk.txsequin.dtu), rownames))
+
+ill_bulk.txsequin.dtu <- ill_bulk.txsequin.dtu[common_tx, ]
+ont_bulk.txsequin.dtu <- ont_bulk.txsequin.dtu[common_tx, ]
+pb_bulk.txsequin.dtu <- pb_bulk.txsequin.dtu[common_tx, ]
+drna_bulk.txsequin.dtu <- drna_bulk.txsequin.dtu[common_tx, ]
+
+## 2. filter by expression 
+keep <- filterByExpr(ill_bulk.txsequin.dtu, group = bulk_meta %>% arrange(match(id, colnames(ill_bulk.txsequin.dtu))) %>% pull(sequins), min.count = 5)  & 
+        filterByExpr(ont_bulk.txsequin.dtu, group = bulk_meta %>% arrange(match(id, colnames(ont_bulk.txsequin.dtu))) %>% pull(sequins), min.count = 5)  & 
+        filterByExpr(pb_bulk.txsequin.dtu, group = bulk_meta %>% arrange(match(id, colnames(pb_bulk.txsequin.dtu))) %>% pull(sequins), min.count = 5)  & 
+        filterByExpr(drna_bulk.txsequin.dtu, group = bulk_meta %>% arrange(match(id, colnames(drna_bulk.txsequin.dtu))) %>% pull(sequins), min.count = 5)
+
+table(keep)
+ill_bulk.txsequin.dtu <- ill_bulk.txsequin.dtu[keep, ]
+ont_bulk.txsequin.dtu <- ont_bulk.txsequin.dtu[keep, ]
+pb_bulk.txsequin.dtu <- pb_bulk.txsequin.dtu[keep, ]
+drna_bulk.txsequin.dtu <- drna_bulk.txsequin.dtu[keep, ]
+
+
+common_features <- Reduce(intersect, lapply(list(ill_bulk.txsequin.dtu, ont_bulk.txsequin.dtu, pb_bulk.txsequin.dtu, drna_bulk.txsequin.dtu), rownames))
+
+```
+
+## Filtering for DTU requirements  
+```{r}
+
+ill_bulk.txsequin_filtered.dtu <- dtu_filter(counts = ill_bulk.txsequin.dtu,
+                                             tx2gene = sequins_tx2gene,
+                                             BPPARAM = BiocParallel::SerialParam(),
+                                             min_samps_gene_expr = 0,
+                                             min_gene_expr = 0,
+                                             min_samps_feature_expr = 0,
+                                             min_feature_expr = 0,
+                                             min_samps_feature_prop = 0,
+                                             min_feature_prop = 0,
+                                             run_gene_twice = FALSE)
+
+ont_bulk.txsequin_filtered.dtu <- dtu_filter(counts = ont_bulk.txsequin.dtu,
+                                             tx2gene = sequins_tx2gene,
+                                             BPPARAM = BiocParallel::SerialParam(),
+                                             min_samps_gene_expr = 0,
+                                             min_gene_expr = 0,
+                                             min_samps_feature_expr = 0,
+                                             min_feature_expr = 0,
+                                             min_samps_feature_prop = 0,
+                                             min_feature_prop = 0,
+                                             run_gene_twice = FALSE)
+
+drna_bulk.txsequin_filtered.dtu <- dtu_filter(counts = drna_bulk.txsequin.dtu,
+                                             tx2gene = sequins_tx2gene,
+                                             BPPARAM = BiocParallel::SerialParam(),
+                                             min_samps_gene_expr = 0,
+                                             min_gene_expr = 0,
+                                             min_samps_feature_expr = 0,
+                                             min_feature_expr = 0,
+                                             min_samps_feature_prop = 0,
+                                             min_feature_prop = 0,
+                                             run_gene_twice = FALSE)
+
+pb_bulk.txsequin_filtered.dtu <- dtu_filter(counts = pb_bulk.txsequin.dtu,
+                                             tx2gene = sequins_tx2gene,
+                                             BPPARAM = BiocParallel::SerialParam(),
+                                             min_samps_gene_expr = 0,
+                                             min_gene_expr = 0,
+                                             min_samps_feature_expr = 0,
+                                             min_feature_expr = 0,
+                                             min_samps_feature_prop = 0,
+                                             min_feature_prop = 0,
+                                             run_gene_twice = FALSE)
+
+
+```
+## Filtering common features after DTU filter
+```{r}
+# Repeat filter common features for each comparison across platforms
+# 1. Get common feature A_vs_B
+common_tx <- Reduce(intersect, lapply(list(ill_bulk.txsequin_filtered.dtu,
+                                           ont_bulk.txsequin_filtered.dtu,
+                                           pb_bulk.txsequin_filtered.dtu,
+                                           drna_bulk.txsequin_filtered.dtu),rownames))
+
+ill_bulk.txsequin_filtered.dtu<- ill_bulk.txsequin_filtered.dtu[common_tx, ]
+ont_bulk.txsequin_filtered.dtu <- ont_bulk.txsequin_filtered.dtu[common_tx, ]
+pb_bulk.txsequin_filtered.dtu <- pb_bulk.txsequin_filtered.dtu[common_tx, ]
+drna_bulk.txsequin_filtered.dtu <- drna_bulk.txsequin_filtered.dtu[common_tx, ]
+```
+
+# DTU analysis
+
+First, perform the statistical analysis with `DRIMSeq`, a DTU specialized statistical framework utilizing a Dirichlet-multinomial model. This is done with the `run_drimseq` command. We use the previously imported data as parameters, specifying which column in the cell metadata data frame contains ids and which the group information we want. The order given in the `cond_levels` parameter also specifies the comparison formula
+
+DRIMSeq is an R package designed for Differential Transcript Usage (DTU) analysis, which examines changes in the relative abundance of different isoforms (transcripts) of a gene across conditions. Instead of looking at total gene expression, DTU focuses on shifts in transcript proportions within each gene.
+
+`Dirichlet-Multinomial Model`
+The core of DRIMSeq’s statistical framework is the Dirichlet-multinomial model, which accounts for:
+Biological variability in transcript usage across samples.
+Overdispersion (extra variability beyond simple multinomial models).
+Compositional constraints, meaning transcript proportions sum to 1 per gene.
+
+
+**Workflow** 
+
+`STEP 1` Data preprocessing - Gene-transcript coint matrices (Salmon/ Oarfish)
+
+`STEP 2` Model Estimation (Dirichlet - Multinomial) - The model estimates dispersion (variation in transcript proportions across replicates). Genes with highly variable transcript usage are prioritized.
+
+`STEP 3`  Differential Transcript Usage testing - Hypothesis testing to see whether transcript usage differs significantly between conditions?. Null hypothesis is that transcript proportions remain the same between group. Then DRIMseq fits a Dirichlet-multinomial generalized linear model (GLM) and applies likelihood ratio tests (LRTs) to detect significant shifts.
+
+```{r}
+
+runDTU_drimseq <- function(counts, tx2gene, meta, cond_col, comparisons, biocpar) {
+  dtu_results <- list()
+  
+  # Check if 'counts' is a list (i.e. pre-split by comparison)
+  if(is.list(counts)) {
+    # We assume the list is keyed by names like "group1_vs_group2"
+    for(comp_name in names(counts)) {
+      message("Running DTU analysis for comparison: ", comp_name)
+      
+      # Parse the comparison groups from the name 
+      groups <- unlist(strsplit(comp_name, "_vs_"))
+      
+      # Subset metadata for the groups
+      meta_comp <- meta[meta[[cond_col]] %in% groups, ]
+      
+      try({
+        result <- my_run_drimseq(
+          counts = counts[[comp_name]],
+          tx2gene = tx2gene,
+          pd = meta_comp,
+          id_col = "id",
+          cond_col = cond_col,
+          cond_levels = groups,
+          add_pseudocount = TRUE,
+          filtering_strategy = "none",
+          BPPARAM = biocpar
+        )
+        dtu_results[[comp_name]] <- result
+      })
+    }
+  } else {
+    # Otherwise, assume counts is a single matrix and we need to split it by comparison
+  for (comparison in comparisons) {
+      comp_name <- paste(comparison, collapse = "_vs_")
+      message("Running DTU analysis for comparison: ", comp_name)
+      
+      # Subset metadata to only samples in the current comparison
+      meta_comp <- meta[meta[[cond_col]] %in% comparison, ]
+      samples_to_keep <- meta_comp$id
+      
+      # Subset the counts matrix to these samples
+      counts_comp <- counts[, samples_to_keep, drop = FALSE]
+      cat("For comparison ", comp_name, ": ", ncol(counts_comp), " samples selected.\n", sep = "")
+      
+    try({
+        result <- my_run_drimseq(
+          counts = counts_comp,
+        tx2gene = tx2gene,
+          pd = meta_comp,
+        id_col = "id",
+        cond_col = cond_col,
+        cond_levels = comparison,
+          add_pseudocount = TRUE,
+          filtering_strategy = "none",
+          BPPARAM = biocpar
+      )
+        dtu_results[[comp_name]] <- result
+    })
+    }
+  }
+  
+  return(dtu_results)
+}
+
+
+```
+
+
+## DTU human (common feature/comparison)
+```{r}
+# DTU analysis on human genes only 
+human_tx2gene <- as.data.frame(human_tx2gene) # ensure this is a data frame 
+
+
+ill_bulk.dtu_human.list <- runDTU_drimseq(counts = ill_bulk.txhuman_filtered.dtu, tx2gene = human_tx2gene[1:2], meta = bulk_meta, cond_col = "group", comparisons = comparisons_human, biocpar = biocpar)
+
+ont_bulk.dtu_human.list <- runDTU_drimseq(counts = ont_bulk.txhuman_filtered.dtu, tx2gene = human_tx2gene[1:2], meta = bulk_meta, cond_col = "group", comparisons = comparisons_human, biocpar = biocpar)
+
+drna_bulk.dtu_human.list <- runDTU_drimseq(counts = drna_bulk.txhuman_filtered.dtu, tx2gene = human_tx2gene[1:2], meta = bulk_meta, cond_col = "group", comparisons = comparisons_human, biocpar = biocpar)
+
+pb_bulk.dtu_human.list <- runDTU_drimseq(counts = pb_bulk.txhuman_filtered.dtu, tx2gene = human_tx2gene[1:2], meta = bulk_meta, cond_col = "group", comparisons = comparisons_human, biocpar = biocpar)
+
+
+```
+
+## Sanity check consistent features
+```{r}
+# Create a list of your DTU objects from different platforms
+platform_list <- list(
+  "Illumina" = ill_bulk.dtu_human.list,
+  "ONT"      = ont_bulk.dtu_human.list,
+  "dRNA"     = drna_bulk.dtu_human.list,
+  "PacBio"   = pb_bulk.dtu_human.list
+)
+
+# Extract the comparison names from one of the platforms (assumed consistent across all)
+comparisons <- names(ill_bulk.dtu_human.list)
+cat("Comparisons found:", paste(comparisons, collapse = ", "), "\n\n")
+
+# Loop through each comparison
+for(comp in comparisons) {
+  cat("Comparison:", comp, "\n")
+  
+  # Initialize lists to store gene and transcript IDs for common intersection
+  gene_ids_list <- list()
+  tx_ids_list <- list()
+  
+  # Loop through each platform and print per-platform summary
+  for(platform in names(platform_list)) {
+    dtu_obj <- platform_list[[platform]][[comp]]
+    
+    if(!is.null(dtu_obj$meta_table_gene) && !is.null(dtu_obj$meta_table_tx)) {
+      # Assuming rownames of meta_table_gene/tx are the feature IDs (or gene IDs)
+      gene_ids <- rownames(dtu_obj$meta_table_gene)
+      tx_ids   <- rownames(dtu_obj$meta_table_tx)
+      
+      gene_ids_list[[platform]] <- gene_ids
+      tx_ids_list[[platform]] <- tx_ids
+      
+      gene_count <- length(gene_ids)
+      tx_count   <- length(tx_ids)
+      cat("   Platform:", platform, "-> Genes:", gene_count, "Transcripts:", tx_count, "\n")
+    } else {
+      cat("   Platform:", platform, "-> DTU object missing expected meta tables.\n")
+    }
+  }
+  
+  # Compute intersection across platforms for genes and transcripts
+  common_genes <- Reduce(intersect, gene_ids_list)
+  common_tx    <- Reduce(intersect, tx_ids_list)
+  
+  cat("   Common across all platforms -> Genes:", length(common_genes),
+      "Transcripts:", length(common_tx), "\n\n")
+}
+```
+
+
+
+###  Filtering sig DTU results (human)
+```{r}
+
+# Process Illumina bulk DTU results and store in ill_bulk.dtu_human.dturtle
+ill_bulk.dtu_human.dturtle <- lapply(ill_bulk.dtu_human.list, function(dt) {
+  dt_filtered <- DTUrtle::posthoc_and_stager(dturtle = dt, ofdr = 0.05, posthoc = 0.1)
+  dt_table <- DTUrtle::create_dtu_table(dturtle = dt_filtered, 
+                               add_tx_metadata = list("tx_expr_in_max" = c("exp_in", max)))
+  return(dt_table)
+})
+names(ill_bulk.dtu_human.dturtle) <- names(ill_bulk.dtu_human.list)
+
+# Process Oxford Nanopore (ONT) bulk DTU results and store in ont_bulk.dtu_human.dturtle
+ont_bulk.dtu_human.dturtle <- lapply(ont_bulk.dtu_human.list, function(dt) {
+  dt_filtered <-  DTUrtle::posthoc_and_stager(dturtle = dt, ofdr = 0.05, posthoc = 0.1)
+  dt_table <-  DTUrtle::create_dtu_table(dturtle = dt_filtered, 
+                               add_tx_metadata = list("tx_expr_in_max" = c("exp_in", max)))
+  return(dt_table)
+})
+names(ont_bulk.dtu_human.dturtle) <- names(ont_bulk.dtu_human.list)
+
+# Process dRNA bulk DTU results and store in drna_bulk.dtu_human.dturtle
+drna_bulk.dtu_human.dturtle <- lapply(drna_bulk.dtu_human.list, function(dt) {
+  dt_filtered <-  DTUrtle::posthoc_and_stager(dturtle = dt, ofdr = 0.05, posthoc = 0.1)
+  dt_table <-  DTUrtle::create_dtu_table(dturtle = dt_filtered, 
+                               add_tx_metadata = list("tx_expr_in_max" = c("exp_in", max)))
+  return(dt_table)
+})
+names(drna_bulk.dtu_human.dturtle) <- names(drna_bulk.dtu_human.list)
+
+# Process PacBio (PB) bulk DTU results and store in pb_bulk.dtu_human.dturtle
+pb_bulk.dtu_human.dturtle <- lapply(pb_bulk.dtu_human.list, function(dt) {
+  dt_filtered <-  DTUrtle::posthoc_and_stager(dturtle = dt, ofdr = 0.05, posthoc = 0.1)
+  dt_table <-  DTUrtle::create_dtu_table(dturtle = dt_filtered, 
+                               add_tx_metadata = list("tx_expr_in_max" = c("exp_in", max)))
+  return(dt_table)
+})
+names(pb_bulk.dtu_human.dturtle) <- names(pb_bulk.dtu_human.list)
+
+
+```
+
+### Save results for DTU (human)
+```{r}
+
+# Save full output from DTUrtle
+saveRDS(ill_bulk.dtu_human.list, "ill_bulk_dtu_human.rds")
+saveRDS(ont_bulk.dtu_human.list, "ont_bulk_dtu_human.rds")
+saveRDS(drna_bulk.dtu_human.list, "drna_bulk_dtu_human.rds")
+saveRDS(pb_bulk.dtu_human.list, "pb_bulk_dtu_human.rds")
+
+# Save significant DTU results
+saveRDS(ill_bulk.dtu_human.dturtle, "ill_bulk_human_sigdtu.rds")
+saveRDS(ont_bulk.dtu_human.dturtle, "ont_bulk_human_sigdtu.rds")
+saveRDS(drna_bulk.dtu_human.dturtle, "drna_bulk_human_sigdtu.rds")
+saveRDS(pb_bulk.dtu_human.dturtle, "pb_bulk_human_sigdtu.rds")
+
+```
+
+
+## DTU Sequins
+```{r}
+
+# DTU analysis on human genes only (ran this as a SLURM job as each one took around 30 min)
+sequins_tx2gene <- as.data.frame(sequins_tx2gene) # ensure this is a data frame 
+ill_bulk.dtu_sequin.list <- runDTU_drimseq(counts = ill_bulk.txsequin_filtered.dtu, tx2gene = sequins_tx2gene[1:2],cond_col = "sequins", meta = bulk_meta, comparisons = comparisons_sequin, biocpar = biocpar)
+ont_bulk.dtu_sequin.list <- runDTU_drimseq(count = ont_bulk.txsequin_filtered.dtu, tx2gene = sequins_tx2gene[1:2],cond_col = "sequins", meta = bulk_meta, comparisons = comparisons_sequin, biocpar = biocpar)
+drna_bulk.dtu_sequin.list <- runDTU_drimseq(counts = drna_bulk.txsequin_filtered.dtu, tx2gene = sequins_tx2gene[1:2],cond_col = "sequins", meta = bulk_meta, comparisons = comparisons_sequin, biocpar = biocpar)
+pb_bulk.dtu_sequin.list <- runDTU_drimseq(counts = pb_bulk.txsequin_filtered.dtu, tx2gene = sequins_tx2gene[1:2],cond_col = "sequins", meta = bulk_meta, comparisons = comparisons_sequin, biocpar = biocpar)
+
+
+```
+
+### Filtering sig DTU (sequin)
+```{r}
+# Filter 
+ill_bulk.dtu_sequin.dturtle <- DTUrtle::posthoc_and_stager(dturtle = ill_bulk.dtu_sequin.list[["A_vs_B"]], ofdr = 0.05, posthoc = 0.1)
+ont_bulk.dtu_sequin.dturtle <- DTUrtle::posthoc_and_stager(dturtle = ont_bulk.dtu_sequin.list[["A_vs_B"]], ofdr = 0.05, posthoc = 0.1)
+drna_bulk.dtu_sequin.dturtle <- DTUrtle::posthoc_and_stager(dturtle = drna_bulk.dtu_sequin.list[["A_vs_B"]], ofdr = 0.05, posthoc = 0.1)
+pb_bulk.dtu_sequin.dturtle <- DTUrtle::posthoc_and_stager(dturtle = pb_bulk.dtu_sequin.list[["A_vs_B"]], ofdr = 0.05, posthoc = 0.1)
+
+# Create table
+
+ill_bulk.dtu_sequin.dturtle <- DTUrtle::create_dtu_table(dturtle = ill_bulk.dtu_sequin.dturtle, 
+                               add_tx_metadata = list("tx_expr_in_max" = c("exp_in", max)))
+ont_bulk.dtu_sequin.dturtle <- DTUrtle::create_dtu_table(dturtle = ont_bulk.dtu_sequin.dturtle, 
+                               add_tx_metadata = list("tx_expr_in_max" = c("exp_in", max)))
+drna_bulk.dtu_sequin.dturtle <- DTUrtle::create_dtu_table(dturtle = drna_bulk.dtu_sequin.dturtle, 
+                               add_tx_metadata = list("tx_expr_in_max" = c("exp_in", max)))
+pb_bulk.dtu_sequin.dturtle <- DTUrtle::create_dtu_table(dturtle = pb_bulk.dtu_sequin.dturtle, 
+                               add_tx_metadata = list("tx_expr_in_max" = c("exp_in", max)))
+
+
+```
+
+### Save sig DTU (sequin)
+
+```{r}
+# Save full output from DTUrtle
+saveRDS(ill_bulk.dtu_sequin.list, "ill_bulk_dtu_sequin.rds")
+saveRDS(ont_bulk.dtu_sequin.list, "ont_bulk_dtu_sequin.rds")
+saveRDS(drna_bulk.dtu_sequin.list, "drna_bulk_dtu_sequin.rds")
+saveRDS(pb_bulk.dtu_sequin.list, "pb_bulk_dtu_sequin.rds")
+
+# Save significant DTU results
+saveRDS(ill_bulk.dtu_sequin.dturtle, "ill_bulk_sequin_sigdtu.rds")
+saveRDS(ont_bulk.dtu_sequin.dturtle, "ont_bulk_sequin_sigdtu.rds")
+saveRDS(drna_bulk.dtu_sequin.dturtle, "drna_bulk_sequin_sigdtu.rds")
+saveRDS(pb_bulk.dtu_sequin.dturtle, "pb_bulk_sequin_sigdtu.rds")
+
+
+```
+
+
+# DTU cross-platform comparison
+```{r echo=TRUE}
+complex_upset_plot <- function(lst) {
+  
+  long_df <- stack(lst)
+
+  # Make the binary membership matrix
+  binary_matrix <- long_df %>%
+    mutate(present = 1) %>%
+    pivot_wider(names_from = ind, values_from = present, values_fill = 0)
+
+  p <- ComplexUpset::upset(
+    binary_matrix %>% dplyr::select(-values) %>% as.data.frame(),
+    intersect = names(lst),
+    wrap = TRUE
+  )
+
+  return(list(
+    plot = p,
+    matrix = binary_matrix %>% dplyr::rename(Gene = values)
+  ))
+}
+```
+
+## Significant DTU genes human
+```{r upset plot DTU genes human, echo=TRUE, fig.height=10, fig.width=8}
+lst <- list(
+  "Illumina" = ill_bulk.dtu_human.dturtle$luad_vs_sclc_a$sig_gene,
+  "ONT cDNA" = ont_bulk.dtu_human.dturtle$luad_vs_sclc_a$sig_gene,
+  "PacBio" = pb_bulk.dtu_human.dturtle$luad_vs_sclc_a$sig_gene,
+  "ONT dRNA" = drna_bulk.dtu_human.dturtle$luad_vs_sclc_a$sig_gene
+)
+
+p1 <- complex_upset_plot(lst)$plot + ggtitle("LUAD vs SCLC_A") + theme(plot.title = element_text(size =10))
+mat.AvsL.DE <- complex_upset_plot(lst)$matrix
+
+lst <- list(
+  "Illumina" = ill_bulk.dtu_human.dturtle$luad_vs_sclc_p$sig_gene,
+  "ONT cDNA" = ont_bulk.dtu_human.dturtle$luad_vs_sclc_p$sig_gene,
+  "PacBio" = pb_bulk.dtu_human.dturtle$luad_vs_sclc_p$sig_gene,
+  "ONT dRNA" = drna_bulk.dtu_human.dturtle$luad_vs_sclc_p$sig_gene
+)
+p2 <- complex_upset_plot(lst)$plot + ggtitle("LUAD vs SCLC_P") + theme(plot.title = element_text(size = 10))
+mat.PvsL.DE <- complex_upset_plot(lst)$matrix
+
+lst <- list(
+  "Illumina" = ill_bulk.dtu_human.dturtle$sclc_a_vs_sclc_p$sig_gene,
+  "ONT cDNA" = ont_bulk.dtu_human.dturtle$sclc_a_vs_sclc_p$sig_gene,
+  "PacBio" = pb_bulk.dtu_human.dturtle$sclc_a_vs_sclc_p$sig_gene,
+  "ONT dRNA" = drna_bulk.dtu_human.dturtle$sclc_a_vs_sclc_p$sig_gene
+)
+p3 <- complex_upset_plot(lst)$plot + ggtitle("SCLC_A vs SCLC_P") + theme(plot.title = element_text(size = 10))
+mat.AvsP.DE <- complex_upset_plot(lst)$matrix
+
+(p1 / p2 / p3) + patchwork::plot_annotation(
+  title = "DTU Significant Human Genes",
+  theme = theme(plot.title = element_text(size =15))
+)
+
+```
+
+## Significant DTU genes sequins
+```{r}
+
+lst <- list(
+  "Illumina" = ill_bulk.dtu_sequin.dturtle$sig_gene,
+  "ONT cDNA" = ont_bulk.dtu_sequin.dturtle$sig_gene,
+  "PacBio" = pb_bulk.dtu_sequin.dturtle$sig_gene,
+  "ONT dRNA" = drna_bulk.dtu_sequin.dturtle$sig_gene
+)
+
+p1 <- complex_upset_plot(lst)$plot + ggtitle("A vs B") + theme(plot.title = element_text(size =10))
+mat.AvsL.DE <- complex_upset_plot(lst)$matrix
+
+
+
+(p1) + patchwork::plot_annotation(
+  title = "DTU Significant Sequin Genes",
+  theme = theme(plot.title = element_text(size =15))
+)
+
+```
+
+
+## Significant DTU transcripts human
+
+```{r upset plot DTU transcripts human, echo=TRUE, fig.height=10, fig.width=8}
+lst <- list(
+  "Illumina" = ill_bulk.dtu_human.dturtle$luad_vs_sclc_a$sig_tx,
+  "ONT cDNA" = ont_bulk.dtu_human.dturtle$luad_vs_sclc_a$sig_tx,
+  "PacBio" = pb_bulk.dtu_human.dturtle$luad_vs_sclc_a$sig_tx,
+  "ONT dRNA" = drna_bulk.dtu_human.dturtle$luad_vs_sclc_a$sig_tx
+)
+
+p1 <- complex_upset_plot(lst)$plot + ggtitle("LUAD vs SCLC_A") + theme(plot.title = element_text(size =10))
+mat.AvsL.DE <- complex_upset_plot(lst)$matrix
+
+lst <- list(
+  "Illumina" = ill_bulk.dtu_human.dturtle$luad_vs_sclc_p$sig_tx,
+  "ONT cDNA" = ont_bulk.dtu_human.dturtle$luad_vs_sclc_p$sig_tx,
+  "PacBio" = pb_bulk.dtu_human.dturtle$luad_vs_sclc_p$sig_tx,
+  "ONT dRNA" = drna_bulk.dtu_human.dturtle$luad_vs_sclc_p$sig_tx
+)
+p2 <- complex_upset_plot(lst)$plot + ggtitle("LUAD vs SCLC_P") + theme(plot.title = element_text(size = 10))
+mat.PvsL.DE <- complex_upset_plot(lst)$matrix
+
+lst <- list(
+  "Illumina" = ill_bulk.dtu_human.dturtle$sclc_a_vs_sclc_p$sig_tx,
+  "ONT cDNA" = ont_bulk.dtu_human.dturtle$sclc_a_vs_sclc_p$sig_tx,
+  "PacBio" = pb_bulk.dtu_human.dturtle$sclc_a_vs_sclc_p$sig_tx,
+  "ONT dRNA" = drna_bulk.dtu_human.dturtle$sclc_a_vs_sclc_p$sig_tx
+)
+p3 <- complex_upset_plot(lst)$plot + ggtitle("SCLC_A vs SCLC_P") + theme(plot.title = element_text(size = 10))
+mat.AvsP.DE <- complex_upset_plot(lst)$matrix
+
+(p1 / p2 / p3) + patchwork::plot_annotation(
+  title = "DTU Significant Human Transcripts",
+  theme = theme(plot.title = element_text(size =15))
+)
+ 
+```
+
+## Significant DTU transcripts sequin
+
+```{r}
+
+lst <- list(
+  "Illumina" = ill_bulk.dtu_sequin.dturtle$sig_tx,
+  "ONT cDNA" = ont_bulk.dtu_sequin.dturtle$sig_tx,
+  "PacBio" = pb_bulk.dtu_sequin.dturtle$sig_tx,
+  "ONT dRNA" = drna_bulk.dtu_sequin.dturtle$sig_tx
+)
+
+p1 <- complex_upset_plot(lst)$plot + ggtitle("A vs B") + theme(plot.title = element_text(size =10))
+mat.AvsL.DE <- complex_upset_plot(lst)$matrix
+
+
+
+(p1) + patchwork::plot_annotation(
+  title = "DTU Significant Sequin Transcript",
+  theme = theme(plot.title = element_text(size =15))
+)
+
+
+```
+
+
+
+# Sequins Summary 
+```{r}
+
+library(data.table)
+# Define custom color palette with keys matching platform names
+color_palette <- c(
+  PacBio    = "#df1995",
+  ONT_cDNA  = "#04476c",  # ONT cDNA
+  ONT_dRNA  = "#24cdcd",  # ONT dRNA
+  Illumina  = "#e88b20"
+)
+
+# Use only the platforms available (names must match your dtu_calls list)
+used_palette <- color_palette[c("Illumina", "ONT_cDNA", "PacBio", "ONT_dRNA")]
+
+# Custom theme to add a box (panel border)
+theme_box <- theme_minimal() +
+  theme(
+    legend.position = "none",
+    panel.border = element_rect(color = "black", fill = NA, size = 1)
+  )
+
+#### 1. Power (Total DTU Calls) ####
+
+# Create a list of DTU gene calls per platform 
+# (Replace these with your actual DTU call objects)
+dtu_calls <- list(
+  Illumina = ill_bulk.dtu_sequin.dturtle$sig_gene,
+  ONT_cDNA = ont_bulk.dtu_sequin.dturtle$sig_gene,  # ONT cDNA
+  PacBio   = pb_bulk.dtu_sequin.dturtle$sig_gene,
+  ONT_dRNA = drna_bulk.dtu_sequin.dturtle$sig_gene   # ONT dRNA
+)
+
+# Count the number of DTU calls per platform ("power")
+power <- sapply(dtu_calls, length)
+df_dtu <- data.frame(
+  Platform = names(power),
+  Power = as.numeric(power)
+)
+
+#### 2. Compute Ground Truth and Other Metrics ####
+
+# Compute common transcripts and genes across all platforms
+common_tx <- Reduce(intersect, list(
+  rownames(ill_bulk.dtu_sequin.list[["A_vs_B"]]$meta_table_tx),
+  rownames(ont_bulk.dtu_sequin.list[["A_vs_B"]]$meta_table_tx),
+  rownames(drna_bulk.dtu_sequin.list[["A_vs_B"]]$meta_table_tx),
+  rownames(pb_bulk.dtu_sequin.list[["A_vs_B"]]$meta_table_tx)
+))
+
+common_gene <- Reduce(intersect, list(
+  rownames(ill_bulk.dtu_sequin.list[["A_vs_B"]]$meta_table_gene),
+  rownames(ont_bulk.dtu_sequin.list[["A_vs_B"]]$meta_table_gene),
+  rownames(drna_bulk.dtu_sequin.list[["A_vs_B"]]$meta_table_gene),
+  rownames(pb_bulk.dtu_sequin.list[["A_vs_B"]]$meta_table_gene)
+))
+
+# Load the sequin annotation file (adjust the path as needed)
+isoform_data <- fread(params$sequins_tsv) %>%
+  mutate(gene_ID = sub("_[0-9]+$", "", NAME)) %>%
+  filter(gene_ID %in% common_gene, NAME %in% common_tx)
+
+
+#isoform_data <- fread(params$sequins_tsv) %>%
+#  mutate(gene_ID = sub("_[0-9]+$", "", NAME)) %>%
+#  filter(gene_ID %in% common_gene)
+# Optionally, restrict further to transcripts in common_tx:
+# %>% filter(Name %in% common_tx)
+
+# Summarize totals by gene and compute isoform-level proportions
+gene_totals <- isoform_data %>%
+  group_by(gene_ID) %>%
+  summarise(total_MixA = sum(MIX_A),
+            total_MixB = sum(MIX_B))
+
+isoform_data <- isoform_data %>%
+  left_join(gene_totals, by = "gene_ID") %>%
+  mutate(prop_MixA = MIX_A / total_MixA,
+         prop_MixB = MIX_B / total_MixB,
+         diff_prop = prop_MixA - prop_MixB)
+
+# For each gene, select the transcript with the largest absolute difference
+expected_gene <- isoform_data %>%
+  as_tibble() %>%  # Convert to tibble for safety
+  group_by(gene_ID) %>%
+  summarise(expected_diff_prop = diff_prop[which.max(abs(diff_prop))]) %>%
+  ungroup()
+
+print(expected_gene)
+
+# Define ground truth DTU genes.
+# Here, genes with an absolute difference  threshold are considered true DTU.
+threshold <- 0.001  # Adjust as needed
+trueDTU.gene <- expected_gene %>%
+  filter(abs(expected_diff_prop) >= threshold) %>%
+  pull(gene_ID)
+
+# Calculate TPR: fraction of true DTU genes recovered by each platform
+TPR <- sapply(dtu_calls, function(x) {
+  sum(x %in% trueDTU.gene) / length(trueDTU.gene)
+}, simplify = TRUE)
+
+# Calculate FDR: fraction of calls not in the ground truth (false positives)
+FDR <- sapply(dtu_calls, function(x) {
+  if (length(x) == 0) NA else sum(!(x %in% trueDTU.gene)) / length(x)
+}, simplify = TRUE)
+
+# Calculate Inconsistency Rate: fraction of a platform's calls that are unique (not shared by any other)
+inconsistency_rate <- sapply(names(dtu_calls), function(platform) {
+  other_calls <- unlist(dtu_calls[setdiff(names(dtu_calls), platform)])
+  if (length(dtu_calls[[platform]]) == 0) NA else {
+    exclusive <- setdiff(dtu_calls[[platform]], other_calls)
+    length(exclusive) / length(dtu_calls[[platform]])
+  }
+})
+
+# Combine all metrics into one data frame
+df_metrics <- data.frame(
+  Platform = names(dtu_calls),
+  Power = as.numeric(power),
+  TPR = as.numeric(TPR),
+  FDR = as.numeric(FDR),
+  Inconsistency = as.numeric(inconsistency_rate)
+)
+
+print(df_metrics)
+
+#### 3. Create Individual Plots with Adjustments ####
+
+# (a) Power plot with dashed horizontal line for ground truth
+p_bar <- ggplot(df_dtu, aes(x = Platform, y = Power, fill = Platform)) +
+  geom_bar(stat = "identity", width = 0.6) +
+  # Dashed line indicating the number of true DTU genes (ground truth)
+  geom_hline(yintercept = length(trueDTU.gene), linetype = "dashed", color = "black") +
+  labs(title = "Number of DTU Calls (Power)",
+       x = "Platform",
+       y = "Number of DTU Calls") +
+  scale_fill_manual(values = used_palette) +
+  scale_y_continuous(limits = c(0, 7)) +
+  theme_box
+
+# (b) TPR plot (y-axis fixed to [0, 1])
+p_TPR <- ggplot(df_metrics, aes(x = Platform, y = TPR, fill = Platform)) +
+  geom_bar(stat = "identity", width = 0.6) +
+  labs(title = "True Positive Rate (TPR)",
+       x = "Platform",
+       y = "TPR") +
+  scale_y_continuous(limits = c(0, 1)) +
+  scale_fill_manual(values = used_palette) +
+  theme_box
+
+# (c) FDR plot (y-axis fixed to [0, 1])
+p_FDR <- ggplot(df_metrics, aes(x = Platform, y = FDR, fill = Platform)) +
+  geom_bar(stat = "identity", width = 0.6) +
+  labs(title = "False Discovery Rate (FDR)",
+       x = "Platform",
+       y = "FDR") +
+  scale_y_continuous(limits = c(0, 1)) +
+  scale_fill_manual(values = used_palette) +
+  theme_box
+
+# (d) Inconsistency Rate plot (y-axis fixed to [0, 1])
+p_inconsistency <- ggplot(df_metrics, aes(x = Platform, y = Inconsistency, fill = Platform)) +
+  geom_bar(stat = "identity", width = 0.6) +
+  labs(title = "Inconsistency Rate (Method-Specific Calls)",
+       x = "Platform",
+       y = "Inconsistency Rate") +
+  scale_y_continuous(limits = c(0, 1)) +
+  scale_fill_manual(values = used_palette) +
+  theme_box
+
+#### 4. Combine the Plots in a 2 x 2 Grid ####
+
+combined_plots <- (p_bar | p_TPR) / (p_FDR | p_inconsistency) +
+  plot_annotation(
+    title = "DTU Performance Metrics for Sequin Genes",
+    theme = theme(plot.title = element_text(size = 20))
+  )
+
+# Display the combined plots
+combined_plots
+
+```
+#Humans DTU summary 
+```{r}
+
+library(ggplot2)
+library(dplyr)
+library(forcats)
+library(patchwork)
+
+# Define custom color palette (names must match your platform names)
+used_palette <- c(
+  Illumina = "#e88b20",
+  `ONT cDNA` = "#04476c",
+  PacBio   = "#df1995",
+  `ONT dRNA` = "#24cdcd"
+)
+
+# Construct a data frame for power (number of significant DTU genes) for human genes
+# (Using your DTU results for the "luad_vs_sclc_a", "luad_vs_sclc_p", and "sclc_a_vs_sclc_p" comparisons)
+df_power <- data.frame(
+  Comparison = rep(c("luad_vs_sclc_a", "luad_vs_sclc_p", "sclc_a_vs_sclc_p"), each = 4),
+  Platform = rep(c("Illumina", "ONT cDNA", "PacBio", "ONT dRNA"), times = 3),
+  Power = c(
+    length(ill_bulk.dtu_human.dturtle$luad_vs_sclc_a$sig_gene),
+    length(ont_bulk.dtu_human.dturtle$luad_vs_sclc_a$sig_gene),
+    length(pb_bulk.dtu_human.dturtle$luad_vs_sclc_a$sig_gene),
+    length(drna_bulk.dtu_human.dturtle$luad_vs_sclc_a$sig_gene),
+    
+    length(ill_bulk.dtu_human.dturtle$luad_vs_sclc_p$sig_gene),
+    length(ont_bulk.dtu_human.dturtle$luad_vs_sclc_p$sig_gene),
+    length(pb_bulk.dtu_human.dturtle$luad_vs_sclc_p$sig_gene),
+    length(drna_bulk.dtu_human.dturtle$luad_vs_sclc_p$sig_gene),
+    
+    length(ill_bulk.dtu_human.dturtle$sclc_a_vs_sclc_p$sig_gene),
+    length(ont_bulk.dtu_human.dturtle$sclc_a_vs_sclc_p$sig_gene),
+    length(pb_bulk.dtu_human.dturtle$sclc_a_vs_sclc_p$sig_gene),
+    length(drna_bulk.dtu_human.dturtle$sclc_a_vs_sclc_p$sig_gene)
+  ),
+  stringsAsFactors = FALSE
+)
+
+comp_levels <- c("luad_vs_sclc_a", "luad_vs_sclc_p", "sclc_a_vs_sclc_p")
+df_power$Comparison <- factor(df_power$Comparison, levels = comp_levels)
+
+
+df_bar <- df_power %>% 
+  group_by(Comparison) %>% 
+  mutate(Platform_ordered = fct_reorder(Platform, Power, .desc = TRUE)) %>% 
+  ungroup()
+
+p_bar <- ggplot(df_bar, aes(x = Platform_ordered, y = Power, fill = Platform_ordered)) +
+  geom_bar(stat = "identity", width = 0.7) +
+  geom_text(aes(label = Power), vjust = -0.5, size = 3) +
+  facet_wrap(~ Comparison, scales = "free_x") +
+  scale_fill_manual(values = used_palette) +
+  labs(
+    title = "DTU Significant Human Genes ",
+    x = "Platform",
+    y = "Number of Significant DTU Calls"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    plot.title = element_text(size = 16, face = "bold"),
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    legend.position = "none"
+  )
+
+
+df_line <- df_power %>% 
+  mutate(Comparison_numeric = as.numeric(Comparison))
+
+p_line <- ggplot(df_line, aes(x = Comparison_numeric, y = Power, group = Platform, color = Platform)) +
+  geom_line(size = 1) +
+  geom_point(size = 3) +
+  scale_x_continuous(breaks = 1:length(comp_levels), labels = comp_levels) +
+  scale_color_manual(values = used_palette) +
+  labs(
+    title = "",
+    x = "Comparison",
+    y = "Number of Significant DTU Calls"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    plot.title = element_text(size = 16, face = "bold"),
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    legend.position = "right"
+  )
+
+combined_plot <- p_bar | p_line +
+  patchwork::plot_annotation(
+    title = "DTU Significant Human Genes (Power)",
+    theme = theme(plot.title = element_text(size = 20))
+  )
+
+# Display the combined plot
+print(combined_plot)
+
+
+
+
+```

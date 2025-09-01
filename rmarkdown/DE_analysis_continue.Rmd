@@ -1,0 +1,237 @@
+---
+title: "DE analysis continue"
+author: "Yupei & Ash"
+date: '`r Sys.Date()`'
+version: 'v1.0_lfc0'
+output:
+  html_document:
+    code_folding: hide
+    toc: yes
+    toc_float: yes
+    number_sections: yes
+    toc_depth: 4
+  pdf_document:
+    toc: yes
+    toc_depth: '4'
+params:
+  random_seed: 2024
+  cache_dir: NULL
+  fig.path: NULL
+  bulk_DE_rds: "/vast/projects/LongBench/analysis/workflow/rmarkdown/RDS/bulk_DE.rds"  
+  expected_de_table: '/vast/projects/LongBench/reference_files/Expected_DE.csv'
+  log2FC_cutoff: 0
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+	echo = TRUE,
+	fig.height = 5,
+	fig.width = 7,
+	warning = FALSE,
+	cache = FALSE
+)
+```
+
+```{r Libraries, include=FALSE}
+library(limma)
+library(edgeR)
+library(tidyverse)
+library(RColorBrewer)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(ggrepel)
+library(glue)
+library(ggplot2)
+library(gridExtra)
+library(ggExtra)
+library(knitr)
+library(kableExtra)
+library(rtracklayer)
+library(scales)
+library(UpSetR)
+library(ggtree)
+library(aplot)
+library(patchwork)
+source("/vast/projects/LongBench/analysis/workflow/scripts/Rfunctions.R")
+output_list <- list() # used to store result for downstream analysis
+
+# setup some conflict functions
+rename <- dplyr::rename
+select <- dplyr::select
+
+knitr::opts_chunk$set(
+  cache = !is.null(params$cache_dir),  # Enable caching only if cache_dir is provided
+  fig.width = 15,                     # Set default figure width
+  fig.height = 10,                    # Set default figure height
+  warning = FALSE,                    # Suppress warnings in the output
+  fig.path = params$fig.path,         # Set figure path (NULL if not provided)
+  dev = if (!is.null(params$fig.path)) c("png", "svg") else NULL  # Set output devices if fig.path is provided
+)
+
+# Set cache.path only if params$cache_dir is not NULL
+if (!is.null(params$cache_dir)) {
+  knitr::opts_chunk$set(cache.path = params$cache_dir)
+}
+```
+
+# Setup:
+```{r Load bulk DE result}
+bulk_DE_rst <- readRDS(params$bulk_DE_rds)
+dge_lists <- bulk_DE_rst$dge_lists
+dte_lists <- bulk_DE_rst$dte_lists
+
+platforms <- c("Illumina", "ONT cDNA", "PacBio", "ONT dRNA")
+comparisons <- c("AvsL", "PvsL", "AvsP")
+```
+
+
+
+Comparison of gene-level and transcript-level log fold changes (logFC) across platforms and conditions. Each scatter plot shows the relationship between gene-level logFC (x-axis) and the logFC of the most significantly differentially expressed transcript (y-axis) for genes with at least one significant transcript (P < 0.05). Points represent genes, and the dashed line indicates equality (logFC_gene = logFC_transcript). Plots are faceted by platform and pairwise comparison.
+```{r,fig.height=10, fig.width=8}
+scatter_plots <- list()
+library(ggpubr)
+for (platform in platforms) {
+  for (comp in comparisons) {
+    dge <- dge_lists[[platform]][[paste0(comp, ".DE")]]$table %>%
+      rownames_to_column("gene_id")
+
+    dte <- dte_lists[[platform]][[paste0(comp, ".DE")]]$table %>%
+      rownames_to_column("transcript_id") %>%
+      mutate(gene_id = str_extract(transcript_id, "ENSG[0-9]+\\.[0-9]+"))
+
+    dte_sig <- dte %>% filter(PValue < 0.05)
+    top_dte <- dte_sig %>% group_by(gene_id) %>% slice_min(PValue, n = 1) %>% ungroup()
+
+    joined <- top_dte %>%
+      inner_join(dge, by = "gene_id", suffix = c("_transcript", "_gene"))
+
+    p <- ggplot(joined, aes(x = logFC_gene, y = logFC_transcript)) +
+      geom_point(alpha = 0.2, size=0.3) +
+      geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "gray50") +
+      labs(title = paste(toupper(platform), comp), x = "Gene logFC", y = "Transcript logFC") +
+      theme_minimal()
+
+    scatter_plots[[paste(platform, comp)]] <- p
+  }
+}
+
+ggarrange(plotlist = scatter_plots, ncol = 3, nrow = 4)
+```
+
+
+## Venn diagram showing overlap of DE genes and DE transcripts (overlap by gene name)
+```{r Venn DTE vs DGE, fig.height=10, fig.width=8}
+library(VennDiagram)
+futile.logger::flog.threshold(futile.logger::ERROR, name = "VennDiagramLogger")
+venn_grobs <- list()
+
+for (platform in platforms) {
+  for (comp in comparisons) {
+    dge <- dge_lists[[platform]][[paste0(comp, ".DE")]]$table %>%
+      rownames_to_column("gene_id") %>% filter(PValue < 0.05)
+
+    dte <- dte_lists[[platform]][[paste0(comp, ".DE")]]$table %>%
+      rownames_to_column("transcript_id") %>%
+      mutate(gene_id = str_extract(transcript_id, "ENSG[0-9]+\\.[0-9]+")) %>%
+      filter(PValue < 0.05)
+
+  grob <- venn.diagram(
+    list(Gene = dge$gene_id, Transcript = dte$gene_id),
+    filename = NULL,
+    output = FALSE,  # <- prevents log file
+    fill = c("skyblue", "pink"),
+    alpha = 0.5,
+    cat.cex = 1.2,
+    main = paste(toupper(platform), comp)
+  )
+
+    venn_grobs[[paste(platform, comp)]] <- grobTree(grob)
+  }
+}
+
+grid.arrange(grobs = venn_grobs, ncol = 3)
+```
+
+# Log FC Cor
+```{r LFC correlation, fig.height=4, fig.width=8}
+get_combined_logfc_plot <- function(level = "gene", p1, p2) {
+  require(dplyr)
+  require(ggplot2)
+  require(stringr)
+  require(purrr)
+
+  dot_color <- if (level == "gene") "#B4CD55" else "#AE98EB"
+
+  all_data <- purrr::map_dfr(comparisons, function(comp) {
+    df1 <- if (level == "gene") {
+      dge_lists[[p1]][[paste0(comp, ".DE")]]$table %>%
+        tibble::rownames_to_column("gene_id")
+    } else {
+      dte_lists[[p1]][[paste0(comp, ".DE")]]$table %>%
+        tibble::rownames_to_column("transcript_id") %>%
+        mutate(gene_id = stringr::str_extract(transcript_id, "ENSG[0-9]+\\.[0-9]+"))
+    }
+
+    df2 <- if (level == "gene") {
+      dge_lists[[p2]][[paste0(comp, ".DE")]]$table %>%
+        tibble::rownames_to_column("gene_id")
+    } else {
+      dte_lists[[p2]][[paste0(comp, ".DE")]]$table %>%
+        tibble::rownames_to_column("transcript_id") %>%
+        mutate(gene_id = stringr::str_extract(transcript_id, "ENSG[0-9]+\\.[0-9]+"))
+    }
+
+    df1 <- df1 %>% filter(PValue < 0.05)
+    df2 <- df2 %>% filter(PValue < 0.05)
+
+    joined <- full_join(df1[, c("gene_id", "logFC")], 
+                        df2[, c("gene_id", "logFC")],
+                        by = "gene_id", suffix = c("_p1", "_p2")) %>%
+      drop_na(logFC_p1, logFC_p2)
+
+    joined$comparison <- comp
+    joined
+  })
+
+  cors <- all_data %>%
+    group_by(comparison) %>%
+    summarise(
+      r = cor(logFC_p1, logFC_p2, use = "complete.obs"),
+      slope = coef(lm(logFC_p2 ~ logFC_p1))[2]
+    ) %>%
+    mutate(label = paste0("r = ", round(r, 2)))
+
+  ggplot(all_data, aes(x = logFC_p1, y = logFC_p2)) +
+    geom_point(color = dot_color, alpha = 0.4, size = 0.3) +
+    geom_density_2d(color = "gray60", size = 0.3) +
+    geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "gray50") +  # identity line
+    geom_smooth(method = "lm", se = FALSE, color = "black", size = 0.3) +  # regression line
+    facet_wrap(~comparison, ncol = 3) +
+    geom_text(data = cors, aes(x = -Inf, y = Inf, label = label),
+              inherit.aes = FALSE, hjust = -0.1, vjust = 1.2, size = 3.5) +
+    labs(
+      title = paste0(level, ": ", p1, " vs ", p2),
+      x = paste0("logFC (", p1, ")"),
+      y = paste0("logFC (", p2, ")")
+    ) +
+    theme_minimal(base_size = 8)
+}
+
+# Arrange figures
+platform_pairs <- combn(platforms, 2, simplify = FALSE)
+make_6panel_plot <- function(level) {
+  plotlist <- map(platform_pairs, ~ get_combined_logfc_plot(level, .x[1], .x[2]))
+  ggarrange(plotlist = plotlist, ncol = 3, nrow = 2)
+}
+
+gene_logfc_combined <- make_6panel_plot("gene")
+tx_logfc_combined <- make_6panel_plot("transcript")
+
+gene_logfc_combined
+tx_logfc_combined
+```
+
+
+
+
