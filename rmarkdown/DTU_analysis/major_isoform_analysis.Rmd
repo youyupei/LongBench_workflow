@@ -1,0 +1,537 @@
+---
+title: "DTU_analysis (DTUrtle/DRIMseq)"
+author: "Ashleigh"
+date: "2025-03-31"
+output:
+  html_document:
+    code_folding: hide
+    toc: yes
+    toc_float: yes
+    number_sections: yes
+    toc_depth: 4
+  pdf_document:
+    toc: yes
+    toc_depth: '4'
+params:
+  random_seed: 2024
+  cache_dir: NULL
+  sirv_ercc_gtf: '/vast/projects/LongBench/reference_files/SIRV_Set4_Norm_Sequences_20210507/SIRV_ERCC_longSIRV_multi-fasta_20210507.gtf'
+  sequins_gtf: '/vast/projects/LongBench/reference_files/Sequin_resources/v2.4/rnasequin_annotation_2.4.gtf'
+  sequins_tsv: '/vast/projects/LongBench/reference_files/Sequin_resources/v2.4/rnasequin_isoforms_2.4.tsv'
+  human_gtf: '/vast/projects/LongBench/reference_files/GRCh38/gencode.v44.annotation.gtf'
+  ont_bulk_oarfish_dir: '/vast/projects/LongBench/analysis/lr_bulk/result/oarfish_cov_output/ont_bulk'
+  pb_bulk_oarfish_dir: '/vast/projects/LongBench/analysis/lr_bulk/result/oarfish_cov_output/pb_bulk'
+  ont_drnd_oarfish_dir: '/vast/projects/LongBench/analysis/lr_bulk/result/oarfish_cov_output/dRNA_bulk'
+  ill_bulk_salmon_dir: '/vast/projects/LongBench/analysis/sr_bulk/result/salmon/salmon_quant'
+  bulk_meta: '/vast/projects/LongBench/sequencing_data/illumina_bulk/metadata.txt'
+  tx2gene_meta: '/vast/scratch/users/solano.a/LongBench/dturtle_analysis/tx2gene_metadata.txt'
+  dturtle_dir: '/vast/scratch/users/solano.a/LongBench/dturtle_analysis'
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+	echo = TRUE,
+	fig.height = 5,
+	fig.width = 7,
+	warning = FALSE,
+	cache = FALSE
+)
+```
+
+
+```{r Load libraries, include=FALSE}
+#library(DTUrtle)
+library(sparseDRIMSeq)
+library(dplyr)
+library(GenomicFeatures)
+library(BiocParallel)
+library(Matrix)
+library(tximport)
+library(ggplot2)
+library(patchwork)
+library(edgeR)
+library(tidyr)
+library(purrr)
+source("/vast/projects/LongBench/analysis/bulk_dturtle_analysis/dtu_Rfunction.R")
+biocpar <- BiocParallel::MulticoreParam(10)
+```
+
+
+```{r Input filename setup, include=FALSE, eval=F}
+params <- list(
+  random_seed = 2024,
+  cache_dir = NULL,
+  sirv_ercc_gtf = '/vast/projects/LongBench/reference_files/SIRV_Set4_Norm_Sequences_20210507/SIRV_ERCC_longSIRV_multi-fasta_20210507.gtf',
+  sequins_gtf = '/vast/projects/LongBench/reference_files/Sequin_resources/v2.4/rnasequin_annotation_2.4.gtf',
+  sequins_tsv = '/vast/projects/LongBench/reference_files/Sequin_resources/v2.4/rnasequin_isoforms_2.4.tsv',
+  human_gtf = '/vast/projects/LongBench/reference_files/GRCh38/gencode.v44.annotation.gtf',
+  ont_bulk_oarfish_dir = "/vast/projects/LongBench/analysis/lr_bulk/result/oarfish_cov_output/ont_bulk",
+  pb_bulk_oarfish_dir = "/vast/projects/LongBench/analysis/lr_bulk/result/oarfish_cov_output/pb_bulk",
+  ont_drnd_oarfish_dir = "/vast/projects/LongBench/analysis/lr_bulk/result/oarfish_cov_output/dRNA_bulk",
+  ill_bulk_salmon_dir = "/vast/projects/LongBench/analysis/sr_bulk/result/salmon/salmon_quant",
+  bulk_meta = "/vast/projects/LongBench/sequencing_data/illumina_bulk/metadata.txt",
+  tx2gene_meta = '/vast/scratch/users/solano.a/LongBench/dturtle_analysis/tx2gene_metadata.txt',
+  dturtle_dir = '/vast/scratch/users/solano.a/LongBench/dturtle_analysis'
+)
+```
+
+
+```{r color code, include=FALSE}
+color_palette <- c(
+  PacBio = "#df1995",
+  ONT = "#00789b",
+  ONT_1 = "#04476c", # ONT cDNA
+  ONT_2 = "#00789b", # ONT dRNA
+  Illumina = "#e88b20"
+)
+```
+
+
+```{r function for splitting the transcript origin, echo=TRUE, results='hide', message=FALSE, warning=FALSE}
+is.sequins <- function(dge) {grepl("^R", rownames(dge))}
+is.human <- function(dge) {grepl("^ENS", rownames(dge))}
+is.sirv_or_ercc <- function(dge) {!is.human(dge) & !is.sequins(dge)} # this is the whole SIRV set4 (ERCC + SIRV E0 + Long SIRV)
+is.sirv_E0 <- function(dge) {grepl("^SIRV\\d{3}$", rownames(dge))} 
+is.sirv_all <- function(dge) {grepl("^SIRV", rownames(dge))} # including all SIRV E0 and Long SIRV
+is.long_sirv <- function(dge) {grepl("^SIRV\\d{4}", rownames(dge))}
+is.ercc <- function(dge) {!is.human(dge) & !is.sequins(dge) & !is.sirv_all(dge)}
+```
+
+# Setup 
+
+## Prepare tx2gene (GTF annotation importing and processing)
+
+```{r GTF annotation importing, echo=TRUE}
+calcTxNum <- function(G.Tx.map){
+  geneid = rep(NA, nrow(G.Tx.map))
+  txcount = table(G.Tx.map$gene_id)
+  txnum = as.numeric(txcount[match(G.Tx.map$gene_id, names(txcount))])
+}
+# SIRV
+SIRV_tx <- GenomicFeatures::makeTxDbFromGFF(params$sirv_ercc_gtf, format = "gtf") %>% GenomicFeatures::transcripts(columns = c("tx_id", "tx_name", "gene_id"))
+SIRV.G.Tx.map <- tibble(
+  gene_id = SIRV_tx$gene_id %>% unlist,
+  tx_name = SIRV_tx$tx_name,
+  seqnames = as.character(seqnames(SIRV_tx))
+)
+rm(SIRV_tx)
+SIRV.G.Tx.map$tx_count <- SIRV.G.Tx.map %>% calcTxNum
+
+# Sequins
+sequins_tx  <- GenomicFeatures::makeTxDbFromGFF(params$sequins_gtf, format = "gtf") %>% GenomicFeatures::transcripts(columns = c("tx_id", "tx_name", "gene_id"))
+sequins.G.Tx.map <- tibble(
+  gene_id = sequins_tx$gene_id %>% unlist,
+  tx_name = sequins_tx$tx_name,
+  seqnames = as.character(seqnames(sequins_tx))
+)
+rm(sequins_tx)
+sequins.G.Tx.map$tx_count <- sequins.G.Tx.map %>% calcTxNum
+
+# Human
+human_tx  <- GenomicFeatures::makeTxDbFromGFF(params$human_gtf, format = "gtf") %>% GenomicFeatures::transcripts(columns = c("tx_id", "tx_name", "gene_id"))
+human.G.Tx.map <- tibble(
+  gene_id = human_tx$gene_id %>% unlist,
+  tx_name = human_tx$tx_name,
+  seqnames = as.character(seqnames(human_tx))
+)
+rm(human_tx)
+human.G.Tx.map$tx_count <- human.G.Tx.map %>% calcTxNum
+
+```
+
+
+```{r GTF annotation processing, echo=TRUE}
+# Merge all tx2gene - > need all genes for tximport to run properly but we will do dtu only on the human genes 
+sequins_tx2gene <- sequins.G.Tx.map[, c("tx_name", "gene_id", "seqnames")]
+SIRV_tx2gene <- SIRV.G.Tx.map[, c("tx_name", "gene_id", "seqnames")]
+human_tx2gene <- human.G.Tx.map[, c("tx_name", "gene_id", "seqnames")]
+tx2gene <- rbind(human_tx2gene, sequins_tx2gene, SIRV_tx2gene)
+tx2gene <- as.data.frame(tx2gene)
+head(tx2gene)
+
+```
+
+## Sample metdata
+We need a sample metadata data frame, specifying which sample belongs to which comparison group. 
+```{r echo=TRUE}
+bulk_meta <- read.delim(params$bulk_meta, header = TRUE, sep = ",", stringsAsFactors = FALSE)
+bulk_meta <- data.frame("id" = bulk_meta$sample,
+                        "group"= bulk_meta$group,
+                        "sequins"=bulk_meta$sequins,
+                        stringsAsFactors = FALSE)
+bulk_meta
+```
+
+
+## Read quantification data (salmon/oarfish)
+Here `salmon` used to quantify the short-read sequencing transcript data (Illumina) whilst `oarfish` used to quantify long-read sequencing data (Oxford Nanopore Technologies (ONT) (`ONT_1` (cDNA sequencing), `ONT_2` (dRNA sequencing))
+```{r Get quantification files, echo=TRUE}
+
+# Get quant.sf file paths
+get_quant_paths <- function(dirs, file_name) {
+  # Generate file paths for quantification files
+  quant_paths <- file.path(dirs, file_name)
+  return(quant_paths)
+}
+
+# Define directories with their corresponding expected file names
+oarfish_dirs <- list(
+  ill_bulk = list(dir = params$ill_bulk_salmon_dir, file_name = "quant.sf"),
+  ont_bulk = list(dir = params$ont_bulk_oarfish_dir, file_name = ".quant"),
+  pb_bulk = list(dir = params$pb_bulk_oarfish_dir, file_name = ".quant"),
+  drna_bulk = list(dir = params$ont_drnd_oarfish_dir, file_name = ".quant")
+)
+
+# Apply function to each directory to get all quant file paths
+quant_paths <- lapply(oarfish_dirs, function(dir_info) {
+  # Get the directory and file name from dir_info
+  dir <- dir_info$dir
+  file_name <- dir_info$file_name
+  
+  # List all subdirectories and get the quant file paths
+  sub_dirs <- list.dirs(dir, full.names = TRUE, recursive = FALSE)
+  get_quant_paths(sub_dirs, file_name)
+})
+
+# Flatten the list of quant_paths into a named list
+quant_paths <- lapply(quant_paths, unlist)
+
+```
+
+
+## Create counts matrix (tximport)
+Here we create a tx level count matrix with the `tximport` function from the `tximport` library. The estimated counts are generated using abundance estimates, where counts are scaled using the median transcript length among isoforms of a gene, and then the library size (`countsFromAbundance = "dtuScaledTPM"`)
+```{r Get tx counts, echo=TRUE}
+# Function to import tx counts with tximport
+get_dtu_from_txi <- function(quant_dir, sample_prefix_regex, type, tx2gene) {
+  txi <- tximport(quant_dir,
+                  type = type,
+                  tx2gene = tx2gene,
+                  ignoreAfterBar = TRUE,
+                  countsFromAbundance = "scaledTPM", # dtu scaledTPM counts used for the analysis
+                  txOut = TRUE) # output tx level counts matrix 
+  counts <- as.data.frame(txi$counts, stringAsFactors = FALSE)
+  sample_names <- gsub(sample_prefix_regex, '', basename(dirname(quant_dir)))
+  colnames(counts) <- sample_names
+  rownames(counts) <- tx2gene$tx_name[match(rownames(counts), tx2gene$tx_name)]
+  sparse_counts <- as(counts, "sparseMatrix")
+  return(sparse_counts)
+}
+
+
+# Process each quant path for different bulk types
+ill_bulk.tx.dtu <- get_dtu_from_txi(quant_paths$ill_bulk, ".*/", "salmon", tx2gene = tx2gene[1:2])
+ont_bulk.tx.dtu <- get_dtu_from_txi(quant_paths$ont_bulk, ".*/", "oarfish", tx2gene = tx2gene[1:2])
+pb_bulk.tx.dtu <- get_dtu_from_txi(quant_paths$pb_bulk, ".*/", "oarfish",tx2gene = tx2gene[1:2])
+drna_bulk.tx.dtu <- get_dtu_from_txi(quant_paths$drna_bulk, ".*/", "oarfish", tx2gene = tx2gene[1:2])
+
+```
+
+
+# Get features used in DTU
+```{r}
+common_tx_list <- readRDS("/vast/projects/LongBench/analysis/bulk_dturtle_analysis/common_tx_list.rds")
+
+```
+
+# Cell line specific 
+```{r}
+
+# compute the 3‐way intersection
+common_all_three <- Reduce(intersect, common_tx_list)
+
+# how many are in common?
+length(common_all_three)
+head(common_all_three)
+
+```
+
+# Remove genes with one isoform
+```{r}
+library(dplyr)
+
+# data frame of only your common transcripts + their genes
+common_df <- tx2gene %>%
+  filter(tx_name %in% common_all_three) %>%
+  dplyr::select(tx_name, gene_id)
+
+# count how many common transcripts each gene has
+gene_counts <- common_df %>%
+  count(gene_id, name = "n_isoforms")
+
+# identify genes with more than one transcript
+multi_iso_genes <- gene_counts %>%
+  filter(n_isoforms > 1) %>%
+  pull(gene_id)
+
+# keep only transcripts belonging to those multi‐isoform genes
+filtered_common <- common_df %>%
+  filter(gene_id %in% multi_iso_genes) %>%
+  pull(tx_name)
+
+
+length(filtered_common)
+head(filtered_common)
+
+
+
+
+```
+
+```{r}
+
+# make four sparse‐matrices into one named list
+all_tx_counts <- list(
+  Illumina = ill_bulk.tx.dtu,
+  ONT_cDNA  = ont_bulk.tx.dtu,
+  PacBio    = pb_bulk.tx.dtu,
+  ONT_dRNA  = drna_bulk.tx.dtu
+)
+
+filtered_dtu_matrices <- lapply(all_tx_counts, function(mat) {
+  mat[rownames(mat) %in% filtered_common, , drop = FALSE]
+})
+
+# check dimensions
+sapply(filtered_dtu_matrices, dim)
+
+```
+
+```{r}
+
+# Map transcripts to genes
+tx2gene_map <- tx2gene %>% dplyr::select(tx_name, gene_id)
+
+# For each platform, aggregate transcript counts -> gene counts
+gene_level_counts <- lapply(filtered_dtu_matrices, function(mat) {
+  tx_counts <- as.data.frame(as.matrix(mat))
+  tx_counts$tx_name <- rownames(mat)
+  
+  tx_counts %>%
+    left_join(tx2gene_map, by = "tx_name") %>%
+    group_by(gene_id) %>%
+    summarise(across(-tx_name, sum, na.rm = TRUE), .groups = "drop") %>%
+    column_to_rownames("gene_id")
+})
+
+```
+
+
+# Get major isoform
+
+```{r}
+library(dplyr)
+library(tidyr)
+
+call_major_isoforms <- function(count_mat, platform_name, tx2gene) {
+  df <- as.data.frame(as.matrix(count_mat))
+  df$tx_name <- rownames(df)
+  
+  df <- df %>%
+  left_join(tx2gene, by = "tx_name") %>%
+  dplyr::select(-seqnames)   
+
+   df_long <- pivot_longer(df, -c(tx_name, gene_id),
+                        names_to = "sample", values_to = "count")
+
+  
+  df_major <- df_long %>%
+    group_by(sample, gene_id) %>%
+    filter(count == max(count, na.rm = TRUE)) %>%
+    slice_head(n = 1) %>%  # break ties arbitrarily
+    ungroup() %>%
+    mutate(platform = platform_name) %>%
+    dplyr::select(sample, platform, gene = gene_id, major_isoform = tx_name)
+  
+  return(df_major)
+}
+
+
+#You get a table where each row = one gene × one sample × one platform, with the transcript that platform considered the “major isoform”
+
+major_calls <- lapply(names(filtered_dtu_matrices), function(p) {
+  call_major_isoforms(filtered_dtu_matrices[[p]], p, tx2gene)
+}) %>% bind_rows()
+
+
+```
+
+
+```{r}
+summary_df <- major_calls %>%
+  group_by(sample, gene) %>%
+  summarise(
+    n_iso = n_distinct(major_isoform),
+    iso_ill = ifelse("Illumina" %in% platform,
+                     major_isoform[platform == "Illumina"][1],
+                     NA_character_),
+    iso_ont = ifelse("ONT_cDNA" %in% platform,
+                 major_isoform[platform == "ONT_cDNA"][1],
+                 NA_character_),
+    iso_dRND = ifelse("ONT_dRNA" %in% platform,
+                 major_isoform[platform == "ONT_dRNA"][1],
+                 NA_character_),
+    iso_pb = ifelse("PacBio" %in% platform,
+                 major_isoform[platform == "PacBio"][1],
+                 NA_character_),
+    iso_lr_all_same = (
+      n_distinct(major_isoform[platform %in% c("ONT_cDNA","ONT_dRNA","PacBio")]) == 1
+    ),
+    iso_lr_val = ifelse(
+      iso_lr_all_same,
+      major_isoform[platform %in% c("ONT_cDNA","ONT_dRNA","PacBio")][1],
+      NA_character_
+    ),
+    .groups = "drop"
+  ) 
+
+
+%>%
+  mutate(
+    category = case_when(
+      n_iso == 1 ~ "Consensus",
+      iso_lr_all_same & !is.na(iso_ill) & iso_lr_val != iso_ill ~ "Long-read only",
+      TRUE ~ "Inconsistent"
+    )
+  ) %>%
+  count(sample, category, name = "n") %>%
+  group_by(sample) %>%
+  mutate(
+    denom = sum(n),        # total multi-isoform genes = denominator
+    pct   = 100 * n / denom
+  ) %>%
+  ungroup()
+
+head(summary_df)
+
+
+```
+
+```{r}
+summary_df  %>%
+  rowwise() %>%
+  mutate(
+    iso_values = list(c_across(iso_ill:iso_pb)),
+    consensus_status = list({
+      iso_vec <- unlist(iso_values)
+      tab <- table(iso_vec)
+      
+      if (length(tab) == 1) {
+        "Consensus"
+      } else if (length(tab) == 2 && max(tab) == 3) {
+        odd_idx <- which(iso_vec != names(which.max(tab)))
+        odd_platform <- c('Different in Illumina only', 'Different in ONT cDNA only', 'Different in ONT dRNA only', 'Different in PacBio only')[odd_idx]
+        odd_platform
+      } else {
+        "Other"
+      }
+    })
+  ) %>% mutate(consensus_status = unlist(consensus_status)) -> summary_df
+
+
+# test %>% 
+#    group_by(sample, consensus_status) %>%
+#   summarise(n = n(), .groups = "drop") %>%
+#   group_by(sample) %>%
+#   mutate(prop = n / sum(n)) %>%
+#   ggplot(aes(x = sample, y = prop, fill = consensus_status)) +
+#   geom_col() +
+#   scale_y_continuous(labels = scales::percent_format()) +
+#   labs(y = "Proportion", x = "Sample", fill = "Consensus Status") +
+#   theme_minimal() +
+#   theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+
+
+```{r}
+library(dplyr)
+library(ggplot2)
+
+# Ensure consistent category ordering
+cat_levels <- c("Consensus", 'Different in Illumina only', 'Different in ONT cDNA only', 'Different in ONT dRNA only', 'Different in PacBio only', 'Other')
+
+plot_df <- summary_df %>%
+  count(sample, consensus_status, name = "n") %>%
+  group_by(sample) %>%
+  mutate(
+    denom = sum(n),        # total multi-isoform genes = denominator
+    pct   = 100 * n / denom
+  ) %>%
+  ungroup() %>%
+    mutate(
+        category = factor(consensus_status, levels = cat_levels),
+        #sample   = factor(sample, levels = order_by_consensus)  # comment this line to keep original order
+    )
+
+# Plot (horizontal 100% stacked bars)
+g_panelD_ct <- ggplot(plot_df, aes(x = sample, y = pct, fill = category)) +
+    geom_col(width = 0.75) +
+    geom_text(
+        aes(label = ifelse(pct >= 0, sprintf("%.0f", pct), "")),  # hide tiny labels
+        position = position_stack(vjust = 0.5),
+        size = 3,
+        color = "white"
+    ) +
+    coord_flip() +
+    labs(
+        x = NULL, y = "Percent of multi-isoform genes",
+        fill = "Category",
+        title = "Major isoform agreement per cell type"
+    ) +
+    scale_fill_manual(values = c(
+      "Consensus"    = "darkolivegreen3",
+      "Long-reads only"  = "",
+      "Different in Illumina only"    = "#e88b20",
+      "Different in PacBio only"      = "#df1995",
+      "Different in ONT cDNA only"    = "#04476c",
+      "Different in ONT dRNA only"    = "#00789b",
+      "Other"     = "#B0BEC5"
+    ))  +
+    theme_classic() +
+    theme(
+        legend.position = "right",
+        axis.text.y = element_text(face = "bold")
+    )+
+  theme_minimal(base_size = 8) +
+  theme(
+    panel.grid.major.y = element_blank(),
+    axis.text.y        = element_text(face = "bold"),
+    legend.position    = "bottom"
+  )
+
+g_panelD_ct 
+
+# # Save to PDF (adjust dims as needed)
+# ggsave(
+#     filename = "panelD_celltype_3bin.pdf",
+#     plot = g_panelD_ct,
+#     width = 120, height = 70, units = "mm",
+#     dpi = 600, device = cairo_pdf
+# )
+
+```
+
+```{r}
+# ggplot(summary_df, aes(x = sample, y = n, fill = category)) +
+#   geom_col(width = 0.75) +
+#   geom_text(aes(label = n),
+#             position = position_stack(vjust = 0.5),
+#             size = 3, color = "white") +
+#   coord_flip() +
+#   labs(x = NULL, y = "Number of multi-isoform genes",
+#        fill = "Category",
+#        title = "Major isoform agreement per cell type (raw counts)") +
+#   scale_fill_manual(values = c( "Consensus"       = "#B0BEC5",
+#         "Long-read only"  = "darkolivegreen3",
+#         "Inconsistent"    = "darkorchid")) +
+#   theme_classic()+
+#   theme_minimal(base_size = 8) +
+#   theme(
+#     axis.text.y        = element_text(face = "bold"),
+#     legend.position    = "bottom"
+#   )
+
+```
+
+
