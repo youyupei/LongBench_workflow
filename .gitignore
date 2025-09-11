@@ -10,4 +10,7 @@ conda/envs
 !**/rmarkdown/*.Rmd
 !**/rmarkdown/DTU_analysis/
 !**/rmarkdown/DTU_analysis/**
+!**/rmarkdown/RNAmod_analysis
+!**/rmarkdown/RNAmod_analysis/**
+
 singularity/*
