@@ -29,15 +29,6 @@ params:
 params <- list(
   random_seed = 2024,
   cache_dir = NULL,
-  sirv_ercc_gtf = '/vast/projects/LongBench/reference_files/SIRV_Set4_Norm_Sequences_20210507/SIRV_ERCC_longSIRV_multi-fasta_20210507.gtf',
-  sequins_gtf = '/vast/projects/LongBench/reference_files/Sequin_resources/v2.4/rnasequin_annotation_2.4.gtf',
-  sequins_tsv = '/vast/projects/LongBench/reference_files/Sequin_resources/v2.4/rnasequin_isoforms_2.4.tsv',
-  human_gtf = '/vast/projects/LongBench/reference_files/GRCh38/gencode.v44.annotation.gtf',
-  sirv_csv = '/home/users/allstaff/you.yu/LongBench/reference_files/SIRV_Set4_Norm_Sequences_20210507/SIRV_set4_concentration.csv',
-  ont_bulk_oarfish_dir = "/vast/projects/LongBench/analysis/lr_bulk/result/oarfish_cov_output/ont_bulk",
-  pb_bulk_oarfish_dir = "/vast/projects/LongBench/analysis/lr_bulk/result/oarfish_cov_output/pb_bulk",
-  ont_drnd_oarfish_dir = "/vast/projects/LongBench/analysis/lr_bulk/result/oarfish_cov_output/dRNA_bulk",
-  ill_bulk_salmon_dir = "/vast/projects/LongBench//analysis/sr_bulk/result/salmon/salmon_quant",
   bulk_meta = "/vast/projects/LongBench/sequencing_data/illumina_bulk/metadata.txt",
   out.rds= '/vast/projects/LongBench/analysis/workflow/rmarkdown/RDS/bulk_identification.rds'
 )
@@ -76,6 +67,7 @@ library(scales)
 library(UpSetR)
 library(ggtree)
 library(aplot)
+library(patchwork)
 source("/home/users/allstaff/you.yu/LongBench/analysis/workflow/scripts/Rfunctions.R")
 
 # setup some conflict functions
@@ -87,7 +79,7 @@ color_palette <- c(
   PacBio = "#df1995",
   ONT = "#00789b",
   ONT_1 = "#04476c",
-  ONT_2 = "#24cdcd",
+  ONT_2 = "#00789b",
   Illumina = "#e88b20"
 )
 
@@ -96,13 +88,7 @@ output_list <- list() # used to store result for downstream analysis
 ```
 
 ```{r function for splitting the transcript origin}
-is.sequins <- function(dge) {grepl("^R", rownames(dge))}
 is.human <- function(dge) {grepl("^ENS", rownames(dge))}
-is.sirv_or_ercc <- function(dge) {!is.human(dge) & !is.sequins(dge)} # thie is the whole SIRV set4 (ERCC + SIRV E0 + Long SIRV)
-is.sirv_E0 <- function(dge) {grepl("^SIRV\\d{3}$", rownames(dge))} 
-is.sirv_all <- function(dge) {grepl("^SIRV", rownames(dge))} # including all SIRV E0 and Long SIRV
-is.long_sirv <- function(dge) {grepl("^SIRV\\d{4}", rownames(dge))}
-is.ercc <- function(dge) {!is.human(dge) & !is.sequins(dge) & !is.sirv_all(dge)}
 ```
 
 
@@ -115,38 +101,54 @@ list2env(readRDS(params$input_DGEobject_rds), .GlobalEnv)
 # ill_bulk.gene.dge, ont_bulk.gene.dge, pb_bulk.gene.dge, drna_bulk.gene.dge for gene level unfiltered DGE
 ```
 
+# Gene discovery analysis
+## Get `gene_discovery` 
 
-### 2. Define "Gene discovery" based on `filterByExpr` for each dataset, using default parameters
+Based on `filterByExpr` for each dataset, using default parameters
 ```{r gene filtering for DE}
-#GENE 
-## 1. get common genes
-### remove .* 
+# Filter for human Gene 
+ill_bulk.gene.dge <- ill_bulk.gene.dge[is.human(ill_bulk.gene.dge),]
+ont_bulk.gene.dge <- ont_bulk.gene.dge[is.human(ont_bulk.gene.dge),]
+pb_bulk.gene.dge <- pb_bulk.gene.dge[is.human(pb_bulk.gene.dge),]
+drna_bulk.gene.dge <- drna_bulk.gene.dge[is.human(drna_bulk.gene.dge),]
+
+# Get union (superset) of genes
+# Salmon and oarfish didn't output exactly some number of feature in the count matrix
+all_genes <- Reduce(union, lapply(
+  list(ill_bulk.gene.dge, ont_bulk.gene.dge, pb_bulk.gene.dge, drna_bulk.gene.dge),
+  rownames
+))
+
+# Pad each DGE with missing genes (set to 0)
+pad_dge <- function(dge, all_genes) {
+  missing <- setdiff(all_genes, rownames(dge))
+  if (length(missing) > 0) {
+    pad <- matrix(0, nrow = length(missing), ncol = ncol(dge$counts),
+                  dimnames = list(missing, colnames(dge$counts)))
+    dge$counts <- rbind(dge$counts, pad)
+  }
+  dge[all_genes, ]
+}
+
+ill_bulk.gene.dge <- pad_dge(ill_bulk.gene.dge, all_genes)
+ont_bulk.gene.dge <- pad_dge(ont_bulk.gene.dge, all_genes)
+pb_bulk.gene.dge <- pad_dge(pb_bulk.gene.dge, all_genes)
+drna_bulk.gene.dge <- pad_dge(drna_bulk.gene.dge, all_genes)
+
+
+# Remove GENCODE version number
 rownames(ill_bulk.gene.dge) <- ill_bulk.gene.dge %>% rownames %>% sub("\\..*", "", .)
 rownames(ont_bulk.gene.dge) <- ont_bulk.gene.dge %>% rownames %>% sub("\\..*", "", .)
 rownames(pb_bulk.gene.dge) <- pb_bulk.gene.dge %>% rownames %>% sub("\\..*", "", .)
 rownames(drna_bulk.gene.dge) <- drna_bulk.gene.dge %>% rownames %>% sub("\\..*", "", .)
 
-common_genes <- Reduce(intersect, lapply(list(ill_bulk.gene.dge, ont_bulk.gene.dge, pb_bulk.gene.dge, drna_bulk.gene.dge), rownames))
-
-ill_bulk.gene.dge <- ill_bulk.gene.dge[common_genes, ]
-ont_bulk.gene.dge <- ont_bulk.gene.dge[common_genes, ]
-pb_bulk.gene.dge <- pb_bulk.gene.dge[common_genes, ]
-drna_bulk.gene.dge <- drna_bulk.gene.dge[common_genes, ]
-
-common_tx <- Reduce(intersect, lapply(list(ill_bulk.tx.dge, ont_bulk.tx.dge, pb_bulk.tx.dge, drna_bulk.tx.dge), rownames))
-ill_bulk.tx.dge <- ill_bulk.tx.dge[common_tx, ]
-ont_bulk.tx.dge <- ont_bulk.tx.dge[common_tx, ]
-pb_bulk.tx.dge <- pb_bulk.tx.dge[common_tx, ]
-drna_bulk.tx.dge <- drna_bulk.tx.dge[common_tx, ]
-
-
 ```
 
-### Gene discovery plots
+### Gene detection
 ```{r Define Gene discovery, fig.height=6, fig.width=10}
 # Filter by expression
 gene_discovery <- tibble(
-  gene_id = common_genes,
+  gene_id = all_genes,
   "Illumina" = filterByExpr(ill_bulk.gene.dge, group = ill_bulk.gene.dge$samples$group),
   "ONT cDNA" = filterByExpr(ont_bulk.gene.dge, group = ont_bulk.gene.dge$samples$group),
   "PacBio" = filterByExpr(pb_bulk.gene.dge, group = pb_bulk.gene.dge$samples$group),
@@ -155,6 +157,13 @@ gene_discovery <- tibble(
   Illumina | `ONT cDNA` | PacBio | `ONT dRNA`
 )
 
+gene_discovery$gene_id <- gene_discovery$gene_id %>% sub("\\..*", "", .)
+```
+
+
+### Add biotype and gene length
+Let's adding some more feature for plotting
+```{r, fig.height=6, fig.width=10}
 # Getting the gene biotype and gene id, using illumina data here but will be identical for all datasets
 tx_ref_df <- ill_bulk.tx.dge$genes %>%
   rownames_to_column("tx_id") %>%
@@ -175,10 +184,11 @@ gene_length_lookup <- tx_ref_df %>%
 library(biomaRt)
 ensembl <- useEnsembl(biomart = "genes", dataset = "hsapiens_gene_ensembl")
 
+
 gene_discovery <- gene_discovery %>%
     left_join(gene_length_lookup, by = c("gene_id")) %>%
     rename(`Gene length` = mean_length)
-gene_discovery$gene_id <- gene_discovery$gene_id %>% sub("\\..*", "", .)
+
 biotypes <- getBM(
   attributes = c("ensembl_gene_id", "gene_biotype"),
   filters = "ensembl_gene_id",
@@ -196,15 +206,10 @@ gene_discovery <- gene_discovery %>%
 
 
 gene_discovery$biotype <- factor(gene_discovery$biotype, levels = c(sort(unique(gene_discovery$biotype)) %>% setdiff("Others"), "Others"))
-
-output_list[["gene_discovery"]] <- gene_discovery # save for downstream analysis
 ```
 
-Feature in gene_discovery tibble current only contain gene length which is the average length of the transcripts in the gene. Let's adding some more feature for plotting
-
-
-1. Boolean for intronic genes. Each gene is checked if it is located inside the intron of the other gene. The specific definition:
-`findOverlaps(exons, merged_introns, ignore.strand=TRUE, type='within',  select="all", minoverlap =50)`
+### Add intronic Gene and exon count
+Boolean for intronic genes. Each gene is checked if it is located inside the intron of the other gene. The specific definition: `findOverlaps(exons, merged_introns, ignore.strand=TRUE, type='within',  select="all", minoverlap =50)`
 ```{r Add intronic gene and exon count}
 
 rds_list <- readRDS("/home/users/allstaff/you.yu/LongBench/analysis/workflow/rmarkdown/RDS/intronic_gene_and_exon_count.rds")
@@ -222,7 +227,14 @@ gene_discovery <- gene_discovery %>% mutate(
 )  %>% left_join(exons_count, by = c("gene_id" = "Gene"))
 ```
 
-####  Main Upset plot
+
+### Save to `output_list`
+```{r}
+output_list[["gene_discovery"]] <- gene_discovery # save for downstream analysis
+```
+
+## Gene detection plots
+###  Main Upset plot
 ```{r GENE: Main Upset plot, fig.height=4, fig.width=8}
 library(ComplexUpset)
 ComplexUpset::upset(
@@ -272,7 +284,6 @@ ComplexUpset::upset(
 
 
 ```{r GENE: Agreement plot, fig.height=3, fig.width=8}
-# Pivot to long format
 agreement_plot <- function(df){
   df_long <- df %>% select(gene_id, Illumina, `ONT cDNA`, PacBio, `ONT dRNA`) %>%
   pivot_longer(-gene_id, names_to = "Platform", values_to = "Detected") %>%
@@ -330,8 +341,50 @@ df_long %>%
 
 gene_discovery %>% agreement_plot
 ```
+### Sup Upset plot Protein coding gene only
+```{r GENE: Sup Upset plot Protein coding gene, fig.height=5, fig.width=8}
+# Protein coding only
+ComplexUpset::upset(
+  gene_discovery %>% filter(biotype=="protein_coding"),
+  intersect = c('Illumina', "ONT cDNA", "PacBio", "ONT dRNA"),
+  annotations = list(
+        # 1st method - passing list:
+        "Average transcript length" = list(
+          aes = aes(x = intersection, y = `Gene length`),
+          # provide a list if you wish to add several geoms
+          geom = geom_boxplot(na.rm = TRUE, outliers = FALSE)
+        )
+  ),
+  set_sizes=(
+        ComplexUpset::upset_set_size(
+            geom=geom_bar(
+                width=0.8
+            ) ,
+            position='right'
+        ) + theme(legend.position = "none")
+  ),
+   base_annotations=list(
+        'Intersection size'=ComplexUpset::intersection_size(
+            counts=TRUE,
+            text=element_text(size = 3, vjust=-0.2)
+        )
+    ),
+  guides='over',
+  wrap = TRUE
+)
+```
 
-#### Gene identification Jaccard similarity
+
+```{r GENE: Platform specific detection, fig.height=3, fig.width=8}
+(
+  (agreement_plot(gene_discovery %>% filter(biotype=="protein_coding")) + ggtitle("Protein-coding")) |
+  (agreement_plot(gene_discovery %>% filter(biotype!="protein_coding")) + ggtitle("Non-Protein-coding")) 
+) + 
+patchwork::plot_layout(guides = "collect")
+```
+
+
+### Gene identification Jaccard similarity
 ```{r gene identification Jaccard similarity, fig.height=3, fig.width=4.5}
 
 # Jaccard similarity
@@ -366,152 +419,98 @@ Heatmap(jaccard_matrix,
         na_col = "white")  # Keeps upper triangle blank
 ```
 
-#### Sup Upset plot Protein coding gene only
-```{r GENE: Sup Upset plot Protein coding gene, fig.height=5, fig.width=8}
-# Protein coding only
-ComplexUpset::upset(
-  gene_discovery %>% filter(biotype=="protein_coding"),
-  intersect = c('Illumina', "ONT cDNA", "PacBio", "ONT dRNA"),
-  annotations = list(
-        # 1st method - passing list:
-        "Average transcript length" = list(
-          aes = aes(x = intersection, y = `Gene length`),
-          # provide a list if you wish to add several geoms
-          geom = geom_boxplot(na.rm = TRUE, outliers = FALSE)
-        )
-  ),
-  set_sizes=(
-        ComplexUpset::upset_set_size(
-            geom=geom_bar(
-                width=0.8
-            ) ,
-            position='right'
-        ) + theme(legend.position = "none")
-  ),
-   base_annotations=list(
-        'Intersection size'=ComplexUpset::intersection_size(
-            counts=TRUE,
-            text=element_text(size = 3, vjust=-0.2)
-        )
-    ),
-  guides='over',
-  wrap = TRUE
-)
-```
 
 
-```{r GENE: Sup agreement plot gene, fig.height=3, fig.width=12}
-(
-  (agreement_plot(gene_discovery %>% filter(biotype=="protein_coding")) + ggtitle("Protein-coding")) |
-  (agreement_plot(gene_discovery %>% filter(biotype!="protein_coding")) + ggtitle("Non-Protein-coding")) 
-) + 
-patchwork::plot_layout(guides = "collect")
-```
-
-#### Discovered gene length distribution
-```{r GENE: discovered gene distribution, fig.height=3, fig.width=8}
+### Detected and undetected gene length distribution
+```{r GENE: discovered gene distribution, fig.height=3, fig.width=5}
 gene_discovery$length_bin <- cut(gene_discovery$`Gene length`, 
                                  breaks = c(0, 500, 1000, 1500, 2000, 2500, Inf), 
                                  labels = c("0-0.5k", "0.5-1k", "1-1.5k", "1.5-2k", "2-2.5k", "2.5k+"))
+
+bg_dist <- gene_discovery %>%
+  filter(!is.na(length_bin)) %>%
+  count(length_bin) %>%
+  mutate(platform = "All annotated Gene")
+
 
 p1 <- gene_discovery %>%
   pivot_longer(cols = c("Illumina", "ONT cDNA", "PacBio", "ONT dRNA"), 
                names_to = "platform", values_to = "keep") %>%
   filter(keep) %>%
+  filter(!is.na(length_bin)) %>% 
   count(length_bin, platform) %>%  # Summarize counts per category
   ggplot(aes(x = length_bin, y = n, color = platform, group = platform)) +
-  geom_line(size = 1) +  # Use lines instead of bars
-  geom_point(size = 2) +  # Add points for visibility
+  # background line
+  geom_line(data = bg_dist, aes(x = length_bin, y = n, group = 1),
+            color = "grey60", linewidth = 1, linetype = "dashed") +
+  # platform-specific lines
+  geom_line(linewidth = 1) +
+  geom_point(size = 2) +
   theme_minimal() +
-  labs(title = "Detected genes", 
+  labs(title = "Detected Gene", 
        x = "Gene length (average transcript length)", 
-       y = "# of genes detected") + 
+       y = "# of Gene detected") + 
   scale_color_manual(values = color_palette[c("Illumina", "ONT_1", "ONT_2", "PacBio")] %>% unname())
+```
+
+
+```{r Plarform specific absense gene, fig.height=3, fig.width=12}
 
 p2 <- gene_discovery %>%
-  filter(biotype=="protein_coding") %>%
-  pivot_longer(cols = c("Illumina", "ONT cDNA", "PacBio", "ONT dRNA"), 
+  pivot_longer(cols = c("Illumina", "ONT cDNA", "PacBio", "ONT dRNA"),
                names_to = "platform", values_to = "keep") %>%
-  filter(keep) %>%
-  count(length_bin, platform) %>%  # Summarize counts per category
+  group_by(gene_id) %>%
+  mutate(n_detected = sum(keep)) %>%
+  ungroup() %>%
+  filter(keep & n_detected == 1) %>%   # detected in exactly 1 platform, absent in the other 3
+  filter(!is.na(length_bin)) %>%
+  count(length_bin, platform) %>%
   ggplot(aes(x = length_bin, y = n, color = platform, group = platform)) +
-  geom_line(size = 1) +  # Use lines instead of bars
-  geom_point(size = 2) +  # Add points for visibility
+  geom_line(size = 1) +
+  geom_point(size = 2) +
   theme_minimal() +
-  labs(title = "Detected protein-coding genes", 
-       x = "Gene length (average transcript length)", 
-       y = "# of genes detected") + 
+  labs(title = "Platform-specific Detection",
+       x = "Gene length (average transcript length)",
+       y = "# of Gene detected") +
   scale_color_manual(values = color_palette[c("Illumina", "ONT_1", "ONT_2", "PacBio")] %>% unname())
 
-patchwork::wrap_plots(p1, p2) + 
-  patchwork::plot_layout(guides = 'collect')
+p3 <- gene_discovery %>%
+  pivot_longer(cols = c("Illumina", "ONT cDNA", "PacBio", "ONT dRNA"),
+               names_to = "platform", values_to = "keep") %>%
+  group_by(gene_id) %>%
+  mutate(n_detected = sum(keep)) %>%
+  ungroup() %>%
+  filter(!keep & n_detected == 3) %>%   # absent in exactly 1 platform, present in the other 3
+  filter(!is.na(length_bin)) %>% 
+  count(length_bin, platform) %>%
+  ggplot(aes(x = length_bin, y = n, color = platform, group = platform)) +
+  geom_line(size = 1) +
+  geom_point(size = 2) +
+  theme_minimal() +
+  labs(title = "Platform-specific Absence",
+       x = "Gene length (average transcript length)",
+       y = "# of Gene absent") +
+  scale_color_manual(values = color_palette[c("Illumina", "ONT_1", "ONT_2", "PacBio")] %>% unname())
+
+(p1 | p2 | p3) + plot_layout(guides = "collect")
 ```
 
-#### Gene discovery analysis (per cell line)
-```{r Cell-line-Specific Upset plot, fig.height=30, fig.width=50}
 
-cell_lines <- ill_bulk.gene.dge%>% colnames()
-map(cell_lines,
-    function(cell_line){
-      plot_df <- gene_discovery %>% mutate(
-        "Illumina" = filterByExpr(ill_bulk.gene.dge[gene_discovery$gene_id,cell_line]),
-        "ONT cDNA" = filterByExpr(ont_bulk.gene.dge[gene_discovery$gene_id,cell_line]),
-        "PacBio" = filterByExpr(pb_bulk.gene.dge[gene_discovery$gene_id,cell_line]),
-        "ONT dRNA" = filterByExpr(drna_bulk.gene.dge[gene_discovery$gene_id,cell_line])
-      )
-      
-      ComplexUpset::upset(
-        plot_df,
-        intersect = c('Illumina', "ONT cDNA", "PacBio", "ONT dRNA"),
-        annotations = list(
-              # 1st method - passing list:
-              "Average transcript length" = list(
-                aes = aes(x = intersection, y = `Gene length`),
-                # provide a list if you wish to add several geoms
-                geom = geom_boxplot(na.rm = TRUE, outliers = FALSE)
-              ),
-              "BioType" = list(
-                aes = aes(x = intersection, fill = biotype),
-                geom = geom_bar(position = "fill")
-              )
-        ),
-        set_sizes=(
-              ComplexUpset::upset_set_size(
-                  geom=geom_bar(
-                      aes(fill=biotype),
-                      width=0.8
-                  ) 
-              )+ theme(legend.position = "none")
-          ),
-        wrap = TRUE
-      ) + ggtitle(cell_line)
-    }
-) %>% patchwork::wrap_plots()
-
-```
-
-### Additional Analysis Not Included
-#### Inspect Pacbio specific genes
-Listing top expressed Platform specific identification on H1975 (randomly picked one as the trend is similar across cell lines)
+## Additional Analysis Not Included
+### Inspect Pacbio specific genes
+Listing top expressed Platform specific identification on H146 (randomly picked one)
 ```{r}
-cell_line <- 'H1975'
 
-pb_specific_gene <-  gene_discovery %>% mutate(
-        "Illumina" = filterByExpr(ill_bulk.gene.dge[gene_discovery$gene_id,cell_line]),
-        "ONT cDNA" = filterByExpr(ont_bulk.gene.dge[gene_discovery$gene_id,cell_line]),
-        "PacBio" = filterByExpr(pb_bulk.gene.dge[gene_discovery$gene_id,cell_line]),
-        "ONT dRNA" = filterByExpr(drna_bulk.gene.dge[gene_discovery$gene_id,cell_line])
-      ) %>%
-      filter(
-        !Illumina,
-        !`ONT cDNA` &
-        PacBio &
-        !`ONT dRNA`
-      ) %>% pull(gene_id)
+pb_specific_gene <-  gene_discovery %>% 
+  filter( !Illumina &  !`ONT cDNA` &  PacBio & !`ONT dRNA` & `Intronic Gene` & biotype != "protein_coding")  %>% pull(gene_id)
 
-pb_bulk.gene.dge$counts[pb_specific_gene,] %>%
-  as_tibble(rownames="gene_id") %>% 
-  arrange(desc(H1975))
+pb_bulk.gene.dge$counts[pb_specific_gene, ] %>%
+  as_tibble(rownames = "gene_id") %>%
+  rowwise() %>%
+  mutate(avg_count = mean(c_across(-gene_id))) %>%
+  ungroup() %>%
+  arrange(desc(avg_count))
+
 ```
 
 ```{r, include=F, eval=F}
@@ -671,10 +670,26 @@ ggplot(combined_results, aes(x = exon_expr, y = intron_expr)) +
 
 
 # Transcript discovery analysis
-```{r, fig.height=6, fig.width=10}
+## Get `tx_discovery` 
+### Tx detection
+```{r}
+# Filter for human Tx 
+ill_bulk.tx.dge <- ill_bulk.tx.dge[is.human(ill_bulk.tx.dge),]
+ont_bulk.tx.dge <- ont_bulk.tx.dge[is.human(ont_bulk.tx.dge),]
+pb_bulk.tx.dge <- pb_bulk.tx.dge[is.human(pb_bulk.tx.dge),]
+drna_bulk.tx.dge <- drna_bulk.tx.dge[is.human(drna_bulk.tx.dge),]
+
+
+all_tx <- Reduce(union, lapply(list(ill_bulk.tx.dge, ont_bulk.tx.dge, pb_bulk.tx.dge, drna_bulk.tx.dge), rownames))
+ill_bulk.tx.dge <- pad_dge(ill_bulk.tx.dge, all_tx)
+ont_bulk.tx.dge <- pad_dge(ont_bulk.tx.dge, all_tx)
+pb_bulk.tx.dge <- pad_dge(pb_bulk.tx.dge, all_tx)
+drna_bulk.tx.dge <- pad_dge(drna_bulk.tx.dge, all_tx)
+
+
 # Filter by expression
 tx_discovery <- tibble(
-  tx_id = common_tx,
+  tx_id = all_tx,
   "Illumina" = filterByExpr(ill_bulk.tx.dge, group = ill_bulk.tx.dge$samples$group, min.count=5),
   "ONT cDNA" = filterByExpr(ont_bulk.tx.dge, group = ont_bulk.tx.dge$samples$group, min.count=5),
   "PacBio" = filterByExpr(pb_bulk.tx.dge, group = pb_bulk.tx.dge$samples$group, min.count=5),
@@ -689,17 +704,23 @@ tx_discovery <- tx_discovery %>%  mutate(
     gene_id = strsplit(tx_id, "\\|") %>% sapply(function(x) x[2]),
     tx_id = strsplit(tx_id, "\\|") %>% sapply(function(x) x[1])
   )
+```
 
+### Add biotype
+```{r}
 tx_discovery <- tx_discovery %>% mutate(biotype = ifelse(biotype %in% 
             names(sort(table(biotype), decreasing = TRUE)[1:6]), 
             biotype, "Others"))
+```
 
-
+### Save Gene and Tx detection
+```{r}
 output_list[["tx_discovery"]] <- tx_discovery # save for downstream analysis
 saveRDS(output_list, params$out.rds)
 ```
 
-## Main upset plot
+## Tx detection plots
+### Main upset plot
 ```{r Transcript: Main upset plot, fig.height=4, fig.width=8}
 library(ComplexUpset)
 ComplexUpset::upset(

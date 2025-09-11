@@ -1,6 +1,6 @@
 ---
 title: "DE analysis continue"
-author: "Yupei & Ash"
+author: "Yupei"
 date: '`r Sys.Date()`'
 version: 'v1.0_lfc0'
 output:
@@ -17,8 +17,7 @@ params:
   random_seed: 2024
   cache_dir: NULL
   fig.path: NULL
-  bulk_DE_rds: "/vast/projects/LongBench/analysis/workflow/rmarkdown/RDS/bulk_DE.rds"  
-  expected_de_table: '/vast/projects/LongBench/reference_files/Expected_DE.csv'
+  bulk_DE_rds: "/vast/projects/LongBench/analysis/workflow/rmarkdown/RDS/bulk_DE.rds"
   log2FC_cutoff: 0
 ---
 
@@ -53,7 +52,6 @@ library(UpSetR)
 library(ggtree)
 library(aplot)
 library(patchwork)
-source("/vast/projects/LongBench/analysis/workflow/scripts/Rfunctions.R")
 output_list <- list() # used to store result for downstream analysis
 
 # setup some conflict functions
@@ -80,6 +78,18 @@ if (!is.null(params$cache_dir)) {
 bulk_DE_rst <- readRDS(params$bulk_DE_rds)
 dge_lists <- bulk_DE_rst$dge_lists
 dte_lists <- bulk_DE_rst$dte_lists
+
+# Create a mapping from old names to new platform names
+name_map <- c(
+  ill = "Illumina",
+  ont = "ONT cDNA",
+  pb = "PacBio",
+  drna = "ONT dRNA"
+)
+
+# Update the names of the list using the mapping
+names(dge_lists) <- name_map[names(dge_lists)]
+names(dte_lists) <- name_map[names(dte_lists)]
 
 platforms <- c("Illumina", "ONT cDNA", "PacBio", "ONT dRNA")
 comparisons <- c("AvsL", "PvsL", "AvsP")
@@ -153,7 +163,7 @@ for (platform in platforms) {
 grid.arrange(grobs = venn_grobs, ncol = 3)
 ```
 
-# Log FC Cor
+# Log FC Correlation between platform pairs
 ```{r LFC correlation, fig.height=4, fig.width=8}
 get_combined_logfc_plot <- function(level = "gene", p1, p2) {
   require(dplyr)

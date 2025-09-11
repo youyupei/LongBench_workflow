@@ -2,7 +2,7 @@
 title: "DE analysis"
 author: "Yupei & Ash"
 date: '`r Sys.Date()`'
-version: 'v3.3_lfc0'
+version: 'v4.0_lfc0'
 output:
   html_document:
     code_folding: hide
@@ -21,29 +21,9 @@ params:
   output_rds: "/vast/projects/LongBench/analysis/workflow/rmarkdown/RDS/bulk_DE.rds"  
   expected_de_table: '/vast/projects/LongBench/reference_files/Expected_DE.csv'
   log2FC_cutoff: 0
-
 ---
 
-# Setup: Create DGE from Input
-
-**Bulk RNA-seq** was performed to analyze gene and transcript expression across various cancer cell lines using both short- and long-read sequencing platforms.
-
-1.  **Samples**:
-
-    \- Total: 8 cancer cell lines (H146, H69, H526, H211, SHP77, H1975, H2228, HCC827) for each platform.
-
-2.  **Groups by Cancer Cell Type**: - **Small Cell Lung Cancer (SCLC)**:
-
-    \- **Subtype A (SCLC_A)**: H146, H69, SHP77.\
-
-    -   **Subtype P (SCLC_P)**: H526, H211.\
-    -   **Lung Adenocarcinoma (LUAD)**: - H1975, H2228, HCC827.
-
-3.  **Sequencing Platforms**:
-
-    \- **Short-Read Sequencing**: Illumina.
-
-    \- **Long-Read Sequencing**: PacBio ,  Oxford Nanopore Technologies (ONT) (`ONT cDNA` (cDNA sequencing), `ONT dRNA` (dRNA sequencing))
+# Setup
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(
@@ -76,7 +56,7 @@ library(UpSetR)
 library(ggtree)
 library(aplot)
 library(patchwork)
-source("/vast/projects/LongBench/analysis/workflow/scripts/Rfunctions.R")
+
 output_list <- list() # used to store result for downstream analysis
 
 # setup some conflict functions
@@ -108,16 +88,8 @@ color_palette <- c(
 ```
 
 ```{r function for splitting the transcript origin, echo=TRUE, results='hide', message=FALSE, warning=FALSE}
-is.sequins <- function(dge) {grepl("^R", rownames(dge))}
 is.human <- function(dge) {grepl("^ENS", rownames(dge))}
-is.sirv_or_ercc <- function(dge) {!is.human(dge) & !is.sequins(dge)} # this is the whole SIRV set4 (ERCC + SIRV E0 + Long SIRV)
-is.sirv_E0 <- function(dge) {grepl("^SIRV\\d{3}$", rownames(dge))} 
-is.sirv_all <- function(dge) {grepl("^SIRV", rownames(dge))} # including all SIRV E0 and Long SIRV
-is.long_sirv <- function(dge) {grepl("^SIRV\\d{4}", rownames(dge))}
-is.ercc <- function(dge) {!is.human(dge) & !is.sequins(dge) & !is.sirv_all(dge)}
 ```
-
-
 
 # Get the count data from RDS
 
@@ -129,6 +101,7 @@ list2env(readRDS(params$input_DGEobject_rds), .GlobalEnv)
 ```
 
 ## Plot the library size
+
 ```{r total count plot, fig.height=3, fig.width=3}
 # Build combined data frame of library sizes
 lib_sizes <- data.frame(
@@ -170,7 +143,8 @@ ggplot(lib_sizes, aes(x = Dataset, y = LibSize, fill = Dataset)) +
 
 ```
 
-## Filter out lowly expressed genes and transcript using `filterByExpr` for each dataset, using default parameters
+## Filter out lowly expressed genes and transcripts using `filterByExpr` for each dataset, using default parameters
+
 ```{r filtering for DE testable feature, echo=TRUE, message=FALSE, warning=FALSE, results='hide'}
 #GENE 
 ## 1. get common genes
@@ -215,146 +189,24 @@ pb_bulk.tx.dge <- pb_bulk.tx.dge[keep, ]
 drna_bulk.tx.dge <- drna_bulk.tx.dge[keep, ]
 ```
 
-## Normalise the gene and transcript counts using `calcNormFactors` with `TMM` methods for each dataset, separately for human
-
-```{r TMM normalisation, echo=TRUE, message=FALSE, warning=FALSE, results='hide'}
-### 4. Normalise the gene counts using `calcNormFactors` with `TMM` methods for each dataset
-ill_bulk.gene.dge <- calcNormFactors(ill_bulk.gene.dge, method = "TMM")
-ont_bulk.gene.dge <- calcNormFactors(ont_bulk.gene.dge, method = "TMM")
-pb_bulk.gene.dge <- calcNormFactors(pb_bulk.gene.dge, method = "TMM")
-drna_bulk.gene.dge <- calcNormFactors(drna_bulk.gene.dge, method = "TMM")
-
-
-### 4. Normalise the transcript counts using `calcNormFactors` with `TMM` methods for each dataset
-ill_bulk.tx.dge <- calcNormFactors(ill_bulk.tx.dge, method = "TMM")
-ont_bulk.tx.dge <- calcNormFactors(ont_bulk.tx.dge, method = "TMM")
-pb_bulk.tx.dge <- calcNormFactors(pb_bulk.tx.dge, method = "TMM")
-drna_bulk.tx.dge <- calcNormFactors(drna_bulk.tx.dge, method = "TMM")
-
-```
-
-
-# MDS (Merged)
-
-## Merge DGElist
-
-NOTE: The merged DGElist will only be used for the MDS plot. The DE analysis will be done separately for each dataset.
-
-```{r Merge DGEs, include=FALSE}
-# Gene
-ill_bulk.gene.dge$samples$platform <- "Illumina"
-ont_bulk.gene.dge$samples$platform <- "ONT cDNA"
-pb_bulk.gene.dge$samples$platform <- "PacBio"
-drna_bulk.gene.dge$samples$platform <- "ONT dRNA"
-bulk.gene.dge.merge <- cbind(
-  ill_bulk.gene.dge,
-  ont_bulk.gene.dge,
-  pb_bulk.gene.dge,
-  drna_bulk.gene.dge
-)
-
-# Transcript
-ill_bulk.tx.dge$samples$platform <- "Illumina"
-ill_bulk.tx.dge.copy <- ill_bulk.tx.dge
-ill_bulk.tx.dge.copy$genes$EffectiveLength <- NULL
-ont_bulk.tx.dge$samples$platform <- "ONT cDNA"
-pb_bulk.tx.dge$samples$platform <- "PacBio"
-drna_bulk.tx.dge$samples$platform <- "ONT dRNA"
-
-bulk.tx.dge.merge <- cbind(
-  ill_bulk.tx.dge.copy,
-  ont_bulk.tx.dge,
-  pb_bulk.tx.dge,
-  drna_bulk.tx.dge
-)
-```
-
-```{r include=FALSE}
-norm_and_mds <- function(dge) {
-  dge <- calcNormFactors(dge, method = "TMM")
-  mds <- plotMDS(dge, plot = FALSE)
-  return(mds)
-}
-myMDS <- function(dge, mds) {
-  # normalisation
-  mds_data <- data.frame(
-    Dim1 = mds$x,
-    Dim2 = mds$y,
-    cell.line = dge$sample$sample,
-    Cancer.type = dge$sample$group,
-    Data.type = dge$sample$platform,
-    Sequins.mix = dge$samples$sequins
-  )
-
-  p <- ggplot(mds_data, aes(x = Dim1, y = Dim2, color = Cancer.type, shape = Data.type, label=cell.line)) +
-    geom_point(size = 3, alpha = 0.6) + # Plot points
-    #geom_text_repel(size = 3) +
-    labs(title = "MDS plot", 
-        x = paste0("Dimension 1 (", round(mds$var.explained[1]*100, 2), "%)" ) , 
-        y = paste0("Dimension 2 (", round(mds$var.explained[2]*100, 2), "%)" )) +
-    scale_color_viridis_d() + # Set color scale
-    theme_minimal() 
-  return(p)
-}
-```
-
-## Gene-level MDS
-
-Here are key observations from the gene-level MDS plots:
-
-1.  **Cancer type clustering:** samples cluster clearly by cancer type (**LUAD, SCLC type a, SCLC type p**), reflecting distinct gene expression profiles.
-2.  **Platform type impact:** sequencing platforms (**Illumina, ONT cDNA, ONT dRNA, PacBio)** show slight variability but largely preserve cancer type clustering, indicating that the biological variation observed is largely due to cancer cell-type.
-3.  **Variance explained:** The first two dimensions explain **19.25%** and **9.84%** of the variation, respectively, effectively separating sample groups.
-
-```{r echo=FALSE, message=FALSE, warning=FALSE, fig.height=3, fig.width=8 }
-mds <- norm_and_mds(bulk.gene.dge.merge[is.human(bulk.gene.dge.merge),])
-p1 <- myMDS(bulk.gene.dge.merge[is.human(bulk.gene.dge.merge), ], mds) + ggtitle("Human gene counts")
-p2 <- myMDS(bulk.gene.dge.merge[is.human(bulk.gene.dge.merge), ], mds) + ggtitle("Human gene counts")  + 
-            aes(color = Data.type, shape = Cancer.type) + 
-            scale_color_manual(values = color_palette[c("Illumina", "ONT cDNA", "ONT dRNA", "PacBio")] %>% unname())
-p1 | p2 
-```
-
-## Transcript-level MDS
-
-Here are key observations from the transcript-level MDS plots:
-
-1.  **Cancer type clustering**: Samples still cluster by cancer type (**LUAD, SCLC type a, SCLC type p**), but the separation between groups appears slightly less distinct compared to the gene-level data. Particularly SCLC type a and SCLC type p cluster closer together on the transcript-level MDS plot.
-2.  **Platform type impact**: Different sequencing platforms (**Illumina, ONT cDNA, ONT dRNA, PacBio**) show more variability at the transcript-level as samples seem to cluster largely based on sequencing platform for transcript-level analysis compared to gene-level analysis.
-3.  **Variance explained**: The first two dimensions explain 11.07% and 9.85% of the variation, respectively.
-
-```{r echo=FALSE, fig.width=15, message=FALSE, warning=FALSE, fig.height=3, fig.width=8 }
-mds <- norm_and_mds(bulk.tx.dge.merge[is.human(bulk.tx.dge.merge),])
-p1 <- myMDS(bulk.tx.dge.merge[is.human(bulk.tx.dge.merge), ], mds) + ggtitle("Human transcript counts") + 
-  aes(color = Data.type, shape = Cancer.type) + 
-  scale_color_manual(values = color_palette[c("Illumina", "ONT cDNA", "ONT dRNA", "PacBio")] %>% unname())
-
-p2 <- myMDS(bulk.tx.dge.merge[is.human(bulk.tx.dge.merge), ], mds) + ggtitle("Human transcript counts")
-
-p2 | p1
-```
-
 # Differential gene expression
 
 ## DGE edgeR (Salmon and Oarfish)
 
-DGE analysis is performed on subsets for human genes, each with potentially different library size distributions compared to the entire dataset which included human genes and spikeins (sequins and SIRVs). To ensure consistency:
+DGE analysis is performed on subsets for human genes.
 
-1.  Filter by Expression: Lowly expressed genes are filtered using `filterByExpr` for each subset of human-genes.
-2.  Normalization: Gene counts are normalized using the `calcNormFactors` function in edgeR with the `TMM` method for each subset of human-genes.
-3.  Differential Expression: Differential expression is assessed using a GLM-based model with the `glmQLFit` and `glmQLFTest` functions, comparing:
+1. Normalization: Gene counts are normalized using the `calcNormFactors` function in edgeR with the `TMM` method for each subset of human-genes.
+2.  Differential Expression: Differential expression is assessed using a GLM-based model with the `glmQLFit` and `glmQLFTest` functions, comparing:
 
 -   SCLC type a vs. LUAD
 -   SCLC type p vs. LUAD
 -   SCLC type a vs. SCLC type p
 -   ***Model: model.matrix(\~0 + group, data = dge\$samples)***
-4. Differential expression gene and transcript lists are defined using `DecideTests` with a log2 fold change cutoff of `r params$log2FC_cutoff` and adjusted p<0.05.
+
+4.  Differential expression gene and transcript lists are defined using `DecideTests` with a absolute log2 fold change cutoff of `r params$log2FC_cutoff` and adjusted p\<0.05.
+
 ```{r echo=TRUE, message=FALSE, warning=FALSE, results='hide'}
 DGE.edgeR_human <- function(dge, norm.method = "TMM") {
-  # QC and normalization
-  filter <- filterByExpr(dge, group = dge$samples$group)
-  dge <- dge[filter, , keep.lib.sizes = FALSE]
-  
   if (!is.null(norm.method)) {
      dge <- calcNormFactors(dge, method = norm.method)
   }
@@ -382,83 +234,15 @@ DGE.edgeR_human <- function(dge, norm.method = "TMM") {
 }
 
 # DEG analsysis on human genes only 
-ill_bulk.dge_human.list <- DGE.edgeR_human(ill_bulk.gene.dge[is.human(ill_bulk.gene.dge),])
-ont_bulk.dge_human.list <- DGE.edgeR_human(ont_bulk.gene.dge[is.human(ont_bulk.gene.dge),])
-drna_bulk.deg_human.list <- DGE.edgeR_human(drna_bulk.gene.dge[is.human(drna_bulk.gene.dge),])
-pb_bulk.dge_human.list <- DGE.edgeR_human(pb_bulk.gene.dge[is.human(pb_bulk.gene.dge), ])
+ill_bulk.dge_human.list <- DGE.edgeR_human(ill_bulk.gene.dge[is.human(ill_bulk.gene.dge),,keep.lib.sizes=FALSE])
+ont_bulk.dge_human.list <- DGE.edgeR_human(ont_bulk.gene.dge[is.human(ont_bulk.gene.dge),,keep.lib.sizes=FALSE])
+drna_bulk.deg_human.list <- DGE.edgeR_human(drna_bulk.gene.dge[is.human(drna_bulk.gene.dge),,keep.lib.sizes=FALSE])
+pb_bulk.dge_human.list <- DGE.edgeR_human(pb_bulk.gene.dge[is.human(pb_bulk.gene.dge), ,keep.lib.sizes=FALSE])
 ```
 
-1.  ***SCLC type a vs. LUAD:***
-    -   [Illumina](./DGE_summary/DGE_Glimma_HTML/Illumina_AvsL_volcano_plot.html)
-    -   [PacBio](./DGE_summary/DGE_Glimma_HTML/PacBio_AvsL_volcano_plot.html)
-    -   [ONT cDNA](./DGE_summary/DGE_Glimma_HTML/ONT_AvsL_volcano_plot.html)
-    -   [ONT dRNA](./DGE_summary/DGE_Glimma_HTML/dRNA_AvsL_volcano_plot.html)
-2.  ***SCLC type p vs. LUAD:***
-    -   [Illumina](./DGE_summary/DGE_Glimma_HTML/Illumina_PvsL_volcano_plot.html)
-    -   [PacBio](./DGE_summary/DGE_Glimma_HTML/PacBio_PvsL_volcano_plot.html)
-    -   [ONT cDNA](./DGE_summary/DGE_Glimma_HTML/ONT_PvsL_volcano_plot.html)
-    -   [ONT dRNA](./DGE_summary/DGE_Glimma_HTML/dRNA_PvsL_volcano_plot.html)
-3.  ***SCLC type a vs. SCLC type p:***
-    -   [Illumina](./DGE_summary/DGE_Glimma_HTML/Illumina_AvsP_volcano_plot.html)
-    -   [PacBio](./DGE_summary/DGE_Glimma_HTML/PacBio_AvsP_volcano_plot.html)
-    -   [ONT cDNA](./DGE_summary/DGE_Glimma_HTML/ONT_AvsP_volcano_plot.html)
-    -   [ONT dRNA](./DGE_summary/DGE_Glimma_HTML/dRNA_AvsP_volcano_plot.html)
+## MA plots with marker highlighted (Highlight "HMGA2", "POU2F3", "ASCL1")
 
-
-##Check Expected DE ()
-There are some expected DE gene provided, let's check them:
-```{r, include=F, eval=F}
-expected_DE <- read_csv(params$expected_de_table)
-
-add_FC <- function(x){
-  x %>% 
-  left_join(ill_bulk.dge_human.list$AvsL.DE$table %>% 
-              rownames_to_column('Gene')  %>% 
-              select(Gene, logFC) %>%
-              mutate(
-                Gene = sub("\\..*", "", Gene)
-                ) %>%
-              rename(
-                Illumina_logFC = logFC
-              ), by = "Gene") %>% 
-    left_join(ont_bulk.dge_human.list$AvsL.DE$table %>% 
-              rownames_to_column('Gene')  %>% 
-              select(Gene, logFC) %>%
-              mutate(
-                Gene = sub("\\..*", "", Gene)
-                ) %>%
-              rename(
-                ONT_cDNA_logFC = logFC
-              ), by = "Gene") %>%
-    left_join(pb_bulk.dge_human.list$AvsL.DE$table %>% 
-              rownames_to_column('Gene')  %>% 
-              select(Gene, logFC) %>%
-              mutate(
-                Gene = sub("\\..*", "", Gene)
-                ) %>%
-              rename(
-                Pacbio_logFC = logFC
-              ), by = "Gene") %>% 
-    left_join(drna_bulk.deg_human.list$AvsL.DE$table %>% 
-              rownames_to_column('Gene')  %>% 
-              select(Gene, logFC) %>%
-              mutate(
-                Gene = sub("\\..*", "", Gene)
-                ) %>%
-              rename(
-                ONT_dRNA_logFC = logFC
-              ), by = "Gene")
-}
-
-expected_DE %>%  left_join(mat.AvsL.DE %>% mutate(Gene = sub("\\..*", "", Gene)), by="Gene") %>% add_FC
-expected_DE %>% left_join(mat.PvsL.DE %>% mutate(Gene = sub("\\..*", "", Gene)), by="Gene") %>% add_FC
-expected_DE %>% left_join(mat.AvsP.DE %>% mutate(Gene = sub("\\..*", "", Gene)), by="Gene") %>% add_FC
-```
-
-### MA plots with marker highlighted
 ```{r MA plots, fig.height=13, fig.width=13}
-library(ggplot2)
-library(ggrepel)
 expected_DE <- read_csv(params$expected_de_table)
 plot.my.ma <- function(dge){
   # Get results and DE decisions
@@ -481,7 +265,6 @@ plot.my.ma <- function(dge){
   res_nonDE <- res %>% filter(DE == 0)
   res_DE <- res %>% filter(DE != 0)
   # MA plot
-library(ggrepel)
 
 ggplot() +
   geom_point(data = res_nonDE, aes(x = logCPM, y = logFC), color = "gray", alpha = 1, size = 0.5) +
@@ -493,22 +276,30 @@ ggplot() +
                   size = 3, max.overlaps = 100) +
   geom_hline(yintercept = 0, linetype = "dashed", color = "gray") +
   labs(x = "Average log CPM", y = "log₂ Fold Change", color = "DE Status") +
-  theme_minimal()
+  theme_minimal() +
+  ggtitle(title)
 }
 
-ill_bulk.dge_human.list %>% map(plot.my.ma) %>% wrap_plots(ncol=3, guides='collect') +  plot_annotation(title = "Illumina") -> p1
-ont_bulk.dge_human.list %>% map(plot.my.ma) %>% wrap_plots(ncol=3, guides='collect') +  plot_annotation(title = "ONT cDNA") -> p2
-drna_bulk.deg_human.list %>% map(plot.my.ma) %>% wrap_plots(ncol=3, guides='collect') +  plot_annotation(title = "ONT dRNA") -> p3
-pb_bulk.dge_human.list %>% map(plot.my.ma) %>% wrap_plots(ncol=3, guides='collect') +  plot_annotation(title = "PacBio") -> p4
+plot_with_titles <- function(dge_list, platform) {
+  imap(dge_list, ~ {
+    plot.my.ma(.x) + 
+      labs(title = paste(.y, "-", platform))
+  }) %>%
+    wrap_plots(ncol = 3, guides = "collect")
+}
 
-(p1 / p2 / p3 / p4) + 
+p1 <- plot_with_titles(ill_bulk.dge_human.list, "Illumina")
+p2 <- plot_with_titles(ont_bulk.dge_human.list, "ONT cDNA")
+p3 <- plot_with_titles(drna_bulk.deg_human.list, "ONT dRNA")
+p4 <- plot_with_titles(pb_bulk.dge_human.list, "PacBio")
+
+(p1 / p2 / p3 / p4) +
   plot_layout(guides = "collect") +
-  plot_annotation(title = "Bulk MA Plots", tag_levels = "A")
-
-
+  plot_annotation(title = "Bulk MA Plots")
 ```
 
 ## Total number of DEG
+
 ```{r total DGE, fig.height=3, fig.width=4}
 
 plot_d <- tibble()
@@ -575,15 +366,6 @@ ggplot(plot_d %>% mutate(contrast = factor(contrast, levels = c("AvsL", "PvsL", 
 ```
 
 ## Cross-platform comparison DGE human (upset)
-
-Here the differential gene expression (DGE) results visualized in the upset plots show:
-
-1.  ***SCLC_A vs LUAD:*** 580 shared differential expressed genes across all platforms. Highlighting platform-specific contributions to DGE detection with largest intersections from PacBio (790 genes).
-
-2.  ***SCLC_P vs LUAD:*** The total number of differential expressed genes is smaller compared to SCLC_A vs LUAD. 140 shared differential expressed genes across all platforms. Highlighting platform-specific contributions to DGE detection with largest intersections from PacBio (173 genes).
-
-3.  ***SCLC_A vs SCLC_P:*** A significantly smaller number of genes are differential expressed compared to LUAD comparisons. 16 shared differential expressed genes across all platforms. Highlighting platform-specific contributions to DGE detection with largest intersections from Illumina (48 genes).
-
 ***Overall, the results suggest:*** PacBio tends to identify highest number of platform-specific differential expressed genes. Differences between cancer subtypes (SCLC_A vs SCLC_P) are less pronounced compared to differences with LUAD.
 
 ```{r upset plot function, include=FALSE}
@@ -739,6 +521,7 @@ output_list[["PvsL.DEG.any"]] <- mat.PvsL.DE %>%
 ```
 
 ## More inspection on DEG human
+
 ```{r echo=TRUE, message=FALSE, warning=FALSE, results='hide'}
 # Get gene annotations and information
 library(biomaRt)
@@ -1177,6 +960,7 @@ table_AvsL
 table_PvsL
 table_AvsP
 ```
+
 # Enrichment Analysis (Clusterprofiler)
 
 In this section, **GO and KEGG enrichment analyses** are performed to identify key biological functions and pathways for differential expressed genes (DEGs).
@@ -1216,7 +1000,7 @@ plot_go_AvsL + plot_go_AvsL_pacbio + plot_layout(nrow = 2)
 
 ```
 
-Here we can factor in directionality in the gene set analysis by splitting by negative logFC (downregulated) or positive logFC (upregulated). Here due to the comparison being SCLC_A vs LUAD, if positive logFC (upregulated) this means that the genes are upregulated in SCLC_A compared to LUAD. Whereas if negative logFC (downregulated) this means the genes are downregulated in SCLC_A compared to LUAD. 
+Here we can factor in directionality in the gene set analysis by splitting by negative logFC (downregulated) or positive logFC (upregulated). Here due to the comparison being SCLC_A vs LUAD, if positive logFC (upregulated) this means that the genes are upregulated in SCLC_A compared to LUAD. Whereas if negative logFC (downregulated) this means the genes are downregulated in SCLC_A compared to LUAD.
 
 ```{r include=FALSE}
 
@@ -1295,8 +1079,6 @@ plot_go_AvsL_upregulated + plot_go_AvsL_downregulated + plot_layout(nrow = 2)
 
 ```
 
-
-
 ### SCLC_P vs LUAD
 
 Here GO analysis will be preformed on common DEGs as well as PacBio specific DEGs (top platform specific in this comparison)
@@ -1324,7 +1106,8 @@ plot_go_PvsL + plot_layout(nrow = 2)
 #write.csv(as.data.frame(go_PvsL_pacbio), "go_PvsL_pacbio_DEGs_enrichment.csv", row.names = FALSE)
 
 ```
-Here we can factor in directionality in the gene set analysis by splitting by negative logFC (downregulated) or positive logFC (upregulated). Here due to the comparison being SCLC_P vs LUAD, if positive logFC (upregulated) this means that the genes are upregulated in SCLC_P compared to LUAD. Whereas if negative logFC (downregulated) this means the genes are downregulated in SCLC_P compared to LUAD. 
+
+Here we can factor in directionality in the gene set analysis by splitting by negative logFC (downregulated) or positive logFC (upregulated). Here due to the comparison being SCLC_P vs LUAD, if positive logFC (upregulated) this means that the genes are upregulated in SCLC_P compared to LUAD. Whereas if negative logFC (downregulated) this means the genes are downregulated in SCLC_P compared to LUAD.
 
 ```{r, echo=TRUE, fig.height=15, fig.width=10, message=FALSE, warning=FALSE}
 # SCLC_P vs LUAD
@@ -1348,7 +1131,7 @@ plot_go_PvsL_upregulated + plot_go_PvsL_downregulated + plot_layout(nrow = 2)
 
 No significant GO terms found with the given p-value cutoff for common DEGs for SCLC_A vs SCLC_P.
 
-Here GO analysis will be preformed on Illumina specific DEGs (top platform specific in this comparison). Note: not many common DEGs for this comparison (16). 
+Here GO analysis will be preformed on Illumina specific DEGs (top platform specific in this comparison). Note: not many common DEGs for this comparison (16).
 
 ```{r GO SCLC_A vs SCLC_P, echo=TRUE, fig.height=15, fig.width=10, message=FALSE, warning=FALSE}
 
@@ -1372,9 +1155,10 @@ plot_go_AvsP_illumina <- dotplot(go_AvsP_illumina, showCategory = 15) + ggtitle(
 
 ```
 
-Here we can factor in directionality in the gene set analysis by splitting by negative logFC (downregulated) or positive logFC (upregulated). Here due to the comparison being SCLC_A vs SCLC_P, if positive logFC (upregulated) this means that the genes are upregulated in SCLC_A compared to SCLC_P. Whereas if negative logFC (downregulated) this means the genes are downregulated in SCLC_A compared to SCLC_P. 
+Here we can factor in directionality in the gene set analysis by splitting by negative logFC (downregulated) or positive logFC (upregulated). Here due to the comparison being SCLC_A vs SCLC_P, if positive logFC (upregulated) this means that the genes are upregulated in SCLC_A compared to SCLC_P. Whereas if negative logFC (downregulated) this means the genes are downregulated in SCLC_A compared to SCLC_P.
 
-There were 0 enriched GO terms found for Downregulated (negative logFC detected genes) for SCLC_A vs SCLC_P. 
+There were 0 enriched GO terms found for Downregulated (negative logFC detected genes) for SCLC_A vs SCLC_P.
+
 ```{r, echo=TRUE, fig.height=15, fig.width=10, message=FALSE, warning=FALSE}
 
 # SCLC_A vs SCLC_P
@@ -1389,10 +1173,12 @@ plot_go_AvsP_downregulated <- dotplot(go_AvsP_downreg, showCategory = 15) + ggti
 plot_go_AvsP_upregulated + plot_layout(nrow = 2)
 ```
 
-
 ## KEGG Analysis
+
 ### SCLC_A vs LUAD
-Here we can factor in directionality in the KEGG analysis by splitting by negative logFC (downregulated) or positive logFC (upregulated). Here due to the comparison being SCLC_A vs LUAD, if positive logFC (upregulated) this means that the genes are upregulated in SCLC_A compared to LUAD. Whereas if negative logFC (downregulated) this means the genes are downregulated in SCLC_A compared to LUAD. 
+
+Here we can factor in directionality in the KEGG analysis by splitting by negative logFC (downregulated) or positive logFC (upregulated). Here due to the comparison being SCLC_A vs LUAD, if positive logFC (upregulated) this means that the genes are upregulated in SCLC_A compared to LUAD. Whereas if negative logFC (downregulated) this means the genes are downregulated in SCLC_A compared to LUAD.
+
 ```{r, echo=TRUE, fig.height=15, fig.width=10, message=FALSE, warning=FALSE}
 library(org.Hs.eg.db)
 # Convert upregulated genes (Ensembl -> Entrez)
@@ -1449,9 +1235,9 @@ plot_kegg_AvsL_upregulated + plot_kegg_AvsL_downregulated + plot_layout(nrow = 2
 
 ### SCLC_P vs LUAD
 
-Here we can factor in directionality in the KEGG analysis by splitting by negative logFC (downregulated) or positive logFC (upregulated). Here due to the comparison being SCLC_P vs LUAD, if positive logFC (upregulated) this means that the genes are upregulated in SCLC_P compared to LUAD. Whereas if negative logFC (downregulated) this means the genes are downregulated in SCLC_P compared to LUAD. 
+Here we can factor in directionality in the KEGG analysis by splitting by negative logFC (downregulated) or positive logFC (upregulated). Here due to the comparison being SCLC_P vs LUAD, if positive logFC (upregulated) this means that the genes are upregulated in SCLC_P compared to LUAD. Whereas if negative logFC (downregulated) this means the genes are downregulated in SCLC_P compared to LUAD.
 
-There were 0 enriched terms found for Upregulated (positive logFC detected genes) for SCLC_P vs LUAD. 
+There were 0 enriched terms found for Upregulated (positive logFC detected genes) for SCLC_P vs LUAD.
 
 ```{r, echo=TRUE, fig.height=15, fig.width=10, message=FALSE, warning=FALSE}
 
@@ -1507,8 +1293,7 @@ plot_kegg_PvsL_downregulated <- dotplot(kegg_PvsL_downreg, showCategory = 15) +
 
 ### SCLC_A vs SCLC_P
 
-There were 0 enriched terms found for Upregulated (positive logFC detected genes) for SCLC_A vs SCLC_P. 
-There were 0 enriched terms found for Downregulated (negative logFC detected genes) for SCLC_A vs SCLC_P. 
+There were 0 enriched terms found for Upregulated (positive logFC detected genes) for SCLC_A vs SCLC_P. There were 0 enriched terms found for Downregulated (negative logFC detected genes) for SCLC_A vs SCLC_P.
 
 ```{r, echo=TRUE, fig.height=15, fig.width=10, message=FALSE, warning=FALSE}
 
@@ -1558,12 +1343,12 @@ kegg_AvsP_downreg <- enrichKEGG(
 
 ```
 
-
 ## Hallmark Analysis
 
-Here we use MSigDB Hallmark Gene Sets with GSEA because: 1. Hallmark gene sets include curated, cancer-relevant pathways (e.g., EMT, angiogenesis, immune response, proliferation). 
+Here we use MSigDB Hallmark Gene Sets with GSEA because: 1. Hallmark gene sets include curated, cancer-relevant pathways (e.g., EMT, angiogenesis, immune response, proliferation).
 
 ### SCLC_A vs LUAD
+
 ```{r , echo=TRUE, fig.height=8, fig.width=10, message=FALSE, warning=FALSE}
 library(msigdbr)
 # Load MSigDB Hallmark pathways
@@ -1591,6 +1376,7 @@ dotplot(gsea_results, showCategory = 15) +
 # save results 
 #write.csv(as.data.frame(gsea_results), "gsea_AvsP_DEGs_enrichment.csv", row.names = FALSE)
 ```
+
 Splitting for directionality leads to no significant pathways found with the given p-value cutoff.
 
 ### SCLC_P vs LUAD
@@ -1598,6 +1384,7 @@ Splitting for directionality leads to no significant pathways found with the giv
 No significant pathways found with the given p-value cutoff.
 
 ### SCLC_A vs SCLC_P
+
 No significant pathways found with the given p-value cutoff.
 
 # Differential transcript expression
@@ -1620,9 +1407,6 @@ DTE analysis is performed on subsets for human genes and sequins, each with pote
 
 ```{r echo=TRUE, message=FALSE, warning=FALSE}
 DTE.edgeR_human <- function(dge, norm.method="TMM") {
-  # QC and normalisation:
-  filter <- filterByExpr(dge, group=dge$samples$group, min.count=5)
-  dge <- dge[filter, , keep.lib.sizes = FALSE]
 
   if (!is.null(norm.method)) {
      dge <- calcNormFactors(dge, method = norm.method)
@@ -1668,35 +1452,15 @@ pb_bulk.scale_dge$counts  <- pb_bulk.scale_dge$counts / pb_bulk.scale_dge$genes$
 ont_drna.scale_dge$counts  <- ont_drna.scale_dge$counts / ont_drna.scale_dge$genes$Overdispersion
 
 # get human list
-ill_bulk.scl_dte_human.list <- DTE.edgeR_human(ill_bulk.scale_dge[is.human(ill_bulk.scale_dge),])
-ont_bulk.scl_dte_human.list <- DTE.edgeR_human(ont_bulk.scale_dge[is.human(ont_bulk.scale_dge),])
-pb_bulk.scl_dte_human.list <- DTE.edgeR_human(pb_bulk.scale_dge[is.human(pb_bulk.scale_dge),])
-drna_bulk.scl_dte_human.list <- DTE.edgeR_human(ont_drna.scale_dge[is.human(ont_drna.scale_dge),])
-
-
+ill_bulk.scl_dte_human.list <- DTE.edgeR_human(ill_bulk.scale_dge[is.human(ill_bulk.scale_dge),,keep.lib.sizes=FALSE])
+ont_bulk.scl_dte_human.list <- DTE.edgeR_human(ont_bulk.scale_dge[is.human(ont_bulk.scale_dge),,keep.lib.sizes=FALSE])
+pb_bulk.scl_dte_human.list <- DTE.edgeR_human(pb_bulk.scale_dge[is.human(pb_bulk.scale_dge),,keep.lib.sizes=FALSE])
+drna_bulk.scl_dte_human.list <- DTE.edgeR_human(ont_drna.scale_dge[is.human(ont_drna.scale_dge),,keep.lib.sizes=FALSE])
 ```
-Here the platform specific DTE analysis can be further inspected via Glimma reports:
-1.  ***SCLC type a vs. LUAD:***
-/
-    -   [Illumina](./DTE_summary/DTE_Glimma_HTML/Illumina_AvsL_volcano_plot.html)
-    -   [PacBio](./DTE_summary/DTE_Glimma_HTML/PacBio_AvsL_volcano_plot.html)
-    -   [ONT cDNA](./DTE_summary/DTE_Glimma_HTML/ONT_AvsL_volcano_plot.html)
-    -   [ONT dRNA](./DTE_summary/DTE_Glimma_HTML/dRNA_AvsL_volcano_plot.html)
-2.  ***SCLC type p vs. LUAD:***
-/
-    -   [Illumina](./DTE_summary/DTE_Glimma_HTML/Illumina_PvsL_volcano_plot.html)
-    -   [PacBio](./DTE_summary/DTE_Glimma_HTML/PacBio_PvsL_volcano_plot.html)
-    -   [ONT cDNA](./DTE_summary/DTE_Glimma_HTML/ONT_PvsL_volcano_plot.html)
-    -   [ONT dRNA](./DTE_summary/DTE_Glimma_HTML/dRNA_PvsL_volcano_plot.html)
-3.  ***SCLC type a vs. SCLC type p:***
-/
-    -   [Illumina](./DTE_summary/DTE_Glimma_HTML/Illumina_AvsP_volcano_plot.html)
-    -   [PacBio](./DTE_summary/DTE_Glimma_HTML/PacBio_AvsP_volcano_plot.html)
-    -   [ONT cDNA](./DTE_summary/DTE_Glimma_HTML/ONT_AvsP_volcano_plot.html)
-    -   [ONT dRNA](./DTE_summary/DTE_Glimma_HTML/dRNA_AvsP_volcano_plot.html)
 
-## Total number of DTE 
+Here the platform specific DTE analysis can be further inspected via Glimma reports: 1. ***SCLC type a vs. LUAD:*** / - [Illumina](./DTE_summary/DTE_Glimma_HTML/Illumina_AvsL_volcano_plot.html) - [PacBio](./DTE_summary/DTE_Glimma_HTML/PacBio_AvsL_volcano_plot.html) - [ONT cDNA](./DTE_summary/DTE_Glimma_HTML/ONT_AvsL_volcano_plot.html) - [ONT dRNA](./DTE_summary/DTE_Glimma_HTML/dRNA_AvsL_volcano_plot.html) 2. ***SCLC type p vs. LUAD:*** / - [Illumina](./DTE_summary/DTE_Glimma_HTML/Illumina_PvsL_volcano_plot.html) - [PacBio](./DTE_summary/DTE_Glimma_HTML/PacBio_PvsL_volcano_plot.html) - [ONT cDNA](./DTE_summary/DTE_Glimma_HTML/ONT_PvsL_volcano_plot.html) - [ONT dRNA](./DTE_summary/DTE_Glimma_HTML/dRNA_PvsL_volcano_plot.html) 3. ***SCLC type a vs. SCLC type p:*** / - [Illumina](./DTE_summary/DTE_Glimma_HTML/Illumina_AvsP_volcano_plot.html) - [PacBio](./DTE_summary/DTE_Glimma_HTML/PacBio_AvsP_volcano_plot.html) - [ONT cDNA](./DTE_summary/DTE_Glimma_HTML/ONT_AvsP_volcano_plot.html) - [ONT dRNA](./DTE_summary/DTE_Glimma_HTML/dRNA_AvsP_volcano_plot.html)
 
+## Total number of DTE
 
 ```{r Total number of DTE , fig.height=3, fig.width=4}
 plot_d <- tibble()
@@ -1815,7 +1579,6 @@ p1 / p2 / p3 + patchwork::plot_annotation(
 )
 ```
 
-
 ```{r Biotype and transcript length on DTE, echo=TRUE, fig.height=9, fig.width=15}
 library(patchwork)
 # Function to preprocess the data and create an upset plot
@@ -1837,7 +1600,7 @@ my_complexUpset <- function(data, tx_length_lookup, title) {
   intersect = c('Illumina', "ONT cDNA", "PacBio", "ONT dRNA"),
   annotations = list(
         # 1st method - passing list:
-        "Gene length" = list(
+        "Tx length" = list(
           aes = aes(x = intersection, y = `Tx length`),
           # provide a list if you wish to add several geoms
           geom = geom_boxplot(na.rm = TRUE, outliers = FALSE)
@@ -2106,10 +1869,9 @@ table_PvsL
 table_AvsP
 ```
 
-
-
 # BCV (Not included in manuscript)
-```{r} 
+
+```{r}
 ill_bulk.gene.dge <- ill_bulk.gene.dge %>% estimateDisp()
 ont_bulk.gene.dge <- ont_bulk.gene.dge %>% estimateDisp()
 pb_bulk.gene.dge <- pb_bulk.gene.dge %>% estimateDisp()
@@ -2220,200 +1982,5 @@ p.tx.scale <- ggplot(common_disp, aes(x = Dataset, y = BCV, fill = Dataset)) +
 p.gene | p.tx | p.tx.scale 
 ```
 
-```{r BCV  plot separate cancer type, fig.height=5, fig.width=8, include=FALSE, eval=FALSE}
 
-individual_bcv <- function(cell_line, dge, platform) {
-  dge <- dge[, dge$samples$group == cell_line] %>%
-    calcNormFactors() %>%
-    estimateDisp()
-  tibble(
-    platform = platform,
-    cell_line = cell_line,
-    common_bcv = dge$common.dispersion %>% sqrt()
-  )
-}
-
-cell_lines <- unique(ill_bulk.gene.dge$samples$group)
-bcv_data.gene <- bind_rows(
-  lapply(cell_lines, function(cell_line) {
-    list(
-      individual_bcv(cell_line, ill_bulk.gene.dge, "Illumina"),
-      individual_bcv(cell_line, ont_bulk.gene.dge, "ONT cDNA"),
-      individual_bcv(cell_line, pb_bulk.gene.dge, "PacBio"),
-      individual_bcv(cell_line, drna_bulk.gene.dge, "ONT dRNA")
-    )
-  })
-)
-
-bcv_data.tx <- bind_rows(
-  lapply(cell_lines, function(cell_line) {
-    list(
-      individual_bcv(cell_line, ill_bulk.tx.dge, "Illumina"),
-      individual_bcv(cell_line, drna_bulk.tx.dge, "ONT dRNA"),
-      individual_bcv(cell_line, pb_bulk.dge.oarfish, "PacBio"),
-      individual_bcv(cell_line, ont_bulk.tx.dge, "ONT cDNA")
-    )
-  })
-)
-
-# plot BCV
-p.bcv.gene <- ggplot(bcv_data.gene, aes(x = cell_line, y = common_bcv, fill = platform)) +
-  geom_col(position = "dodge", width = 0.7) +
-  scale_fill_manual(values = color_palette) +
-  labs(
-    y = "BCV",
-    x = "Cancer Cell Line",
-    title = "Gene level BCV"
-  ) +
-  theme_minimal() +
-  theme(
-    legend.position = "bottom",
-    axis.text.x = element_text(angle = 45, hjust = 1)
-  )
-
-p.bcv.tx <- ggplot(bcv_data.tx, aes(x = cell_line, y = common_bcv, fill = platform)) +
-  geom_col(position = "dodge", width = 0.7) +
-  scale_fill_manual(values = color_palette) +
-  labs(
-    y = "BCV",
-    x = "Cancer Cell Line",
-    title = "Transcript level BCV"
-  ) +
-  theme_minimal() +
-  theme(
-    legend.position = "bottom",
-    axis.text.x = element_text(angle = 45, hjust = 1)
-  )
-
-(p.bcv.gene | p.bcv.tx) +
-  plot_layout(guides = "collect") &
-  theme(legend.position = "bottom")
-```
-
-# Comparing DTE and DGE
-```{r, fig.height=10, fig.width=8}
-venn_grobs <- list()
-
-for (platform in platforms) {
-  for (comp in comparisons) {
-    dge <- dge_lists[[platform]][[paste0(comp, ".DE")]]$table %>%
-      rownames_to_column("gene_id") %>% filter(PValue < 0.05)
-
-    dte <- dte_lists[[platform]][[paste0(comp, ".DE")]]$table %>%
-      rownames_to_column("transcript_id") %>%
-      mutate(gene_id = str_extract(transcript_id, "ENSG[0-9]+\\.[0-9]+")) %>%
-      filter(PValue < 0.05)
-
-    grob <- venn.diagram(
-      list(Gene = dge$gene_id, Transcript = dte$gene_id),
-      filename = NULL,
-      fill = c("skyblue", "pink"),
-      alpha = 0.5,
-      cat.cex = 1.2,
-      main = paste(toupper(platform), comp)
-    )
-
-    venn_grobs[[paste(platform, comp)]] <- grobTree(grob)
-  }
-}
-
-grid.arrange(grobs = venn_grobs, ncol = 3)
-```
-
-```{r fig-logFC-correlation-6x3-pearson, fig.width=18, fig.height=12, message=FALSE, warning=FALSE}
-library(ggplot2)
-library(dplyr)
-library(stringr)
-library(ggpubr)
-library(purrr)
-
-platforms <- c("Illumina", "ONT cDNA", "PacBio", "ONT dRNA")
-comparisons <- c("AvsL", "PvsL", "AvsP")
-platform_pairs <- combn(platforms, 2, simplify = FALSE)
-
-```
-
-
-```{r}
-get_combined_logfc_plot <- function(level = "gene", p1, p2) {
-  all_data <- purrr::map_dfr(comparisons, function(comp) {
-    df1 <- if (level == "gene") {
-      dge_lists[[p1]][[paste0(comp, ".DE")]]$table %>%
-        tibble::rownames_to_column("gene_id")
-    } else {
-      dte_lists[[p1]][[paste0(comp, ".DE")]]$table %>%
-        tibble::rownames_to_column("transcript_id") %>%
-        mutate(gene_id = str_extract(transcript_id, "ENSG[0-9]+\\.[0-9]+"))
-    }
-
-    df2 <- if (level == "gene") {
-      dge_lists[[p2]][[paste0(comp, ".DE")]]$table %>%
-        tibble::rownames_to_column("gene_id")
-    } else {
-      dte_lists[[p2]][[paste0(comp, ".DE")]]$table %>%
-        tibble::rownames_to_column("transcript_id") %>%
-        mutate(gene_id = str_extract(transcript_id, "ENSG[0-9]+\\.[0-9]+"))
-    }
-
-    df1 <- df1 %>% filter(PValue < 0.05)
-    df2 <- df2 %>% filter(PValue < 0.05)
-
-    joined <- full_join(df1[, c("gene_id", "logFC")], df2[, c("gene_id", "logFC")],
-                        by = "gene_id", suffix = c("_p1", "_p2")) %>%
-      drop_na(logFC_p1, logFC_p2)  # optional: remove rows with missing logFCs
-
-    joined$comparison <- comp
-    joined
-  })
-
-  cors <- all_data %>%
-    group_by(comparison) %>%
-    summarise(r = cor(logFC_p1, logFC_p2, use = "complete.obs")) %>%
-    mutate(corr_label = paste0("r = ", round(r, 2)))
-
-  ggplot(all_data, aes(x = logFC_p1, y = logFC_p2)) +
-    geom_point(alpha = 0.2, size = 0.3) +
-    geom_density_2d(color = "gray60", size = 0.3) +
-    geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "gray50") +
-    facet_wrap(~comparison, ncol = 3) +
-    geom_text(data = cors, aes(x = -Inf, y = Inf, label = corr_label),
-              inherit.aes = FALSE, hjust = -0.1, vjust = 1.2, size = 3.5) +
-    labs(
-      title = paste0(level, ": ", toupper(p1), " vs ", toupper(p2)),
-      x = paste0("logFC (", p1, ")"),
-      y = paste0("logFC (", p2, ")")
-    ) +
-    theme_minimal(base_size = 8)
-}
-
-gene_logfc_combined <- make_6panel_plot("gene")
-tx_logfc_combined <- make_6panel_plot("transcript")
-
-gene_logfc_combined
-tx_logfc_combined
-```
-# Identify Illumina-specific DTEs in A vs P
-```{r}
-get_dte_ids <- function(dte_list, comp) {
-  dte_list[[paste0(comp, ".DE")]]$table %>%
-    rownames() %>%
-    .[dte_list[[paste0(comp, ".DE")]]$table$PValue < 0.05]
-}
-
-ill_dtes <- get_dte_ids(ill_bulk.scl_dte_human.list, "AvsP")
-ont_dtes <- get_dte_ids(ont_bulk.scl_dte_human.list, "AvsP")
-pb_dtes  <- get_dte_ids(pb_bulk.scl_dte_human.list,  "AvsP")
-drna_dtes <- get_dte_ids(drna_bulk.scl_dte_human.list, "AvsP")
-
-# Unique to Illumina
-illumina_unique <- setdiff(ill_dtes, union(union(ont_dtes, pb_dtes), drna_dtes))
-
-
-illumina_unique_df <- tibble(transcript_id = illumina_unique) %>%
-  separate(transcript_id, into = c("tx1", "gene1", "tx2", "gene2", "tx3", "gene3", "length", "biotype"), sep = "\\|") %>%
-  mutate(
-    transcript_length = as.integer(length),
-    gene_id = gene1
-  )
-```
 

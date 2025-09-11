@@ -15,41 +15,18 @@ output:
 params:
   random_seed: 2024
   cache_dir: NULL
-  sirv_ercc_gtf: '/vast/projects/LongBench/reference_files/SIRV_Set4_Norm_Sequences_20210507/SIRV_ERCC_longSIRV_multi-fasta_20210507.gtf'
-  sequins_gtf: '/vast/projects/LongBench/reference_files/Sequin_resources/v2.4/rnasequin_annotation_2.4.gtf'
   sequins_tsv: '/vast/projects/LongBench/reference_files/Sequin_resources/v2.4/rnasequin_isoforms_2.4.tsv'
-  human_gtf: '/vast/projects/LongBench/reference_files/GRCh38/gencode.v44.annotation.gtf'
   sirv_csv: '/home/users/allstaff/you.yu/LongBench/reference_files/SIRV_Set4_Norm_Sequences_20210507/SIRV_set4_concentration.csv'
-  ont_bulk_oarfish_dir: "/vast/projects/LongBench/analysis/lr_bulk/result/oarfish_cov_output/ont_bulk"
-  pb_bulk_oarfish_dir: "/vast/projects/LongBench/analysis/lr_bulk/result/oarfish_cov_output/pb_bulk"
-  ont_drnd_oarfish_dir: "/vast/projects/LongBench/analysis/lr_bulk/result/oarfish_cov_output/dRNA_bulk"
-  ill_bulk_salmon_dir: "/vast/projects/LongBench//analysis/sr_bulk/result/salmon/salmon_quant"
   bulk_meta: "/vast/projects/LongBench/sequencing_data/illumina_bulk/metadata.txt"
+  input_DGEobject_rds: "/vast/projects/LongBench/analysis/workflow/rmarkdown/RDS/bulk_DGE.obj.rds"
+  Tx2Gene.map.rds: "/vast/projects/LongBench/analysis/workflow/rmarkdown/RDS/Tx2Gene.map.rds"
   fig.path: NULL
 ---
 
 # Setup: Create DGE from input
-
-## Libraries and chunk setup
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(cache = TRUE, fig.width = 7, fig.height=5, warning = F)
 
-# make the param a list
-# params <- list(
-#   random_seed = 2024,
-#   cache_dir = NULL,
-#   sirv_ercc_gtf = '/vast/projects/LongBench/reference_files/SIRV_Set4_Norm_Sequences_20210507/SIRV_ERCC_longSIRV_multi-fasta_20210507.gtf',
-#   sequins_gtf = '/vast/projects/LongBench/reference_files/Sequin_resources/v2.4/rnasequin_annotation_2.4.gtf',
-#   sequins_tsv = '/vast/projects/LongBench/reference_files/Sequin_resources/v2.4/rnasequin_isoforms_2.4.tsv',
-#   human_gtf = '/vast/projects/LongBench/reference_files/GRCh38/gencode.v44.annotation.gtf',
-#   sirv_csv = '/home/users/allstaff/you.yu/LongBench/reference_files/SIRV_Set4_Norm_Sequences_20210507/SIRV_set4_concentration.csv',
-#   ont_bulk_oarfish_dir = "/vast/projects/LongBench/analysis/lr_bulk/result/oarfish_cov_output/ont_bulk",
-#   pb_bulk_oarfish_dir = "/vast/projects/LongBench/analysis/lr_bulk/result/oarfish_cov_output/pb_bulk",
-#   ont_drnd_oarfish_dir = "/vast/projects/LongBench/analysis/lr_bulk/result/oarfish_cov_output/dRNA_bulk",
-#   ill_bulk_salmon_dir = "/vast/projects/LongBench//analysis/sr_bulk/result/salmon/salmon_quant",
-#   bulk_meta = "/vast/projects/LongBench/sequencing_data/illumina_bulk/metadata.txt",
-#   fig.path = NULL
-# )
 ```
 
 ```{r Libraries,include=FALSE}
@@ -72,7 +49,7 @@ library(scales)
 library(UpSetR)
 library(ggtree)
 library(aplot)
-source("/home/users/allstaff/you.yu/LongBench/analysis/workflow/scripts/Rfunctions.R")
+library(patchwork)
 
 # setup some conflict functions
 rename <- dplyr::rename
@@ -98,8 +75,8 @@ if (!is.null(params$cache_dir)) {
 color_palette <- c(
   PacBio = "#df1995",
   ONT = "#00789b",
-  ONT_1 = "#04476c",
-  ONT_2 = "#00789b",
+  ONT_1 = "#04476c", #cDNA
+  ONT_2 = "#00789b", # dRNA
   Illumina = "#e88b20"
 )
 ```
@@ -114,159 +91,43 @@ is.long_sirv <- function(dge) {grepl("^SIRV\\d{4}", rownames(dge))}
 is.ercc <- function(dge) {!is.human(dge) & !is.sequins(dge) & !is.sirv_all(dge)}
 ```
 
-```{r, get number of transcripts gene from gtf}
-calcTxNum <- function(G.Tx.map){
-  geneid = rep(NA, nrow(G.Tx.map))
-  txcount = table(G.Tx.map$gene_id)
-  txnum = as.numeric(txcount[match(G.Tx.map$gene_id, names(txcount))])
-}
-# SIRV
-SIRV_tx <- GenomicFeatures::makeTxDbFromGFF(params$sirv_ercc_gtf, format = "gtf") %>% GenomicFeatures::transcripts(columns = c("tx_id", "tx_name", "gene_id"))
-SIRV.G.Tx.map <- tibble(
-  gene_id = SIRV_tx$gene_id %>% unlist,
-  tx_name = SIRV_tx$tx_name
-)
-rm(SIRV_tx)
-SIRV.G.Tx.map$tx_count <- SIRV.G.Tx.map %>% calcTxNum
+# Load the count 
+## Get the count data from RDS
 
-# Sequins
-sequins_tx  <- GenomicFeatures::makeTxDbFromGFF(params$sequins_gtf, format = "gtf") %>% GenomicFeatures::transcripts(columns = c("tx_id", "tx_name", "gene_id"))
-sequins.G.Tx.map <- tibble(
-  gene_id = sequins_tx$gene_id %>% unlist,
-  tx_name = sequins_tx$tx_name
-)
-rm(sequins_tx)
-sequins.G.Tx.map$tx_count <- sequins.G.Tx.map %>% calcTxNum
-```
+```{r Get the count data, echo=TRUE, message=FALSE, warning=FALSE, results='hide'}
+list2env(readRDS(params$input_DGEobject_rds), .GlobalEnv)
+# This will load the following DGE objects:
+# ill_bulk.tx.dge, ont_bulk.tx.dge, pb_bulk.tx.dge, drna_bulk.tx.dge, for transcript level unfiltered DGE
+# ill_bulk.gene.dge, ont_bulk.gene.dge, pb_bulk.gene.dge, drna_bulk.gene.dge for gene level unfiltered DGE
 
-## Create transcript DGE from input
-```{r Create DGE from input, echo=F}
-bulk.meta <- read.csv(params$bulk_meta)
-rownames(bulk.meta) <- bulk.meta$sample
-
-# SR salmon
-ill_bulk.dge <- get_dge_from_salmon(params$ill_bulk_salmon_dir, ".*/")
-
-# LR oarfish
-ont_bulk.dge.oarfish <- get_dge_from_oarfish(params$ont_bulk_oarfish_dir, ".*/")
-pb_bulk.dge.oarfish <- get_dge_from_oarfish(params$pb_bulk_oarfish_dir, ".*/")
-ont_drna.dge.oarfish <- get_dge_from_oarfish(params$ont_drnd_oarfish_dir, ".*/")
+list2env(readRDS(params$Tx2Gene.map.rds), .GlobalEnv)
+# This will load 
+# "SIRV.G.Tx.map"  "sequins.G.Tx.map" "human.G.Tx.map"  
 ```
 
 
 
-## Aggregate transcript counts to gene level using `tximport` with unfiltered transcript counts
+# Separate spike in types
 ```{r}
-library(tximport) # install latest version from github
-
-# Extract tx_name and gene_id columns from human and sequins
-# human_tx2gene <- human.G.Tx.map[, c("tx_name", "gene_id")]
-sequins_tx2gene <- sequins.G.Tx.map[, c("tx_name", "gene_id")]
-SIRV_tx2gene <- SIRV.G.Tx.map[, c("tx_name", "gene_id")]
-combined_tx2gene <- rbind(
-  # human_tx2gene, 
-  sequins_tx2gene, 
-  SIRV_tx2gene
-)
-
-# Get quant.sf file paths
-get_quant_paths <- function(dirs, file_name) {
-  # Generate file paths for quantification files
-  quant_paths <- file.path(dirs, file_name)
-  return(quant_paths)
-}
-
-# Define directories with their corresponding expected file names
-oarfish_dirs <- list(
-  ill_bulk = list(dir = params$ill_bulk_salmon_dir, file_name = "quant.sf"),
-  ont_bulk = list(dir = params$ont_bulk_oarfish_dir, file_name = ".quant"),
-  pb_bulk = list(dir = params$pb_bulk_oarfish_dir, file_name = ".quant"),
-  drna_bulk = list(dir = params$ont_drnd_oarfish_dir, file_name = ".quant")
-)
-
-# Apply function to each directory to get all quant file paths
-quant_paths <- lapply(oarfish_dirs, function(dir_info) {
-  # Get the directory and file name from dir_info
-  dir <- dir_info$dir
-  file_name <- dir_info$file_name
-  
-  # List all subdirectories and get the quant file paths
-  sub_dirs <- list.dirs(dir, full.names = TRUE, recursive = FALSE)
-  get_quant_paths(sub_dirs, file_name)
-})
-
-# Flatten the list of quant_paths into a named list
-quant_paths <- lapply(quant_paths, unlist)
-
-# Function to import DGE from tximport
-get_dge_from_txi <- function(quant_dir, sample_prefix_regex, type) {
-  # Import data using tximport
-  txi <- tximport(quant_dir,
-                  type = type,
-                  tx2gene = combined_tx2gene,
-                  ignoreAfterBar = TRUE,
-                  countsFromAbundance = "no") # raw counts
-  counts <- as.data.frame(txi$counts, stringAsFactors = FALSE)
-  sample_names <- gsub(sample_prefix_regex, '', basename(dirname(quant_dir)))
-  colnames(counts) <- sample_names
-  rst.dge <- DGEList(counts = counts)
-  rst.dge$genes <- data.frame(Length=txi$length %>% rowMeans())
-  rownames(rst.dge$samples) <- sub(sample_prefix_regex, '', rownames(rst.dge$samples))
-  colnames(rst.dge$counts) <- sub(sample_prefix_regex, "", colnames(rst.dge$counts))
-  # colnames(rst.dge$gene$Length) <- sub(sample_prefix_regex, "", colnames(rst.dge$gene$Length))
-  
-  rst.dge$samples <- merge(rst.dge$samples %>% select(-group), bulk.meta, by = "row.names", all.x = TRUE) %>% select(-Row.names)
-  rst.dge$samples <- rst.dge$samples[match(colnames(rst.dge$counts), rst.dge$samples$sample),]
-  return(rst.dge)
-}
-
-# Process each quant path for different bulk types
-ill_bulk.gene.dge <- get_dge_from_txi(quant_paths$ill_bulk, ".*/", "salmon")
-ont_bulk.gene.dge <- get_dge_from_txi(quant_paths$ont_bulk, ".*/", "oarfish")
-pb_bulk.gene.dge <- get_dge_from_txi(quant_paths$pb_bulk, ".*/", "oarfish")
-drna_bulk.gene.dge <- get_dge_from_txi(quant_paths$drna_bulk, ".*/", "oarfish")
-
-# Get seqins and sirv gene dge
-## get seqins and sirv gene dge
-ill_bulk.gene.dge_sequins <- ill_bulk.gene.dge[is.sequins(ill_bulk.gene.dge), ]
-ont_bulk.gene.dge_sequins <- ont_bulk.gene.dge[is.sequins(ont_bulk.gene.dge), ]
-pb_bulk.gene.dge_sequins <- pb_bulk.gene.dge[is.sequins(pb_bulk.gene.dge), ]
-drna_bulk.gene.dge_sequins <- drna_bulk.gene.dge[is.sequins(drna_bulk.gene.dge), ]
-
-## get sirv gene dge
-ill_bulk.gene.dge_sirv <- ill_bulk.gene.dge[is.sirv_all(ill_bulk.gene.dge), ]
-ont_bulk.gene.dge_sirv <- ont_bulk.gene.dge[is.sirv_all(ont_bulk.gene.dge), ]
-pb_bulk.gene.dge_sirv <- pb_bulk.gene.dge[is.sirv_all(pb_bulk.gene.dge), ]
-drna_bulk.gene.dge_sirv <- drna_bulk.gene.dge[is.sirv_all(drna_bulk.gene.dge), ]
-
-## get ercc gene dge
-ill_bulk.gene.dge_ercc <- ill_bulk.gene.dge[is.ercc(ill_bulk.gene.dge), ]
-ont_bulk.gene.dge_ercc <- ont_bulk.gene.dge[is.ercc(ont_bulk.gene.dge), ]
-pb_bulk.gene.dge_ercc <- pb_bulk.gene.dge[is.ercc(pb_bulk.gene.dge), ]
-drna_bulk.gene.dge_ercc <- drna_bulk.gene.dge[is.ercc(drna_bulk.gene.dge), ]
-
 # Get seqins and sirv transcript dge
-ill_bulk.txi.dge_sequins <- ill_bulk.dge[is.sequins(ill_bulk.dge), ]
-ont_bulk.txi.dge_sequins <- ont_bulk.dge.oarfish[is.sequins(ont_bulk.dge.oarfish), ]
-pb_bulk.txi.dge_sequins <- pb_bulk.dge.oarfish[is.sequins(pb_bulk.dge.oarfish), ]
-drna_bulk.txi.dge_sequins <- ont_drna.dge.oarfish[is.sequins(ont_drna.dge.oarfish), ]
+ill_bulk.txi.dge_sequins <- ill_bulk.tx.dge[is.sequins(ill_bulk.tx.dge), ]
+ont_bulk.txi.dge_sequins <- ont_bulk.tx.dge[is.sequins(ont_bulk.tx.dge), ]
+pb_bulk.txi.dge_sequins <- pb_bulk.tx.dge[is.sequins(pb_bulk.tx.dge), ]
+drna_bulk.txi.dge_sequins <- drna_bulk.tx.dge[is.sequins(drna_bulk.tx.dge), ]
 
 ## get sirv transcript dge
-ill_bulk.txi.dge_sirv <- ill_bulk.dge[is.sirv_all(ill_bulk.dge), ]
-ont_bulk.txi.dge_sirv <- ont_bulk.dge.oarfish[is.sirv_all(ont_bulk.dge.oarfish), ]
-pb_bulk.txi.dge_sirv <- pb_bulk.dge.oarfish[is.sirv_all(pb_bulk.dge.oarfish), ]
-drna_bulk.txi.dge_sirv <- ont_drna.dge.oarfish[is.sirv_all(ont_drna.dge.oarfish), ]
+ill_bulk.txi.dge_sirv <- ill_bulk.tx.dge[is.sirv_all(ill_bulk.tx.dge), ]
+ont_bulk.txi.dge_sirv <- ont_bulk.tx.dge[is.sirv_all(ont_bulk.tx.dge), ]
+pb_bulk.txi.dge_sirv <- pb_bulk.tx.dge[is.sirv_all(pb_bulk.tx.dge), ]
+drna_bulk.txi.dge_sirv <- drna_bulk.tx.dge[is.sirv_all(drna_bulk.tx.dge), ]
 
 ## get ercc transcript dge
-ill_bulk.txi.dge_ercc <- ill_bulk.dge[is.ercc(ill_bulk.dge), ]
-ont_bulk.txi.dge_ercc <- ont_bulk.dge.oarfish[is.ercc(ont_bulk.dge.oarfish), ]
-pb_bulk.txi.dge_ercc <- pb_bulk.dge.oarfish[is.ercc(pb_bulk.dge.oarfish), ]
-drna_bulk.txi.dge_ercc <- ont_drna.dge.oarfish[is.ercc(ont_drna.dge.oarfish), ]
-
-
-# save all workpalce as Rdata
-# save.image("/vast/scratch/users/you.yu/test/Spikein_DE_line259.Rdata")
+ill_bulk.txi.dge_ercc <- ill_bulk.tx.dge[is.ercc(ill_bulk.tx.dge), ]
+ont_bulk.txi.dge_ercc <- ont_bulk.tx.dge[is.ercc(ont_bulk.tx.dge), ]
+pb_bulk.txi.dge_ercc <- pb_bulk.tx.dge[is.ercc(pb_bulk.tx.dge), ]
+drna_bulk.txi.dge_ercc <- drna_bulk.tx.dge[is.ercc(drna_bulk.tx.dge), ]
 ```
+
 # Gene Transcript discovery analysis
 Using `filterByExpr` for each dataset, using min.count = 10 for gene and min.count = 5 for transcript.
 ```{r Gene Transcript discovery upset plot}
@@ -294,25 +155,6 @@ ComplexUpset::upset(
   wrap = TRUE
 )}
 
-# Gene
-list(
-  "Illumina" = ill_bulk.gene.dge_sequins,
-  "ONT cDNA" = ont_bulk.gene.dge_sequins,
-  "PacBio" = pb_bulk.gene.dge_sequins,
-  "ONT dRNA" = drna_bulk.gene.dge_sequins
-) %>% get_discovery_upset(min.count = 10) + ggtitle("Sequins gene discovery")
-list(
-  "Illumina" = ill_bulk.gene.dge_sirv,
-  "ONT cDNA" = ont_bulk.gene.dge_sirv,
-  "PacBio" = pb_bulk.gene.dge_sirv,
-  "ONT dRNA" = drna_bulk.gene.dge_sirv
-) %>% get_discovery_upset(min.count = 10) + ggtitle("SIRV gene discovery")
-list(
-  "Illumina" = ill_bulk.gene.dge_ercc,
-  "ONT cDNA" = ont_bulk.gene.dge_ercc,
-  "PacBio" = pb_bulk.gene.dge_ercc,
-  "ONT dRNA" = drna_bulk.gene.dge_ercc
-) %>% get_discovery_upset(min.count = 10) + ggtitle("ERCC gene discovery")
 
 # Transcript
 list(
@@ -365,69 +207,9 @@ tx_discovery <- tibble(
   ) + ggtitle("ERCC transcript discovery")
 ```
 
-# Differential analysis
+# Differential Transcript expression analysis
 
 ```{r filter for common gene and transcript only}
-
-
-# Gene
-
-# Sequin
-common_genes <- Reduce(intersect, lapply(list(ill_bulk.gene.dge_sequins, ont_bulk.gene.dge_sequins, pb_bulk.gene.dge_sequins, drna_bulk.gene.dge_sequins), rownames))
-ill_bulk.gene.dge_sequins <- ill_bulk.gene.dge_sequins[common_genes, ]
-ont_bulk.gene.dge_sequins <- ont_bulk.gene.dge_sequins[common_genes, ]
-pb_bulk.gene.dge_sequins <- pb_bulk.gene.dge_sequins[common_genes, ]
-drna_bulk.gene.dge_sequins <- drna_bulk.gene.dge_sequins[common_genes, ]
-
-keep <- filterByExpr(ill_bulk.gene.dge_sequins, group = ill_bulk.gene.dge_sequins$samples$group, min.count=10) &
-          filterByExpr(ont_bulk.gene.dge_sequins, group = ont_bulk.gene.dge_sequins$samples$group, min.count=10) &
-          filterByExpr(pb_bulk.gene.dge_sequins, group = pb_bulk.gene.dge_sequins$samples$group, min.count=10) &
-          filterByExpr(drna_bulk.gene.dge_sequins, group = drna_bulk.gene.dge_sequins$samples$group, min.count=10)
-
-ill_bulk.gene.dge_sequins <- ill_bulk.gene.dge_sequins[keep, ]
-ont_bulk.gene.dge_sequins <- ont_bulk.gene.dge_sequins[keep, ]
-pb_bulk.gene.dge_sequins <- pb_bulk.gene.dge_sequins[keep, ]
-drna_bulk.gene.dge_sequins <- drna_bulk.gene.dge_sequins[keep, ]
-
-
-
-# Sirv
-common_genes <- Reduce(intersect, lapply(list(ill_bulk.gene.dge_sirv, ont_bulk.gene.dge_sirv, pb_bulk.gene.dge_sirv, drna_bulk.gene.dge_sirv), rownames))
-ill_bulk.gene.dge_sirv <- ill_bulk.gene.dge_sirv[common_genes, ]
-ont_bulk.gene.dge_sirv <- ont_bulk.gene.dge_sirv[common_genes, ]
-pb_bulk.gene.dge_sirv <- pb_bulk.gene.dge_sirv[common_genes, ]
-drna_bulk.gene.dge_sirv <- drna_bulk.gene.dge_sirv[common_genes, ]  
-
-keep <- filterByExpr(ill_bulk.gene.dge_sirv, group = ill_bulk.gene.dge_sirv$samples$group, min.count=10) &
-          filterByExpr(ont_bulk.gene.dge_sirv, group = ont_bulk.gene.dge_sirv$samples$group, min.count=10) &
-          filterByExpr(pb_bulk.gene.dge_sirv, group = pb_bulk.gene.dge_sirv$samples$group, min.count=10) &
-          filterByExpr(drna_bulk.gene.dge_sirv, group = drna_bulk.gene.dge_sirv$samples$group, min.count=10)
-
-ill_bulk.gene.dge_sirv <- ill_bulk.gene.dge_sirv[keep, ]
-ont_bulk.gene.dge_sirv <- ont_bulk.gene.dge_sirv[keep, ]
-pb_bulk.gene.dge_sirv <- pb_bulk.gene.dge_sirv[keep, ]
-drna_bulk.gene.dge_sirv <- drna_bulk.gene.dge_sirv[keep, ]
-
-
-# ERCC
-common_genes <- Reduce(intersect, lapply(list(ill_bulk.gene.dge_ercc, ont_bulk.gene.dge_ercc, pb_bulk.gene.dge_ercc, drna_bulk.gene.dge_ercc), rownames))
-ill_bulk.gene.dge_ercc <- ill_bulk.gene.dge_ercc[common_genes, ]
-ont_bulk.gene.dge_ercc <- ont_bulk.gene.dge_ercc[common_genes, ]
-pb_bulk.gene.dge_ercc <- pb_bulk.gene.dge_ercc[common_genes, ]
-drna_bulk.gene.dge_ercc <- drna_bulk.gene.dge_ercc[common_genes, ]  
-
-keep <- filterByExpr(ill_bulk.gene.dge_ercc, group = ill_bulk.gene.dge_ercc$samples$group, min.count=10) &
-          filterByExpr(ont_bulk.gene.dge_ercc, group = ont_bulk.gene.dge_ercc$samples$group, min.count=10) &
-          filterByExpr(pb_bulk.gene.dge_ercc, group = pb_bulk.gene.dge_ercc$samples$group, min.count=10) &
-          filterByExpr(drna_bulk.gene.dge_ercc, group = drna_bulk.gene.dge_ercc$samples$group, min.count=10)
-
-ill_bulk.gene.dge_ercc <- ill_bulk.gene.dge_ercc[keep, ]
-ont_bulk.gene.dge_ercc <- ont_bulk.gene.dge_ercc[keep, ]
-pb_bulk.gene.dge_ercc <- pb_bulk.gene.dge_ercc[keep, ]
-drna_bulk.gene.dge_ercc <- drna_bulk.gene.dge_ercc[keep, ]
-
-
-
 # Transcript
 # Sequin
 common_tx <- Reduce(intersect, lapply(list(ill_bulk.txi.dge_sequins, ont_bulk.txi.dge_sequins, pb_bulk.txi.dge_sequins, drna_bulk.txi.dge_sequins), rownames))
@@ -439,10 +221,10 @@ keep <- filterByExpr(ill_bulk.txi.dge_sequins, group = ill_bulk.txi.dge_sequins$
           filterByExpr(ont_bulk.txi.dge_sequins, group = ont_bulk.txi.dge_sequins$samples$group, min.count=5) &
           filterByExpr(pb_bulk.txi.dge_sequins, group = pb_bulk.txi.dge_sequins$samples$group, min.count=5) &
           filterByExpr(drna_bulk.txi.dge_sequins, group = drna_bulk.txi.dge_sequins$samples$group, min.count=5)
-ill_bulk.txi.dge_sequins <- ill_bulk.txi.dge_sequins[keep, ]
-ont_bulk.txi.dge_sequins <- ont_bulk.txi.dge_sequins[keep, ]
-pb_bulk.txi.dge_sequins <- pb_bulk.txi.dge_sequins[keep, ]
-drna_bulk.txi.dge_sequins <- drna_bulk.txi.dge_sequins[keep, ]
+ill_bulk.txi.dge_sequins <- ill_bulk.txi.dge_sequins[keep, ,keep.lib.sizes=FALSE]
+ont_bulk.txi.dge_sequins <- ont_bulk.txi.dge_sequins[keep, ,keep.lib.sizes=FALSE]
+pb_bulk.txi.dge_sequins <- pb_bulk.txi.dge_sequins[keep, ,keep.lib.sizes=FALSE]
+drna_bulk.txi.dge_sequins <- drna_bulk.txi.dge_sequins[keep, ,keep.lib.sizes=FALSE]
 
 
 # Sirv
@@ -456,10 +238,10 @@ keep <- filterByExpr(ill_bulk.txi.dge_sirv, group = ill_bulk.txi.dge_sirv$sample
           filterByExpr(ont_bulk.txi.dge_sirv, group = ont_bulk.txi.dge_sirv$samples$group, min.count=5) &
           filterByExpr(pb_bulk.txi.dge_sirv, group = pb_bulk.txi.dge_sirv$samples$group, min.count=5) &
           filterByExpr(drna_bulk.txi.dge_sirv, group = drna_bulk.txi.dge_sirv$samples$group, min.count=5)
-ill_bulk.txi.dge_sirv <- ill_bulk.txi.dge_sirv[keep, ]
-ont_bulk.txi.dge_sirv <- ont_bulk.txi.dge_sirv[keep, ]
-pb_bulk.txi.dge_sirv <- pb_bulk.txi.dge_sirv[keep, ]
-drna_bulk.txi.dge_sirv <- drna_bulk.txi.dge_sirv[keep, ]
+ill_bulk.txi.dge_sirv <- ill_bulk.txi.dge_sirv[keep, ,keep.lib.sizes=FALSE]
+ont_bulk.txi.dge_sirv <- ont_bulk.txi.dge_sirv[keep, ,keep.lib.sizes=FALSE]
+pb_bulk.txi.dge_sirv <- pb_bulk.txi.dge_sirv[keep, ,keep.lib.sizes=FALSE]
+drna_bulk.txi.dge_sirv <- drna_bulk.txi.dge_sirv[keep, ,keep.lib.sizes=FALSE]
 
 
 
@@ -474,321 +256,12 @@ keep <- filterByExpr(ill_bulk.txi.dge_ercc, group = ill_bulk.txi.dge_ercc$sample
           filterByExpr(ont_bulk.txi.dge_ercc, group = ont_bulk.txi.dge_ercc$samples$group, min.count=5) &
           filterByExpr(pb_bulk.txi.dge_ercc, group = pb_bulk.txi.dge_ercc$samples$group, min.count=5) &
           filterByExpr(drna_bulk.txi.dge_ercc, group = drna_bulk.txi.dge_ercc$samples$group, min.count=5)
-ill_bulk.txi.dge_ercc <- ill_bulk.txi.dge_ercc[keep, ]
-ont_bulk.txi.dge_ercc <- ont_bulk.txi.dge_ercc[keep, ]
-pb_bulk.txi.dge_ercc <- pb_bulk.txi.dge_ercc[keep, ]
-drna_bulk.txi.dge_ercc <- drna_bulk.txi.dge_ercc[keep, ]
-
-
-
+ill_bulk.txi.dge_ercc <- ill_bulk.txi.dge_ercc[keep, ,keep.lib.sizes=FALSE]
+ont_bulk.txi.dge_ercc <- ont_bulk.txi.dge_ercc[keep, ,keep.lib.sizes=FALSE]
+pb_bulk.txi.dge_ercc <- pb_bulk.txi.dge_ercc[keep, ,keep.lib.sizes=FALSE]
+drna_bulk.txi.dge_ercc <- drna_bulk.txi.dge_ercc[keep, ,keep.lib.sizes=FALSE]
 
 ```
-
-## MDS (Merged)
-### Code setup
-```{r Merge DGEs}
-# NOTE: The merged DGElist will only be used for the MDS plot. The DE analysis will be done separately for each dataset.
-# Gene
-ill_bulk.gene.dge_sequins$samples$platform <- "Illumina"
-ont_bulk.gene.dge_sequins$samples$platform <- "ONT cDNA"
-pb_bulk.gene.dge_sequins$samples$platform <- "PacBio"
-drna_bulk.gene.dge_sequins$samples$platform <- "ONT dRNA"
-bulk.gene.dge_sequins.merge <- cbind(
-  ill_bulk.gene.dge_sequins,
-  ont_bulk.gene.dge_sequins,
-  pb_bulk.gene.dge_sequins,
-  drna_bulk.gene.dge_sequins
-)
-
-ill_bulk.gene.dge_sirv$samples$platform <- "Illumina"
-ont_bulk.gene.dge_sirv$samples$platform <- "ONT cDNA"
-pb_bulk.gene.dge_sirv$samples$platform <- "PacBio"
-drna_bulk.gene.dge_sirv$samples$platform <- "ONT dRNA"
-bulk.gene.dge_sirv.merge <- cbind(
-  ill_bulk.gene.dge_sirv,
-  ont_bulk.gene.dge_sirv,
-  pb_bulk.gene.dge_sirv,
-  drna_bulk.gene.dge_sirv
-)
-
-ill_bulk.gene.dge_ercc$samples$platform <- "Illumina"
-ont_bulk.gene.dge_ercc$samples$platform <- "ONT cDNA"
-pb_bulk.gene.dge_ercc$samples$platform <- "PacBio"
-drna_bulk.gene.dge_ercc$samples$platform <- "ONT dRNA"
-bulk.gene.dge_ercc.merge <- cbind(
-  ill_bulk.gene.dge_ercc,
-  ont_bulk.gene.dge_ercc,
-  pb_bulk.gene.dge_ercc,
-  drna_bulk.gene.dge_ercc
-)
-
-bulk.gene.dge_sirv.merge <- rbind(bulk.gene.dge_sirv.merge, bulk.gene.dge_ercc.merge)
-
-
-# Transcript
-ill_bulk.txi.dge_sequins$samples$platform <- "Illumina"
-ont_bulk.txi.dge_sequins$samples$platform <- "ONT cDNA"
-pb_bulk.txi.dge_sequins$samples$platform <- "PacBio"
-drna_bulk.txi.dge_sequins$samples$platform <- "ONT dRNA"
-bulk.txi.dge_sequins.merge <- cbind(
-  ill_bulk.txi.dge_sequins,
-  ont_bulk.txi.dge_sequins,
-  pb_bulk.txi.dge_sequins,
-  drna_bulk.txi.dge_sequins
-)
-
-ill_bulk.txi.dge_sirv$samples$platform <- "Illumina"
-ont_bulk.txi.dge_sirv$samples$platform <- "ONT cDNA"
-pb_bulk.txi.dge_sirv$samples$platform <- "PacBio"
-drna_bulk.txi.dge_sirv$samples$platform <- "ONT dRNA"
-bulk.txi.dge_sirv.merge <- cbind(
-  ill_bulk.txi.dge_sirv,
-  ont_bulk.txi.dge_sirv,
-  pb_bulk.txi.dge_sirv,
-  drna_bulk.txi.dge_sirv
-)
-
-ill_bulk.txi.dge_ercc$samples$platform <- "Illumina"
-ont_bulk.txi.dge_ercc$samples$platform <- "ONT cDNA"
-pb_bulk.txi.dge_ercc$samples$platform <- "PacBio"
-drna_bulk.txi.dge_ercc$samples$platform <- "ONT dRNA"
-bulk.txi.dge_ercc.merge <- cbind(
-  ill_bulk.txi.dge_ercc,
-  ont_bulk.txi.dge_ercc,
-  pb_bulk.txi.dge_ercc,
-  drna_bulk.txi.dge_ercc
-)
-
-bulk.txi.dge_sirv.merge <- rbind(bulk.txi.dge_sirv.merge, bulk.txi.dge_ercc.merge)
-```
-
-```{r MDS plot func}
-norm_and_mds <- function(dge) {
-  dge <- calcNormFactors(dge, method = "TMM")
-  mds <- plotMDS(dge, plot = FALSE)
-  return(mds)
-}
-myMDS <- function(dge, mds) {
-  # normalisation
-  mds_data <- data.frame(
-    Dim1 = mds$x,
-    Dim2 = mds$y,
-    cell.line = dge$sample$sample,
-    Cancer.type = dge$sample$group,
-    Data.type = dge$sample$platform,
-    Sequins.mix = dge$samples$sequins
-  )
-
-  p <- ggplot(mds_data, aes(x = Dim1, y = Dim2, color = Cancer.type, shape = Data.type, label=cell.line)) +
-    geom_point(size = 3, alpha = 0.6) + # Plot points
-    geom_text_repel(size = 3) +
-    labs(title = "MDS plot", 
-        x = paste0("Dimension 1 (", round(mds$var.explained[1]*100, 2), "%)" ) , 
-        y = paste0("Dimension 2 (", round(mds$var.explained[2]*100, 2), "%)" )) +
-    scale_color_viridis_d() + # Set color scale
-    theme_minimal() 
-  return(p)
-}
-```
-### Gene count MDS
-#### Sequins
-```{r Sequins Gene MDS}
-mds <- norm_and_mds(bulk.gene.dge_sequins.merge)
-myMDS(bulk.gene.dge_sequins.merge, mds) + ggtitle("Sequins gene counts") +
-  aes(color = Data.type, shape = Cancer.type) + 
-  scale_color_manual(values = color_palette[c("Illumina", "ONT_1", "ONT_2", "PacBio")] %>% unname())
-```
-
-#### SIRV
-```{r SIRV Gene MDS}
-mds <- norm_and_mds(bulk.gene.dge_sirv.merge)
-myMDS(bulk.gene.dge_sirv.merge, mds) + ggtitle("SIRV gene counts") +
-  aes(color = Data.type, shape = Cancer.type) + 
-  scale_color_manual(values = color_palette[c("Illumina", "ONT_1", "ONT_2", "PacBio")] %>% unname())
-```
-
-
-### Transcript count MDS
-
-#### Sequins
-```{r Sequins transcript MDS}
-mds <- norm_and_mds(bulk.txi.dge_sequins.merge)
-p1 <- myMDS(bulk.txi.dge_sequins.merge, mds) + ggtitle("Sequins transcript counts") +
-  aes(color = Sequins.mix, shape = Data.type)
-p2 <- myMDS(bulk.txi.dge_sequins.merge, mds) + ggtitle("Sequins transcript counts") +
-  aes(color =  Data.type , shape = Sequins.mix) + 
-  scale_color_manual(values = color_palette[c("Illumina", "ONT_1", "ONT_2", "PacBio")] %>% unname())
-
-p1 | p2
-```
-
-#### SIRV
-```{r SIRV transcript MDS}
-mds <- norm_and_mds(bulk.txi.dge_sirv.merge)
-myMDS(bulk.txi.dge_sirv.merge, mds) + ggtitle("SIRV transcript counts") +
-  aes(color = Data.type, shape = Cancer.type) + 
-  scale_color_manual(values = color_palette[c("Illumina", "ONT_1", "ONT_2", "PacBio")] %>% unname())
-```
-
-## Gene level
-### Run edgeR (Salmon and Oarfish)
-```{r}
-DGE.edgeR_sequins <- function(dge, norm.method = "TMM") {
-  # QC and normalization
-  #filter <- filterByExpr(dge, group = dge$samples$sample)
-  #dge <- dge[filter, , keep.lib.sizes = FALSE]
-
-  if (!is.null(norm.method)) {
-    dge <- calcNormFactors(dge, method = norm.method)
-  }
-
-  design <- model.matrix(~ 0 + sequins, data = dge$samples)
-  dge <- estimateDisp(dge, design)
-  qlfit <- glmQLFit(dge, design)
-
-  contrasts <- makeContrasts(
-    AvsB = sequinsA - sequinsB,
-    levels = design
-  )
-
-  AvsB.QLF.test <- glmQLFTest(qlfit, contrast = contrasts[, "AvsB"])
-
-  list(
-    AvsB.DE = AvsB.QLF.test
-  )
-}
-
-
-ill_bulk.dge_sequins.list <- DGE.edgeR_sequins(ill_bulk.gene.dge_sequins)
-ont_bulk.dge_sequins.list <- DGE.edgeR_sequins(ont_bulk.gene.dge_sequins)
-drna_bulk.dge_sequins.list <- DGE.edgeR_sequins(drna_bulk.gene.dge_sequins)
-pb_bulk.dge_sequins.list <- DGE.edgeR_sequins(pb_bulk.gene.dge_sequins)
-
-
-ill_bulk.dge_sirv.list <- DGE.edgeR_sequins(rbind(ill_bulk.gene.dge_sirv, ill_bulk.gene.dge_ercc))
-ont_bulk.dge_sirv.list <- DGE.edgeR_sequins(rbind(ont_bulk.gene.dge_sirv, ont_bulk.gene.dge_ercc))
-drna_bulk.dge_sirv.list <- DGE.edgeR_sequins(rbind(drna_bulk.gene.dge_sirv, drna_bulk.gene.dge_ercc))
-pb_bulk.dge_sirv.list <- DGE.edgeR_sequins(rbind(pb_bulk.gene.dge_sirv, pb_bulk.gene.dge_ercc))
-
-```
-
-### Cross-platform comparison (upset and scatter plot)
-```{r upset plot function}
-complex_upset_plot <- function(lst) {
-  # apply decideTests to each list element
-  DEGs <- lapply(lst, function(x) {
-    x <- x %>% decideTests()
-    x <- c(paste0(rownames(x)[x > 0], "_up"), paste0(rownames(x)[x < 0], "_down"))
-    return(x)
-  })
-
-  long_df <- stack(DEGs)
-
-  # Make the binary membership matrix
-  binary_matrix <- long_df %>%
-    mutate(present = 1) %>%
-    pivot_wider(names_from = ind, values_from = present, values_fill = 0)
-
-  p <- ComplexUpset::upset(
-    binary_matrix %>% select(-values) %>% as.data.frame(),
-    intersect = names(lst),
-    wrap = TRUE
-  )
-
-  return(list(
-    plot = p,
-    matrix = binary_matrix %>% rename(Gene = values)
-  ))
-}
-
-compare_sequins_gene_logFC <- function(glm.test.rst, fig.title){
-  sequins.gt <- read_tsv(params$sequins_tsv)
-  sequins.gt$GENE <- strsplit(sequins.gt$NAME, "\\_") %>% sapply(function(x) paste0(x[1], "_", x[2]))
-  # aggregate by gene
-  sequins.gt <- sequins.gt %>% group_by(GENE) %>% summarise(MIX_A = sum(MIX_A), MIX_B = sum(MIX_B),  LENGTH = mean(LENGTH))
-  sequins.gt$gt.logFC <- log2(sequins.gt$MIX_A/sequins.gt$MIX_B)
-
-  # glm.test result
-  df <- glm.test.rst %>% 
-    topTags(adjust.method = 'BH', n = nrow(glm.test.rst))  %>% 
-    data.frame() %>% tibble::rownames_to_column(var="GENE") %>% 
-    select(GENE, logFC, FDR) %>% 
-    left_join(sequins.gt %>% select(GENE, gt.logFC, LENGTH), by = c( "GENE"))
-
-  # add a column for significant DE, "down" for downregulated, "up" for upregulated
-  df$DE <- ifelse(df$logFC > 0 & df$FDR < 0.05, "up", ifelse(df$logFC < 0 & df$FDR < 0.05, "down", "not significant"))
-
-  # plot gt.logFC vs logFC, add correlation
-  p <- ggplot(df, aes(x = logFC, y = gt.logFC, color = DE, size = LENGTH, label=GENE)) +
-    geom_point() +
-    # geom_text_repel(size = 3)    +
-    scale_size(limits = c(min(sequins.gt$LENGTH), max(sequins.gt$LENGTH))) + 
-    geom_abline(intercept = 0, slope = 1, linetype = "dashed") +
-    scale_color_viridis_d() +
-    theme_minimal() +
-    labs(x = "Estimated logFC", y = " Ground truth logFC", color = "DE") +
-    annotate("text",
-      x = min(df$logFC), y = max(df$gt.logFC),
-      label = paste(
-        "\nMAE: ", round(mean(abs(df$logFC - df$gt.logFC)), 2),
-        "\nMSE: ", round(mean((df$logFC - df$gt.logFC)^2), 2)
-      ),
-      hjust = 0, vjust = 1,
-      color = "black", size = 4,
-      fontface = "italic"
-    ) +
-    ggtitle(fig.title) 
-  return(p)
-}
-```
-
-
-### DGE sequins 
-```{r upset and scater plot dge sequins 2, fig.width=8, fig.height=6}
-# Upset plot
-## A vs B
-lst <- list(
-  "Illumina" = ill_bulk.dge_sequins.list$AvsB.DE,
-  "ONT cDNA" = ont_bulk.dge_sequins.list$AvsB.DE,
-  "PacBio" = pb_bulk.dge_sequins.list$AvsB.DE,
-  "ONT dRNA" = drna_bulk.dge_sequins.list$AvsB.DE
-)
-complex_upset_plot(lst)$plot + ggtitle("DGE Sequins MixA vs MixB") + theme(plot.title = element_text(size = 20))
-
-lfc_plot <- lapply(1:4, function(x) compare_sequins_gene_logFC(lst[[x]], fig.title = names(lst)[x]))
-
-# open a pdf
-(lfc_plot[[1]] | lfc_plot[[2]]) / (lfc_plot[[3]] | lfc_plot[[4]]) + patchwork::plot_annotation(
-  title = "Sequins MixA vs MixB",
-  theme = theme(plot.title = element_text(size =25))
-  )  + patchwork::plot_layout(
-    guides = "collect"
-)
-```
-
-### 
-```{r upset and scater plot dge sequins, fig.width=8, fig.height=6}
-# Upset plot
-## A vs B (AvsB)
-lst <- list(
-  "Illumina" = ill_bulk.dge_sequins.list$AvsB.DE,
-  "ONT cDNA" = ont_bulk.dge_sequins.list$AvsB.DE,
-  "PacBio" = pb_bulk.dge_sequins.list$AvsB.DE,
-  "ONT dRNA" = drna_bulk.dge_sequins.list$AvsB.DE
-)
-complex_upset_plot(lst)$plot + ggtitle("DGE Sequins MixA vs MixB") + theme(plot.title = element_text(size = 20))
-
-lfc_plot <- lapply(1:4, function(x) compare_sequins_gene_logFC(lst[[x]], fig.title = names(lst)[x]))
-
-# open a pdf
-(lfc_plot[[1]] | lfc_plot[[2]]) / (lfc_plot[[3]] | lfc_plot[[4]]) + patchwork::plot_annotation(
-  title = "Sequins MixA vs MixB",
-  theme = theme(plot.title = element_text(size =25))
-  )  + patchwork::plot_layout(
-    guides = "collect"
-)
-```
-
 
 
 ## Transcript level
@@ -818,16 +291,16 @@ DTE.edgeR_sequins <- function(dge, norm.method = "TMM") {
 ```
 
 ```{r get dte scaling}
-ill_bulk.dte_sequins.list <- DGE.edgeR_sequins(ill_bulk.txi.dge_sequins)
-ont_bulk.dte_sequins.list <- DGE.edgeR_sequins(ont_bulk.txi.dge_sequins)
-drna_bulk.dte_sequins.list <- DGE.edgeR_sequins(drna_bulk.txi.dge_sequins)
-pb_bulk.dte_sequins.list <- DGE.edgeR_sequins(pb_bulk.txi.dge_sequins)
+ill_bulk.dte_sequins.list <- DTE.edgeR_sequins(ill_bulk.txi.dge_sequins)
+ont_bulk.dte_sequins.list <- DTE.edgeR_sequins(ont_bulk.txi.dge_sequins)
+drna_bulk.dte_sequins.list <- DTE.edgeR_sequins(drna_bulk.txi.dge_sequins)
+pb_bulk.dte_sequins.list <- DTE.edgeR_sequins(pb_bulk.txi.dge_sequins)
 
 
-ill_bulk.dte_sirv.list <- DGE.edgeR_sequins(rbind(ill_bulk.txi.dge_sirv, ill_bulk.txi.dge_ercc))
-ont_bulk.dte_sirv.list <- DGE.edgeR_sequins(rbind(ont_bulk.txi.dge_sirv, ont_bulk.txi.dge_ercc))
-drna_bulk.dte_sirv.list <- DGE.edgeR_sequins(rbind(drna_bulk.txi.dge_sirv, drna_bulk.txi.dge_ercc))
-pb_bulk.dte_sirv.list <- DGE.edgeR_sequins(rbind(pb_bulk.txi.dge_sirv, pb_bulk.txi.dge_ercc))
+ill_bulk.dte_sirv.list <- DTE.edgeR_sequins(rbind(ill_bulk.txi.dge_sirv, ill_bulk.txi.dge_ercc))
+ont_bulk.dte_sirv.list <- DTE.edgeR_sequins(rbind(ont_bulk.txi.dge_sirv, ont_bulk.txi.dge_ercc))
+drna_bulk.dte_sirv.list <- DTE.edgeR_sequins(rbind(drna_bulk.txi.dge_sirv, drna_bulk.txi.dge_ercc))
+pb_bulk.dte_sirv.list <- DTE.edgeR_sequins(rbind(pb_bulk.txi.dge_sirv, pb_bulk.txi.dge_ercc))
 ```
 
 ### Upset plot

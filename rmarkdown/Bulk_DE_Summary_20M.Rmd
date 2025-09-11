@@ -413,7 +413,7 @@ keep <- filterByExpr(ill_bulk.dge, group = ill_bulk.dge$samples$group, min.count
 #table(keep)
 
 ill_bulk.dge <- ill_bulk.dge[keep, ]
-ont_bulk.dge.oarfish <- ont_bulk.dge.oarfish[keep, ]
+ont_bulk.dge.oarfish <- ont_bulk.dge.oarfish[keep,]
 pb_bulk.dge.oarfish <- pb_bulk.dge.oarfish[keep, ]
 ont_drna.dge.oarfish <- ont_drna.dge.oarfish[keep, ]
 
@@ -438,106 +438,6 @@ ont_drna.dge.oarfish <- calcNormFactors(ont_drna.dge.oarfish, method = "TMM")
 
 ```
 
-# MDS (Merged)
-
-## Merge DGElist
-
-NOTE: The merged DGElist will only be used for the MDS plot. The DE analysis will be done separately for each dataset.
-
-```{r Merge DGEs, include=FALSE}
-# Gene
-ill_bulk.gene.dge$samples$platform <- "Illumina"
-ont_bulk.gene.dge$samples$platform <- "ONT cDNA"
-pb_bulk.gene.dge$samples$platform <- "PacBio"
-drna_bulk.gene.dge$samples$platform <- "ONT dRNA"
-bulk.gene.dge.merge <- cbind(
-  ill_bulk.gene.dge,
-  ont_bulk.gene.dge,
-  pb_bulk.gene.dge,
-  drna_bulk.gene.dge
-)
-
-# Transcript
-ill_bulk.dge$samples$platform <- "Illumina"
-ill_bulk.dge.copy <- ill_bulk.dge
-ill_bulk.dge.copy$genes$EffectiveLength <- NULL
-ont_bulk.dge.oarfish$samples$platform <- "ONT cDNA"
-pb_bulk.dge.oarfish$samples$platform <- "PacBio"
-ont_drna.dge.oarfish$samples$platform <- "ONT dRNA"
-
-bulk.tx.dge.merge <- cbind(
-  ill_bulk.dge.copy,
-  ont_bulk.dge.oarfish,
-  pb_bulk.dge.oarfish,
-  ont_drna.dge.oarfish
-)
-```
-
-```{r include=FALSE}
-norm_and_mds <- function(dge) {
-  dge <- calcNormFactors(dge, method = "TMM")
-  mds <- plotMDS(dge, plot = FALSE)
-  return(mds)
-}
-myMDS <- function(dge, mds) {
-  # normalisation
-  mds_data <- data.frame(
-    Dim1 = mds$x,
-    Dim2 = mds$y,
-    cell.line = dge$sample$sample,
-    Cancer.type = dge$sample$group,
-    Data.type = dge$sample$platform,
-    Sequins.mix = dge$samples$sequins
-  )
-
-  p <- ggplot(mds_data, aes(x = Dim1, y = Dim2, color = Cancer.type, shape = Data.type, label=cell.line)) +
-    geom_point(size = 3, alpha = 0.6) + # Plot points
-    #geom_text_repel(size = 3) +
-    labs(title = "MDS plot", 
-        x = paste0("Dimension 1 (", round(mds$var.explained[1]*100, 2), "%)" ) , 
-        y = paste0("Dimension 2 (", round(mds$var.explained[2]*100, 2), "%)" )) +
-    scale_color_viridis_d() + # Set color scale
-    theme_minimal() 
-  return(p)
-}
-```
-
-## Gene-level MDS
-
-Here are key observations from the gene-level MDS plots:
-
-1.  **Cancer type clustering:** samples cluster clearly by cancer type (**LUAD, SCLC type a, SCLC type p**), reflecting distinct gene expression profiles.
-2.  **Platform type impact:** sequencing platforms (**Illumina, ONT cDNA, ONT dRNA, PacBio)** show slight variability but largely preserve cancer type clustering, indicating that the biological variation observed is largely due to cancer cell-type.
-3.  **Variance explained:** The first two dimensions explain **19.25%** and **9.84%** of the variation, respectively, effectively separating sample groups.
-
-```{r echo=FALSE, message=FALSE, warning=FALSE, fig.height=3, fig.width=8 }
-mds <- norm_and_mds(bulk.gene.dge.merge[is.human(bulk.gene.dge.merge),])
-p1 <- myMDS(bulk.gene.dge.merge[is.human(bulk.gene.dge.merge), ], mds) + ggtitle("Human gene counts")
-p2 <- myMDS(bulk.gene.dge.merge[is.human(bulk.gene.dge.merge), ], mds) + ggtitle("Human gene counts")  + 
-            aes(color = Data.type, shape = Cancer.type) + 
-            scale_color_manual(values = color_palette[c("Illumina", "ONT cDNA", "ONT dRNA", "PacBio")] %>% unname())
-p1 | p2 
-```
-
-## Transcript-level MDS
-
-Here are key observations from the transcript-level MDS plots:
-
-1.  **Cancer type clustering**: Samples still cluster by cancer type (**LUAD, SCLC type a, SCLC type p**), but the separation between groups appears slightly less distinct compared to the gene-level data. Particularly SCLC type a and SCLC type p cluster closer together on the transcript-level MDS plot.
-2.  **Platform type impact**: Different sequencing platforms (**Illumina, ONT cDNA, ONT dRNA, PacBio**) show more variability at the transcript-level as samples seem to cluster largely based on sequencing platform for transcript-level analysis compared to gene-level analysis.
-3.  **Variance explained**: The first two dimensions explain 11.07% and 9.85% of the variation, respectively.
-
-```{r echo=FALSE, fig.width=15, message=FALSE, warning=FALSE, fig.height=3, fig.width=8 }
-mds <- norm_and_mds(bulk.tx.dge.merge[is.human(bulk.tx.dge.merge),])
-p1 <- myMDS(bulk.tx.dge.merge[is.human(bulk.tx.dge.merge), ], mds) + ggtitle("Human transcript counts") + 
-  aes(color = Data.type, shape = Cancer.type) + 
-  scale_color_manual(values = color_palette[c("Illumina", "ONT cDNA", "ONT dRNA", "PacBio")] %>% unname())
-
-p2 <- myMDS(bulk.tx.dge.merge[is.human(bulk.tx.dge.merge), ], mds) + ggtitle("Human transcript counts")
-
-p2 | p1
-```
-
 # Differential gene expression
 
 ## DGE edgeR (Salmon and Oarfish)
@@ -555,9 +455,6 @@ DGE analysis is performed on subsets for human genes, each with potentially diff
 4. Differential expression gene and transcript lists are defined using `DecideTests` with a log2 fold change cutoff of `r params$log2FC_cutoff` and adjusted p<0.05.
 ```{r echo=TRUE, message=FALSE, warning=FALSE, results='hide'}
 DGE.edgeR_human <- function(dge, norm.method = "TMM") {
-  # QC and normalization
-  filter <- filterByExpr(dge, group = dge$samples$group)
-  dge <- dge[filter, , keep.lib.sizes = FALSE]
   
   if (!is.null(norm.method)) {
      dge <- calcNormFactors(dge, method = norm.method)
@@ -586,123 +483,12 @@ DGE.edgeR_human <- function(dge, norm.method = "TMM") {
 }
 
 # DEG analsysis on human genes only 
-ill_bulk.dge_human.list <- DGE.edgeR_human(ill_bulk.gene.dge[is.human(ill_bulk.gene.dge),])
-ont_bulk.dge_human.list <- DGE.edgeR_human(ont_bulk.gene.dge[is.human(ont_bulk.gene.dge),])
-drna_bulk.deg_human.list <- DGE.edgeR_human(drna_bulk.gene.dge[is.human(drna_bulk.gene.dge),])
-pb_bulk.dge_human.list <- DGE.edgeR_human(pb_bulk.gene.dge[is.human(pb_bulk.gene.dge), ])
+ill_bulk.dge_human.list <- DGE.edgeR_human(ill_bulk.gene.dge[is.human(ill_bulk.gene.dge),,keep.lib.sizes=FALSE])
+ont_bulk.dge_human.list <- DGE.edgeR_human(ont_bulk.gene.dge[is.human(ont_bulk.gene.dge),,keep.lib.sizes=FALSE])
+drna_bulk.deg_human.list <- DGE.edgeR_human(drna_bulk.gene.dge[is.human(drna_bulk.gene.dge),,keep.lib.sizes=FALSE])
+pb_bulk.dge_human.list <- DGE.edgeR_human(pb_bulk.gene.dge[is.human(pb_bulk.gene.dge), ,keep.lib.sizes=FALSE])
 ```
 
-1.  ***SCLC type a vs. LUAD:***
-    -   [Illumina](./DGE_summary/DGE_Glimma_HTML/Illumina_AvsL_volcano_plot.html)
-    -   [PacBio](./DGE_summary/DGE_Glimma_HTML/PacBio_AvsL_volcano_plot.html)
-    -   [ONT cDNA](./DGE_summary/DGE_Glimma_HTML/ONT_AvsL_volcano_plot.html)
-    -   [ONT dRNA](./DGE_summary/DGE_Glimma_HTML/dRNA_AvsL_volcano_plot.html)
-2.  ***SCLC type p vs. LUAD:***
-    -   [Illumina](./DGE_summary/DGE_Glimma_HTML/Illumina_PvsL_volcano_plot.html)
-    -   [PacBio](./DGE_summary/DGE_Glimma_HTML/PacBio_PvsL_volcano_plot.html)
-    -   [ONT cDNA](./DGE_summary/DGE_Glimma_HTML/ONT_PvsL_volcano_plot.html)
-    -   [ONT dRNA](./DGE_summary/DGE_Glimma_HTML/dRNA_PvsL_volcano_plot.html)
-3.  ***SCLC type a vs. SCLC type p:***
-    -   [Illumina](./DGE_summary/DGE_Glimma_HTML/Illumina_AvsP_volcano_plot.html)
-    -   [PacBio](./DGE_summary/DGE_Glimma_HTML/PacBio_AvsP_volcano_plot.html)
-    -   [ONT cDNA](./DGE_summary/DGE_Glimma_HTML/ONT_AvsP_volcano_plot.html)
-    -   [ONT dRNA](./DGE_summary/DGE_Glimma_HTML/dRNA_AvsP_volcano_plot.html)
-
-
-##Check Expected DE
-```{r, include=F, eval=F}
-expected_DE <- read_csv(params$expected_de_table)
-
-add_FC <- function(x){
-  x %>% 
-  left_join(ill_bulk.dge_human.list$AvsL.DE$table %>% 
-              rownames_to_column('Gene')  %>% 
-              select(Gene, logFC) %>%
-              mutate(
-                Gene = sub("\\..*", "", Gene)
-                ) %>%
-              rename(
-                Illumina_logFC = logFC
-              ), by = "Gene") %>% 
-    left_join(ont_bulk.dge_human.list$AvsL.DE$table %>% 
-              rownames_to_column('Gene')  %>% 
-              select(Gene, logFC) %>%
-              mutate(
-                Gene = sub("\\..*", "", Gene)
-                ) %>%
-              rename(
-                ONT_cDNA_logFC = logFC
-              ), by = "Gene") %>%
-    left_join(pb_bulk.dge_human.list$AvsL.DE$table %>% 
-              rownames_to_column('Gene')  %>% 
-              select(Gene, logFC) %>%
-              mutate(
-                Gene = sub("\\..*", "", Gene)
-                ) %>%
-              rename(
-                Pacbio_logFC = logFC
-              ), by = "Gene") %>% 
-    left_join(drna_bulk.deg_human.list$AvsL.DE$table %>% 
-              rownames_to_column('Gene')  %>% 
-              select(Gene, logFC) %>%
-              mutate(
-                Gene = sub("\\..*", "", Gene)
-                ) %>%
-              rename(
-                ONT_dRNA_logFC = logFC
-              ), by = "Gene")
-}
-
-expected_DE %>%  left_join(mat.AvsL.DE %>% mutate(Gene = sub("\\..*", "", Gene)), by="Gene") %>% add_FC
-expected_DE %>% left_join(mat.PvsL.DE %>% mutate(Gene = sub("\\..*", "", Gene)), by="Gene") %>% add_FC
-expected_DE %>% left_join(mat.AvsP.DE %>% mutate(Gene = sub("\\..*", "", Gene)), by="Gene") %>% add_FC
-
-
-
-```
-
-### MA plots
-```{r MA plots, fig.height=3, fig.width=13, include = F, eval = F}
-library(ggplot2)
-library(ggrepel)
-plot.my.ma <- function(dge){
-  # Get results and DE decisions
-  res <- dge$table %>% 
-    tibble::rownames_to_column("Gene") %>%
-    mutate(Gene=sub("\\..*", "", Gene))
-  
-  # Join with expected_DE
-  highlighted <- expected_DE %>%
-    filter(Symbol %in% c("HMGA2", "POU2F3", "ASCL1")) %>%
-    select(Gene, Symbol) %>%
-    inner_join(res, by = "Gene")
-  
-  dges <- decideTests(dge)
-  
-  # Add DE status to results
-  res$DE <- as.factor(dges[,1])  # Assuming single contrast
-  
-  # Subsets
-  res_nonDE <- res %>% filter(DE == 0)
-  res_DE <- res %>% filter(DE != 0)
-  # MA plot
-  ggplot() +
-    geom_point(data = res_nonDE, aes(x = logCPM, y = logFC), color = "gray", alpha = 0.4) +
-    geom_point(data = res_DE, aes(x = logCPM, y = logFC, color = DE), alpha = 0.6) +
-    scale_color_manual(values = c("-1" = "blue", "1" = "red")) +
-    geom_point(data = highlighted, aes(x = logCPM, y = logFC), color = "yellow", shape = 21, fill = NA, size = 2, stroke = 1) +
-    geom_text_repel(data = highlighted, aes(x = logCPM, y = logFC, label = Symbol), size = 3, max.overlaps = 100) +
-    geom_hline(yintercept = 0, linetype = "dashed", color = "gray") +
-    labs(x = "Average log CPM", y = "log₂ Fold Change", color = "DE Status") +
-    theme_minimal()
-}
-ill_bulk.dge_human.list %>% map(plot.my.ma) %>% wrap_plots(ncol=3, guides='collect')
-ont_bulk.dge_human.list %>% map(plot.my.ma) %>% wrap_plots(ncol=3, guides='collect')
-drna_bulk.deg_human.list %>% map(plot.my.ma) %>% wrap_plots(ncol=3, guides='collect')
-pb_bulk.dge_human.list %>% map(plot.my.ma) %>% wrap_plots(ncol=3, guides='collect')
-
-
-```
 
 
 ## Cross-platform comparison DGE human (upset)
@@ -1121,10 +907,6 @@ final_plot
 ```
 
 
-```{r major isoform length ration}
-
-
-```
 
 ## Inspect High-confidence DGE
 
@@ -1888,10 +1670,6 @@ DTE analysis is performed on subsets for human genes and sequins, each with pote
 
 ```{r echo=TRUE, message=FALSE, warning=FALSE}
 DTE.edgeR_human <- function(dge, norm.method="TMM") {
-  # QC and normalisation:
-  filter <- filterByExpr(dge, group=dge$samples$group, min.count=5)
-  dge <- dge[filter, , keep.lib.sizes = FALSE]
-
   if (!is.null(norm.method)) {
      dge <- calcNormFactors(dge, method = norm.method)
   }
@@ -1936,10 +1714,10 @@ pb_bulk.scale_dge$counts  <- pb_bulk.scale_dge$counts / pb_bulk.scale_dge$genes$
 ont_drna.scale_dge$counts  <- ont_drna.scale_dge$counts / ont_drna.scale_dge$genes$Overdispersion
 
 # get human list
-ill_bulk.scl_dte_human.list <- DTE.edgeR_human(ill_bulk.scale_dge[is.human(ill_bulk.scale_dge),])
-ont_bulk.scl_dte_human.list <- DTE.edgeR_human(ont_bulk.scale_dge[is.human(ont_bulk.scale_dge),])
-pb_bulk.scl_dte_human.list <- DTE.edgeR_human(pb_bulk.scale_dge[is.human(pb_bulk.scale_dge),])
-drna_bulk.scl_dte_human.list <- DTE.edgeR_human(ont_drna.scale_dge[is.human(ont_drna.scale_dge),])
+ill_bulk.scl_dte_human.list <- DTE.edgeR_human(ill_bulk.scale_dge[is.human(ill_bulk.scale_dge),,keep.lib.sizes=FALSE])
+ont_bulk.scl_dte_human.list <- DTE.edgeR_human(ont_bulk.scale_dge[is.human(ont_bulk.scale_dge),,keep.lib.sizes=FALSE])
+pb_bulk.scl_dte_human.list <- DTE.edgeR_human(pb_bulk.scale_dge[is.human(pb_bulk.scale_dge),,keep.lib.sizes=FALSE])
+drna_bulk.scl_dte_human.list <- DTE.edgeR_human(ont_drna.scale_dge[is.human(ont_drna.scale_dge),,keep.lib.sizes=FALSE])
 
 
 ```

@@ -1,7 +1,7 @@
 ---
 title: "LongBench Single-cell Sing-cell DE analysis"
 author: "Yupei"
-version: "v1.2"
+version: "v2.0"
 output:
   html_document:
     code_folding: hide
@@ -11,7 +11,7 @@ output:
     toc_depth: 4
   pdf_document:
     toc: yes
-    toc_depth: '4'
+    toc_depth: 4
 params:
   random_seed: 2024
   cache_dir: NULL
@@ -405,12 +405,8 @@ Gene identification: Filter out lowly expressed genes and transcript using `filt
 ```{r gene filtering for DE, fig.height=4, fig.width=8}
 #GENE 
 ## 1. get common genes
-common_genes <- Reduce(intersect, lapply(list(ont_sc.gene.dge, ont_sn.gene.dge, pb_sc.gene.dge, pb_sn.gene.dge), rownames))
-
-ont_sc.gene.dge <- ont_sc.gene.dge[common_genes, ]
-ont_sn.gene.dge <- ont_sn.gene.dge[common_genes, ]
-pb_sc.gene.dge <- pb_sc.gene.dge[common_genes, ]
-pb_sn.gene.dge <- pb_sn.gene.dge[common_genes, ]
+## No actual difference in genes in the DEGLists
+common_genes <- Reduce(union, lapply(list(ont_sc.gene.dge, ont_sn.gene.dge, pb_sc.gene.dge, pb_sn.gene.dge), rownames))
 
 gene_discovery <- tibble(
   gene_id = common_genes,
@@ -719,13 +715,7 @@ FilterByExpr
 ```{r transcript filtering for DE, fig.height=15, fig.width=30}
 # Transcript
 ## 1. get common transcripts
-common_tx <- Reduce(intersect, lapply(list(ont_sc.tx.dge, ont_sn.tx.dge, pb_sc.tx.dge, pb_sn.tx.dge), rownames))
-
-ont_sc.tx.dge <- ont_sc.tx.dge[common_tx, ]
-ont_sn.tx.dge <- ont_sn.tx.dge[common_tx, ]
-pb_sc.tx.dge <- pb_sc.tx.dge[common_tx, ]
-pb_sn.tx.dge <- pb_sn.tx.dge[common_tx, ]
-
+common_tx <- Reduce(union, lapply(list(ont_sc.tx.dge, ont_sn.tx.dge, pb_sc.tx.dge, pb_sn.tx.dge), rownames))
 
 tx_discovery <- tibble(
   tx_id = common_tx,
@@ -996,28 +986,12 @@ df <- df%>% mutate(bulk.n = as.factor(bulk.n))
 keep <- df %>% mutate(keep = `ONT SC` & `ONT SN` & `PacBio SC` & `PacBio SN` & bulk.n == 4) %>% pull(keep)
 table(keep)
 
-ont_sc.tx.dge <- ont_sc.tx.dge[keep, ]
-ont_sn.tx.dge <- ont_sn.tx.dge[keep, ]
-pb_sc.tx.dge <- pb_sc.tx.dge[keep, ]
-pb_sn.tx.dge <- pb_sn.tx.dge[keep, ]
+ont_sc.tx.dge <- ont_sc.tx.dge[keep, ,keep.lib.sizes=FALSE]
+ont_sn.tx.dge <- ont_sn.tx.dge[keep, ,keep.lib.sizes=FALSE]
+pb_sc.tx.dge <- pb_sc.tx.dge[keep, ,keep.lib.sizes=FALSE]
+pb_sn.tx.dge <- pb_sn.tx.dge[keep, ,keep.lib.sizes=FALSE]
 ```
 
-Normalise the gene and transcript counts using `calcNormFactors` with `TMM` methods for each dataset, separately for human
-
-```{r TMM normalisation}
-### 4. Normalise the gene counts using `calcNormFactors` with `TMM` methods for each dataset
-ont_sc.gene.dge <- calcNormFactors(ont_sc.gene.dge, method = "TMM")
-ont_sn.gene.dge <- calcNormFactors(ont_sn.gene.dge, method = "TMM")
-pb_sc.gene.dge <- calcNormFactors(pb_sc.gene.dge, method = "TMM")
-pb_sn.gene.dge <- calcNormFactors(pb_sn.gene.dge, method = "TMM")
-
-
-### 4. Normalise the transcript counts using `calcNormFactors` with `TMM` methods for each dataset
-ont_sc.tx.dge <- calcNormFactors(ont_sc.tx.dge, method = "TMM")
-ont_sn.tx.dge <- calcNormFactors(ont_sn.tx.dge, method = "TMM")
-pb_sc.tx.dge <- calcNormFactors(pb_sc.tx.dge, method = "TMM")
-pb_sn.tx.dge <- calcNormFactors(pb_sn.tx.dge, method = "TMM")
-```
 
 # MDS (Merged)
 ## Merge DGElist 
@@ -1063,8 +1037,9 @@ tx.dge.merge <- cbind(
 
 ```{r}
 norm_and_mds <- function(dge) {
-  dge <- calcNormFactors(dge, method = "TMM")
-  mds <- plotMDS(dge, plot = FALSE)
+  # dge <- calcNormFactors(dge, method = "TMM")
+  cpm <- t( t(dge$counts) / colSums(dge$counts) ) * 1e6
+  mds <- plotMDS(log2(cpm + 1), plot = FALSE)
   return(mds)
 }
 myMDS <- function(dge, mds, label=F) {
@@ -1108,16 +1083,7 @@ p1 <- myMDS(gene.dge.merge, mds) + ggtitle("Human gene counts") +
 p2 <- myMDS(gene.dge.merge, mds) + ggtitle("Human gene counts")  + 
             aes(color = Platforms, shape = `Library types`) + 
             scale_color_manual(values = color_palette[c("ONT",  "PacBio")] %>% unname())
-
-
-
-p3 <- myMDS(gene.dge.merge, mds, label=T) + ggtitle("Human gene counts") +
-  scale_shape_manual(values = c(7, 8, 9, 15, 16, 17, 18, 1))
-p4 <- myMDS(gene.dge.merge, mds, label=T) + ggtitle("Human gene counts")  + 
-            aes(color = Platforms, shape = `Library types`) + 
-            scale_color_manual(values = color_palette[c("ONT",  "PacBio")] %>% unname())
 p1 | p2 
-p3 | p4
 ```
 
 
@@ -1130,13 +1096,7 @@ p1 <- myMDS(tx.dge.merge, mds) + ggtitle("Human transcript counts") +
 p2 <- myMDS(tx.dge.merge, mds) + ggtitle("Human transcript counts")  + 
             aes(color = Platforms, shape = `Library types`) + 
             scale_color_manual(values = color_palette[c("ONT",  "PacBio")] %>% unname())
-p3 <- myMDS(tx.dge.merge, mds, label=T) + ggtitle("Human transcript counts") +
-  scale_shape_manual(values = c(7, 8, 9, 15, 16, 17, 18, 1))
-p4 <- myMDS(tx.dge.merge, mds, label=T) + ggtitle("Human transcript counts")  + 
-            aes(color = Platforms, shape = `Library types`) + 
-            scale_color_manual(values = color_palette[c("ONT",  "PacBio")] %>% unname())
 p1 | p2 
-p3 | p4
 ```
 
 # PVCA plots
@@ -1147,7 +1107,8 @@ library(Biobase)
 
 
 # Gene
-log_cpm <- cpm(gene.dge.merge, log = TRUE, prior.count = 1) 
+cpm <- t( t(gene.dge.merge$counts) / colSums(gene.dge.merge$counts) ) * 1e6
+log_cpm <- log2(cpm + 1)
 # Run PVCA
 colnames(log_cpm) <- NULL
 expr_set <- ExpressionSet(
@@ -1197,13 +1158,18 @@ ggplot(plot_df, aes(x=type, y = Value, fill = Variable)) +
 
 ```
 
-### Heatmap （placeholder for potential plot）
-
 # Differential gene expression
+Load bulk DE results
+```{r}
+bulk_de_rds <- readRDS(params$bulk_de_rds)
+
+```
+
 ## DGE edgeR (Salmon and Oarfish)
 ```{r}
 DGE.edgeR_human <- function(dge, norm.method = "TMM") {
   if (!is.null(norm.method)) {
+    dge <- dge[rownames(dge),,keep.lib.size=FALSE]
     dge <- calcNormFactors(dge, method = norm.method)
   }
   
@@ -1568,20 +1534,6 @@ DTE.edgeR_human <- function(dge, norm.method="TMM") {
 }
 ```
 
-
-```{r}
-design <- readRDS(
-  system.file("RNAseq123/design.rds", package = "Glimma"))
-contr.matrix <- readRDS(
-  system.file("RNAseq123/contr.matrix.rds", package = "Glimma"))
-dge <- readRDS(system.file("RNAseq123/dge.rds", package = "Glimma"))
-dge <- estimateDisp(dge, design)
-gfit <- glmQLFit(dge, design)
-glrt <- glmQLFTest(gfit, design, contrast = contr.matrix)
-glimmaMA(glrt) # glimmaMA(glrt, dge = dge) to use edgeR results
-```
-
-
 ## DTE edgeR+scaling
 ```{r get dte scaling}
 # scale
@@ -1596,10 +1548,10 @@ pb_sc.tx.scale_dge$counts  <- pb_sc.tx.scale_dge$counts / pb_sc.tx.scale_dge$gen
 pb_sn.tx.scale_dge$counts  <- pb_sn.tx.scale_dge$counts / pb_sn.tx.scale_dge$genes$Overdispersion
 
 # get human list
-ont_sc.scl_dte_human.list <- DTE.edgeR_human(ont_sc.tx.scale_dge)
-ont_sn.scl_dte_human.list <- DTE.edgeR_human(ont_sn.tx.scale_dge)
-pb_sc.scl_dte_human.list <- DTE.edgeR_human(pb_sc.tx.scale_dge)
-pb_sn.scl_dte_human.list <- DTE.edgeR_human(pb_sn.tx.scale_dge)
+ont_sc.scl_dte_human.list <- DTE.edgeR_human(ont_sc.tx.scale_dge[rownames(ont_sc.tx.scale_dge),,keep.lib.sizes=FALSE])
+ont_sn.scl_dte_human.list <- DTE.edgeR_human(ont_sn.tx.scale_dge[rownames(ont_sn.tx.scale_dge),,keep.lib.sizes=FALSE])
+pb_sc.scl_dte_human.list <- DTE.edgeR_human(pb_sc.tx.scale_dge[rownames(pb_sc.tx.scale_dge),,keep.lib.sizes=FALSE])
+pb_sn.scl_dte_human.list <- DTE.edgeR_human(pb_sn.tx.scale_dge[rownames(pb_sn.tx.scale_dge),,keep.lib.sizes=FALSE])
 ```
 
 ### Upset plot
