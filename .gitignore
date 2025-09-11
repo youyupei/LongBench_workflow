@@ -8,6 +8,7 @@ conda/envs
 
 # Do not ignore .Rmd files
 !**/rmarkdown/*.Rmd
+!**/rmarkdown/*.R
 !**/rmarkdown/DTU_analysis/
 !**/rmarkdown/DTU_analysis/**
 !**/rmarkdown/RNAmod_analysis
