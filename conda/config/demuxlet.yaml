@@ -1,5 +1,0 @@
-name: demuxlet_env
-channels:
-  - bioconda
-dependencies:
-  - demuxlet=1.0

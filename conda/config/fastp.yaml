@@ -1,6 +1,0 @@
-name: fastp-env
-channels:
-  - bioconda
-dependencies:
-  - fastp
-  - fastplong

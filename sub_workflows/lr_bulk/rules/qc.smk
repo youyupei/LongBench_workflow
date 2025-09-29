@@ -342,12 +342,12 @@ rule qc:
                 # os.path.join(results_dir, "qc/sqanti3/{sample}_{cell_line}/"), # SQANTI3
                 os.path.join(results_dir, "qc/AlignQC/{sample}_{cell_line}/"), # AlignQC
                 os.path.join(results_dir, "qc/NanoPlot/{sample}_{cell_line}/NanoPlot-data.tsv.gz"), # NanoPlot
-                os.path.join(results_dir, "qc/coverage/{sample}_{cell_line}.picard.RNA_Metrics"), # picard coverage
-                os.path.join(results_dir, "qc/RSeQC/{sample}_{cell_line}.geneBodyCoverage.curves.pdf"), # RSeQC gene body coverage
+                # os.path.join(results_dir, "qc/coverage/{sample}_{cell_line}.picard.RNA_Metrics"), # picard coverage
+                # os.path.join(results_dir, "qc/RSeQC/{sample}_{cell_line}.geneBodyCoverage.curves.pdf"), # RSeQC gene body coverage
                 os.path.join(results_dir, "qc/RSeQC/{sample}_{cell_line}.junctionSaturation_plot.pdf"), # RSeQC junction saturation
                 os.path.join(results_dir, "qc/RSeQC/{sample}_{cell_line}.splice_events.pdf"), # RSeQC_junction_annotation
                 os.path.join(results_dir, "qc/RSeQC/{sample}_{cell_line}.splice_junction.pdf"), # RSeQC_junction_annotation
-                os.path.join(results_dir, "qc/aligment_summary/{alignment_type}/{sample}_{cell_line}.picard_AlignmentSummaryMetrics.txt"), # picard alignment summary
+                # os.path.join(results_dir, "qc/aligment_summary/{alignment_type}/{sample}_{cell_line}.picard_AlignmentSummaryMetrics.txt"), # picard alignment summary
                 os.path.join(results_dir, "qc/TopAlignedRead/{sample}_{cell_line}.tsv")
             ],
             sample=config["sample_id"],

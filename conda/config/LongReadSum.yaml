@@ -1,6 +1,0 @@
-name: longreadsum
-channels:
-  - bioconda
-  - wglab 
-dependencies:
-  - longreadsum=1.3.1
