@@ -1304,6 +1304,122 @@ figure_name <- "Human transcript discovery rate"
 p
 ```
 
+# PLOT: Human transcript total counts (stratified by GC%)
+
+```{r Huamn transcript discovery rate, fig.width=6, fig.height=4}
+dge_list <-   list(ont_bulk.tx.dge[is.human(ont_bulk.tx.dge),], 
+      drna_bulk.tx.dge[is.human(drna_bulk.tx.dge),],
+       ill_bulk.tx.dge[is.human(ill_bulk.tx.dge),], 
+       pb_bulk.tx.dge[is.human(pb_bulk.tx.dge),])
+
+GC_table <- read.csv("transcript_GCpercent.csv")
+
+dataset_list <- list("ONT BULK", "ONT dRNA", "Illumina BULK", "PacBio BULK")
+figure_name <- "Human transcript discovery rate"
+
+  plot_df <- tibble()
+  for (i in 1:length(dge_list)) {
+    # test 
+    #dge <- dge_list[[1]]
+    dge <- dge_list[[i]]
+    dataset <- dataset_list[[i]]
+
+    tx_discov_df <- tibble(
+      `tx_id` = dge %>% rownames %>%  gsub("\\..*", "", .),
+      `Total count` = dge$counts %>% rowSums(),
+      `TPM` = dge %>% get_tpm %>% rowMeans()
+    )
+
+    tx_discov_df <- 
+      tx_discov_df %>% left_join(GC_table, by = "tx_id")
+    
+    # bin the transcript length every 500 and make everything above 10000 to be in the same bin
+    tx_discov_df$`GC_bin` <- cut( tx_discov_df$`GC_tx`,
+                                  breaks = seq(0, 100, 2.5),
+                                  include.lowest = TRUE)
+    # group by the transcript length and calculate the mean of the transcript discovered
+    tx_discov_df <- tx_discov_df %>%
+      group_by(`GC_bin`) %>%
+      summarise(`Total count` = sum(`Total count`),
+                TPM = sum(TPM)) %>%
+      ungroup()
+    tx_discov_df$Dataset <- dataset
+    plot_df <- rbind(plot_df, tx_discov_df)
+  }
+  
+  
+  p <- ggplot(plot_df, aes(`GC_bin`, y = TPM, color = Dataset, group = Dataset)) +
+    geom_line(position = position_dodge(width = 0.2), linewidth = 1) +
+    theme_minimal() +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1)) + 
+    scale_color_manual(values = color_palette[c("Illumina", "ONT cDNA", "ONT dRNA", "PacBio")] %>% unname()) +
+    labs(title = "Human transcript quantification", x = "GC%", y = "TPM")
+p
+```
+
+
+```{r, fig.height=5, fig.width=10}
+GC_table <- read.csv("transcript_GCpercent.csv")
+
+dge_list <- list(
+  ont_bulk.tx.dge[is.human(ont_bulk.tx.dge),],
+  drna_bulk.tx.dge[is.human(drna_bulk.tx.dge),],
+  ill_bulk.tx.dge[is.human(ill_bulk.tx.dge),],
+  pb_bulk.tx.dge[is.human(pb_bulk.tx.dge),]
+)
+
+dataset_list <- c("ONT BULK", "ONT dRNA", "Illumina BULK", "PacBio BULK")
+figure_name <- "Human transcript discovery rate"
+
+plot_df <- tibble()
+for (i in seq_along(dge_list)) {
+  dge <- dge_list[[i]]
+  dataset <- dataset_list[[i]]
+
+  tx_discov_df <- tibble(
+    tx_id = rownames(dge) %>% gsub("\\..*", "", .),
+    Total_count = rowSums(dge$counts),
+    TPM = rowMeans(get_tpm(dge))
+  ) %>%
+    left_join(GC_table, by = "tx_id") %>%
+    mutate(GC_bin = cut(GC_tx, breaks = seq(0, 100, 5), include.lowest = TRUE)) %>%
+    group_by(GC_bin) %>%
+    summarise(Total_count = sum(Total_count), TPM = sum(TPM), .groups = "drop") %>%
+    mutate(Dataset = dataset)
+
+  plot_df <- bind_rows(plot_df, tx_discov_df)
+}
+
+# Add cumulative TPM
+plot_df <- plot_df %>%
+  group_by(Dataset) %>%
+  arrange(as.numeric(sub("\\((.+),.*", "\\1", GC_bin))) %>%
+  mutate(Cumulative_TPM = cumsum(TPM)) %>%
+  ungroup()
+
+
+
+# Normal plot
+# Note: The GC table is generated for detected transcript only in which FilterByExp has been run for each platform and the union of transcripts were considered
+p1 <- ggplot(plot_df  %>% filter(GC_bin != "NA") , aes(GC_bin, y = TPM, color = Dataset, group = Dataset)) +
+  geom_line(linewidth = 1) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  scale_color_manual(values = color_palette[c("Illumina", "ONT cDNA", "ONT dRNA", "PacBio")] %>% unname()) +
+  labs(title = "Human transcript quantification", x = "GC%", y = "TPM")
+
+# Cumulative plot
+p2 <- ggplot(plot_df  %>% filter(GC_bin != "NA") , aes(GC_bin, y = Cumulative_TPM, color = Dataset, group = Dataset)) +
+  geom_line(linewidth = 1) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  scale_color_manual(values = color_palette[c("Illumina", "ONT cDNA", "ONT dRNA", "PacBio")] %>% unname()) +
+  labs(title = "Cumulative human transcript quantification", x = "GC%", y = "Cumulative TPM")
+
+p1
+p2
+```
+
 
 # Differential gene expression
 
