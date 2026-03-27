@@ -76,7 +76,7 @@ rule oarfish_no_cov:
         oarfish --alignments {input.bam} --threads {resources.cpus_per_task} --output {output.out_dir_nocov}/ -d . --filter-group no-filters --num-bootstraps 50
         """
 
-### Oarfish  coverage module
+### Oarfish coverage module
 rule oarfish_cov:
     input:
         bam = results_dir + "/TranscriptAlignment/{sample}_{cell_line}.bam",
@@ -99,8 +99,7 @@ rule oarfish_cov:
         oarfish --alignments {input.bam} --threads {resources.cpus_per_task} --output {output.out_dir_cov}/ --model-coverage  -d . --filter-group no-filters --num-bootstraps 50
         """
 
-## Kallisto
-
+## lr-Kallisto
 rule generate_t2g_and_cleaned_txfa:
     input:
         gtf = config["reference"]["gtf"],
@@ -200,7 +199,121 @@ rule kallisto_convert:
         python {params.script} {input} && touch {output}
         """
 
-# lr_bulk quantificaiton target rule
+
+## IsoQuant
+
+def get_IsoQuant_data_type(wildcards):
+    if wildcards.sample.startswith("ont") or wildcards.sample.startswith("dRNA"):
+        return "nanopore"
+    elif wildcards.sample.startswith("pb"):
+        return "pacbio_ccs"
+    else:
+        raise ValueError(f"Unknown sample type for {wildcards.sample}")
+
+rule IsoQuant_with_novel:
+    input:
+        ref_genome = config["reference"]["genome"],
+        gene_annotation = config["reference"]["gtf"],
+        genome_bam = results_dir + "/GenomeAlignment/{sample}_{cell_line}.sorted.bam",
+    output:
+        directory(os.path.join(results_dir,"IsoQuant_output/{sample}/{cell_line}"))
+    resources:
+        cpus_per_task=16,
+        mem_mb=50000,
+        slurm_extra="--partition=long --time=7-00:00:00"
+    params:
+        data_type = get_IsoQuant_data_type
+    conda:
+        config["conda"]["IsoQuant"]
+    shell:
+        """
+        echo "Running IsoQuant..."
+        mkdir -p {output}
+        isoquant.py --reference {input.ref_genome} \
+                    --genedb {input.gene_annotation}  --complete_genedb  --no_gtf_check \
+                    --bam {input.genome_bam} \
+                    --data_type {params.data_type} \
+                    --threads {resources.cpus_per_task} \
+                    --output {output}
+        """
+
+rule IsoQuant_no_novel:
+    input:
+        ref_genome = config["reference"]["genome"],
+        gene_annotation = config["reference"]["gtf"],
+        genome_bam = results_dir + "/GenomeAlignment/{sample}_{cell_line}.sorted.bam",
+    output:
+        directory(os.path.join(results_dir,"IsoQuant_output_no_novel/{sample}/{cell_line}"))
+    resources:
+        cpus_per_task=16,
+        mem_mb=50000,
+        slurm_extra="--partition=long --time=7-00:00:00"
+    params:
+        data_type = get_IsoQuant_data_type
+    conda:
+        config["conda"]["IsoQuant"]
+    shell:
+        """
+        echo "Running IsoQuant..."
+        mkdir -p {output}
+        isoquant.py --reference {input.ref_genome} \
+                    --genedb {input.gene_annotation}  --complete_genedb  --no_gtf_check --no_model_construction \
+                    --bam {input.genome_bam} \
+                    --data_type {params.data_type} \
+                    --threads {resources.cpus_per_task} \
+                    --output {output}
+        """
+
+
+rule IsoQuant_with_novel_to_dge_bundle:
+    input:
+        lambda w: expand(
+            rules.IsoQuant_with_novel.output[0],
+            sample = [w.sample],
+            cell_line = config["cell_lines"]
+        )
+    output:
+        rds = os.path.join(results_dir, "IsoQuant_output/isoquant_bulk_dge.{sample}.rds")
+    conda:
+        main_conda
+    resources:
+        cpus_per_task=1,
+        mem_mb=16000
+    params:
+        wrapper_script = join(config["sub_wf_dir"], "scripts/wrapper_IsoQuant.R"),
+        isoquant_root = os.path.join(results_dir, "IsoQuant_output/{sample}"),
+        output_prefix = os.path.join(results_dir, "IsoQuant_output/isoquant_bulk_dge.{sample}")
+    shell:
+        """
+        Rscript {params.wrapper_script} {params.isoquant_root} {params.output_prefix}
+        """
+
+
+rule IsoQuant_no_novel_to_dge_bundle:
+    input:
+        lambda w: expand(
+            rules.IsoQuant_no_novel.output[0],
+            sample = [w.sample],
+            cell_line = config["cell_lines"]
+        )
+    output:
+        rds = os.path.join(results_dir, "IsoQuant_output_no_novel/isoquant_bulk_dge.{sample}.rds")
+    conda:
+        main_conda
+    resources:
+        cpus_per_task=1,
+        mem_mb=16000
+    params:
+        wrapper_script = join(config["sub_wf_dir"], "scripts/wrapper_IsoQuant.R"),
+        isoquant_root = os.path.join(results_dir, "IsoQuant_output_no_novel/{sample}"),
+        output_prefix = os.path.join(results_dir, "IsoQuant_output_no_novel/isoquant_bulk_dge.{sample}")
+    shell:
+        """
+        Rscript {params.wrapper_script} {params.isoquant_root} {params.output_prefix}
+        """
+
+
+# lr_bulk quantification target rule
 rule run_quantification:
     input:
         expand([
@@ -208,8 +321,18 @@ rule run_quantification:
             # rules.salmon.output[0],
             rules.oarfish_cov.output[0],
             # rules.kallisto_convert.output[0]]
+            rules.IsoQuant_with_novel.output[0],
+            rules.IsoQuant_no_novel.output[0]
             ],
             sample = config["sample_id"],
             cell_line = config["cell_lines"]),
+        expand(
+            rules.IsoQuant_with_novel_to_dge_bundle.output.rds,
+            sample = config["sample_id"]
+        ),
+        expand(
+            rules.IsoQuant_no_novel_to_dge_bundle.output.rds,
+            sample = config["sample_id"]
+        ),
     output:
         touch(results_dir + "/.flag/run_quantification.done")
