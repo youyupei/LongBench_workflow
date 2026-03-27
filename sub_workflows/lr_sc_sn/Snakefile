@@ -36,8 +36,6 @@ include: "rules/flames.smk"
 include: "rules/qc.smk"
 include: "rules/internal_priming.smk"
 include: "rules/mutation.smk"
-# include: "rules/.vireo.smk"
-include: "rules/emptydrop.smk"
 include: "rules/sc_clustering.smk"
 include: "rules/pseudo_bulk_map_n_quant.smk"
 include: "rules/pseudo_bulk_qc.smk"
@@ -49,8 +47,6 @@ rule all:
         # all qc
         rules.flames.output,
         rules.qc.output,
-        # rules.run_vireo.output,
-        #rules.emptydrop.output,
         rules.run_all_rmarkdown.input,
         rules.plot_silhouette.output,
         rules.pseudo_bulk_oarfish_map_n_quant.input,
