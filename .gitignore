@@ -9,6 +9,7 @@ conda/envs
 # Do not ignore .Rmd files
 !**/rmarkdown/*.Rmd
 !**/rmarkdown/*.R
+!**/rmarkdown/README.txt
 !**/rmarkdown/Rscript/
 !**/rmarkdown/Rscript/**
 

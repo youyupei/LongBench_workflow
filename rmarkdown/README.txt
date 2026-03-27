@@ -12,7 +12,7 @@ All Rmd file should follow the following:
         )
 
 5. All figure will need to directly plot  without saving to a file. 
-
+6. Since the raw points for the figure will usually be required, use different chunk for generating the raw points and plotting the figure. The chunk for generating the raw points can be set with cache = TRUE, and the chunk for plotting the figure can be set with cache = FALSE.
 
 ## Output:
 The versioned_knit.R will save the output in the same directory as the Rmd file with the name of base_name + date + .html. The cache and figure will be saved in the same directory with the name of base_name + date + _cache and base_name + date + _figures.
