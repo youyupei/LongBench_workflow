@@ -64,7 +64,6 @@ rule internal_priming_split_bam:
             temp(join(scratch_dir, "int_prim_analysis/{sample}_{cell_line}_nonIP.bam")),
             temp(join(scratch_dir, "int_prim_analysis/{sample}_{cell_line}_nonIP.bam.bai"))
         ]
-    
     resources:
         cpus_per_task=1,
         mem_mb=8000
@@ -137,8 +136,38 @@ rule internal_priming_quantification_featureCounts:
         """
 
 
+rule internal_priming_Align_QC:
+    input: 
+        fa=config['reference']['genome'], 
+        anno=config['reference']['gtf_gz'],
+        genome_bam = join(scratch_dir, "int_prim_analysis/{sample}_{cell_line}_nonIP.bam"),
+    resources:
+        cpus_per_task=12,
+        mem_mb=500000
+    output:
+        output = directory(os.path.join(results_dir, "qc/AlignQC/{sample}_{cell_line}_IP_filtered/")),
+        tmp_dir = temp(directory(os.path.join(scratch_dir, "alignQC_tmp","{sample}_{cell_line}_IP_filtered")))
+    priority: 10
+    container: "docker://vacation/alignqc"
+    shell:
+        """
+        mkdir -p $(dirname {output.output})
+        mkdir -p {output.tmp_dir}
+        alignqc analyze {input.genome_bam} \
+            -g {input.fa} \
+            --gtf {input.anno} \
+            --output_folder {output.output} \
+            --threads {resources.cpus_per_task} \
+            --specific_tempdir {output.tmp_dir}
+        """
+
 rule internal_priming_quantification:
     input:
-        expand(rules.internal_priming_quantification_featureCounts.output.rds,
+        # expand(rules.internal_priming_quantification_featureCounts.output.rds,
+        #         sample = config['sample_id'],
+        #         cell_line = config['cell_lines'])
+        expand(rules.internal_priming_Align_QC.output[0],
                 sample = config['sample_id'],
+                # sample = ['pb_bulk'],
                 cell_line = config['cell_lines'])
+        
