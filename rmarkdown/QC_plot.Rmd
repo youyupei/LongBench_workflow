@@ -17,21 +17,31 @@ params:
   random_seed: 2024
   cache_dir: NULL
   fig.path: NULL
-  
-  
 ---
 
-```{r}
+```{r setup_params_template, include=FALSE, eval=FALSE, message=FALSE, warning=FALSE}
+# Make params list for running outside of Rmarkdown
+params <- list(
+  random_seed = 2024,
+  cache_dir = NULL,  # Set to a directory path to enable caching
+  fig.path = NULL    # Set to a directory path to save figures, or NULL to not save
+)
+```
+
+```{r setup_knitr_and_libraries, include=FALSE, message=FALSE, warning=FALSE}
 knitr::opts_chunk$set(echo = FALSE)
 knitr::opts_chunk$set(cache = FALSE, cache.path = params$cache_dir)
 knitr::opts_chunk$set(
   cache = !is.null(params$cache_dir),  # Enable caching only if cache_dir is provided
   fig.width = 15,                     # Set default figure width
   fig.height = 10,                    # Set default figure height
+  message = FALSE,                    # Suppress messages in the output
   warning = FALSE,                    # Suppress warnings in the output
   fig.path = params$fig.path,         # Set figure path (NULL if not provided)
   dev = if (!is.null(params$fig.path)) c("png", "svg") else NULL  # Set output devices if fig.path is provided
 )
+
+options(readr.show_col_types = FALSE)
 
 # Set cache.path only if params$cache_dir is not NULL
 if (!is.null(params$cache_dir)) {
@@ -46,12 +56,25 @@ library(readr)
 library(tibble)
 library(stringr)
 library(ggplot2)
+
+save_plot_data <- function(df, name) {
+  if (is.null(params$fig.path)) {
+    return(invisible(NULL))
+  }
+  out_dir <- params$fig.path
+  if (!dir.exists(out_dir)) {
+    dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
+  }
+  readr::write_csv(df, file.path(out_dir, paste0(name, ".csv")))
+  invisible(NULL)
+}
 ```
 
-```{r input dir}
+```{r define_bulk_color_palette}
 
 color_palette <- c(
   PacBio = "#df1995",
+  PacBio_IP_filtered = "#a50026",
   ONT = "#00789b",
   ONT_1 = "#04476c",
   ONT_2 = "#24cdcd",
@@ -61,7 +84,7 @@ color_palette <- c(
 # BULK
 ## AlignQC
 ### Alignment stats
-```{r alignment stats}
+```{r bulk_alignqc_alignment_stats_load}
 # LR
 dirs <- list.dirs('/vast/projects/LongBench/analysis/lr_bulk/result/qc/AlignQC/', recursive = TRUE, full.names = TRUE)
 # Find all alignment stats files
@@ -96,6 +119,7 @@ alignment.stats <- map_dfr(stats_files, parse_stats)
 alignment.stats <- alignment.stats %>%
   mutate(
     Platform = case_when(
+      str_detect(platform, "pb.*IP_filtered") ~ "PacBio IP filtered",
       str_detect(platform, "dRNA") ~ "ONT dRNA",
       str_detect(platform, "ont_bulk") ~ "ONT cDNA",
       str_detect(platform, "pb") ~ "PacBio",
@@ -104,7 +128,6 @@ alignment.stats <- alignment.stats %>%
     # remove *_
     Cell_line = gsub(".*_", "", platform)
   ) %>% select(-platform)
-
 
 
 # Scale UNALIGNED_READS ALIGNED_READS SINGLE_ALIGN_READS GAPPED_ALIGN_READS CHIMERA_ALIGN_READS TRANSCHIMERA_ALIGN_READS SELFCHIMERA_ALIGN_READS by TOTAL_READS
@@ -119,10 +142,14 @@ alignment.stats <- alignment.stats %>%
 # remove TOTAL_READS and TOTAL_BASES
 alignment.stats <- alignment.stats %>%
   select(-c(TOTAL_READS, TOTAL_BASES))
+
+# Keep the IP filtered as a separate category tibble
+alignment.stats.IP_filter <- alignment.stats %>% filter(Platform == "PacBio IP filtered")
+alignment.stats <- alignment.stats %>% filter(Platform != "PacBio IP filtered")
 ```
 
 
-```{r alignment stats read, fig.height=6, fig.width=10}
+```{r bulk_alignqc_alignment_reads_plot, fig.height=6, fig.width=10}
 # generate ggplot for each column, facet by different columns, x is dataset, y is value
 library(ggplot2)
 df_long <- alignment.stats %>%
@@ -136,6 +163,8 @@ df_summary <- df_long %>%
     SD = sd(Value, na.rm = TRUE),  # Standard deviation
     .groups = "drop"
   )
+
+save_plot_data(df_long, "bulk_alignqc_alignment_reads_raw_points")
 
 ggplot() +
   # Bars for the mean
@@ -155,7 +184,7 @@ ggplot() +
 ```
 
 
-```{r alignment stats base,fig.height=6, fig.width=10}
+```{r bulk_alignqc_alignment_bases_plot,fig.height=6, fig.width=10}
 df_long <- alignment.stats %>% select(c(Platform,Cell_line,ALIGNED_BASES,GAPPED_ALIGN_BASES,CHIMERA_ALIGN_BASES,TRANSCHIMERA_ALIGN_BASES,SELFCHIMERA_ALIGN_BASES)) %>%
   pivot_longer(cols = -c(Platform, Cell_line), names_to = "Metric", values_to = "Value")
 df_summary <- df_long %>%
@@ -165,6 +194,8 @@ df_summary <- df_long %>%
     SD = sd(Value, na.rm = TRUE),  # Standard deviation
     .groups = "drop"
   )
+
+save_plot_data(df_long, "bulk_alignqc_alignment_bases_raw_points")
 
 ggplot() +
   # Bars for the mean
@@ -185,7 +216,7 @@ ggplot() +
 ```
 
 ### Error state
-```{r load error state}
+```{r bulk_alignqc_error_state_plot}
 
 # LR
 dirs <- list.dirs('/vast/projects/LongBench/analysis/lr_bulk/result/qc/AlignQC/', recursive = TRUE, full.names = TRUE)
@@ -202,6 +233,7 @@ error.stats <- map_dfr(stats_files, parse_stats)
 error.stats <- error.stats %>%
   mutate(
     Platform = case_when(
+      str_detect(platform, "pb.*IP_filtered") ~ "PacBio IP filtered",
       str_detect(platform, "dRNA") ~ "ONT dRNA",
       str_detect(platform, "ont_bulk") ~ "ONT cDNA",
       str_detect(platform, "pb") ~ "PacBio",
@@ -209,7 +241,7 @@ error.stats <- error.stats %>%
     ),
     # remove *_
     Cell_line = gsub(".*_", "", platform)
-  ) %>% select(-platform)
+  ) %>% select(-platform) %>% filter(Platform != "PacBio IP filtered")
 
 error.stats <- error.stats %>%
   mutate(
@@ -238,6 +270,8 @@ df_summary <- df_long %>%
     .groups = "drop"
   )
 
+save_plot_data(df_long, "bulk_alignqc_error_state_raw_points")
+
 ggplot() +
   # Bars for the mean
   geom_bar(data = df_summary, aes(x = Platform, y = Mean_Value, fill = Platform), 
@@ -256,7 +290,7 @@ ggplot() +
 ```
 
 ### Junction shift
-```{r load junction shift}
+```{r bulk_alignqc_junction_shift_load}
 # LR
 dirs <- list.dirs('/vast/projects/LongBench/analysis/lr_bulk/result/qc/AlignQC/', recursive = TRUE, full.names = TRUE)
 # Find all alignment stats files
@@ -292,7 +326,7 @@ junc.var <- junc.var %>% mutate(
 ```
 
 
-```{r Perfect junction proportion,fig.height=3, fig.width=4}
+```{r bulk_alignqc_perfect_junction_proportion_plot,fig.height=3, fig.width=4}
 # Perfect junction
 df_long <- junc.var %>%
   select(c(
@@ -308,6 +342,8 @@ df_summary <- df_long %>%
     SD = sd(`0`, na.rm = TRUE),  # Standard deviation
     .groups = "drop"
   )
+
+save_plot_data(df_long, "bulk_alignqc_perfect_junction_raw_points")
 
 ggplot() +
   # Bars for the mean
@@ -334,7 +370,7 @@ ggplot() +
 ```
 
 
-```{r Shifted junction proportion}
+```{r bulk_alignqc_shifted_junction_proportion_plot}
 # Other
 df_long <- junc.var %>%
   select(-c(`0`)) %>%
@@ -348,6 +384,8 @@ df_summary <- df_long %>%
     SD = sd(Value, na.rm = TRUE),  # Standard deviation
     .groups = "drop"
   )
+
+save_plot_data(df_long, "bulk_alignqc_shifted_junction_raw_points")
 
 ggplot() +
   # Bars for the mean
@@ -374,7 +412,7 @@ ggplot() +
 
 
 ### Genomic Feature
-```{r bulk}
+```{r bulk_alignqc_genomic_feature_load}
 # LR
 dirs <- list.dirs('/vast/projects/LongBench/analysis/lr_bulk/result/qc/AlignQC/', recursive = TRUE, full.names = TRUE)
 # Find all alignment stats files
@@ -397,6 +435,7 @@ parse_stats <- function(file) {
     mutate(
       Aligned_length = cut(Aligned_length, breaks=c(seq(0, 4000, by=500), Inf), labels = c("0-500", "500-1000", "1000-1500", "1500-2000", "2000-2500", "2500-3000", "3000-3500", "3500-4000", "4000+")),
       Platform = case_when(
+        str_detect(platform, "pb.*IP_filtered") ~ "PacBio IP filtered",
         str_detect(platform, "dRNA") ~ "ONT dRNA",
         str_detect(platform, "ont_bulk") ~ "ONT cDNA",
         str_detect(platform, "pb") ~ "PacBio",
@@ -439,7 +478,7 @@ genoemic.feature$Feature <- factor(genoemic.feature$Feature, levels=c("intergeni
 ```
 
 
-```{r genomic feature overall proportion,fig.height=3, fig.width=4}
+```{r bulk_alignqc_genomic_feature_overall_proportion_plot,fig.height=3, fig.width=4}
 # Compute average proportions per platform
 summary_data <- genoemic.feature %>%
   group_by(Platform, Feature) %>%
@@ -448,22 +487,28 @@ summary_data <- genoemic.feature %>%
   mutate(
       proportion = count / sum(count),
   )
+
+save_plot_data(summary_data, "bulk_alignqc_genomic_feature_overall_points")
+
 # Create stacked bar plot
 ggplot(summary_data, aes(x = Platform, y = proportion, fill = Feature)) +
   geom_bar(stat = "identity") +
   theme_minimal() +
   labs(x = "Platform", y = "Proportion", fill = "Feature") +
-  scale_fill_brewer(palette = "Set2") # Adjust color scheme
+  scale_fill_brewer(palette = "Set2") + # Adjust color scheme
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
 ```
 
 
 
-```{r genomic feature proportion stratified by aligned length}
+```{r bulk_alignqc_genomic_feature_by_aligned_length_plot}
 # Compute average proportions per platform
 summary_data <- genoemic.feature %>% 
   group_by(Platform) %>%
   mutate(platform_total = sum(count)) %>% 
   mutate(proportion=count/platform_total) 
+
+save_plot_data(summary_data, "bulk_alignqc_genomic_feature_by_length_points")
         
 
 ggplot(summary_data, aes(x = Aligned_length, y = proportion, fill = Feature)) +
@@ -483,7 +528,7 @@ ggplot(summary_data, aes(x = Aligned_length, y = proportion, fill = Feature)) +
 
 
 ### Exon count and transcript completeness
-```{r, include=F, eval=F}
+```{r bulk_alignqc_exon_count_transcript_completeness_disabled, include=F, eval=F}
 # LR
 dirs <- list.dirs('/vast/projects/LongBench/analysis/lr_bulk/result/qc/AlignQC/', recursive = TRUE, full.names = TRUE)
 # Find all alignment stats files
@@ -566,7 +611,7 @@ ggplot(overall.completeness, aes(x = Platform, y = avg_proportion, fill = comple
 ```
 
 ## INTERNAL PRIMING
-```{r internal_priming_proportion, fig.height=3, fig.width=4}
+```{r bulk_internal_priming_proportion_plot, fig.height=3, fig.width=4}
 dirs <- list.dirs("/vast/projects/LongBench/analysis/lr_bulk/result/int_prim_analysis", recursive = TRUE, full.names = TRUE)
 # Find all alignment stats files
 stats_files <- list.files(dirs, pattern = "*summary.txt", full.names = TRUE)
@@ -615,6 +660,8 @@ df_summary <- int.prim.stats %>%
     .groups = "drop"
   )
 
+save_plot_data(int.prim.stats, "bulk_internal_priming_raw_points")
+
 ggplot() +
   # Bars for the mean
   geom_bar(data = df_summary, aes(x = Platform, y = Mean_Value, fill = Platform), 
@@ -633,7 +680,7 @@ ggplot() +
 ```
 
 ## PICARD QC
-```{r BASE distribution}
+```{r bulk_picard_base_distribution_load}
 dirs <- list.dirs('/vast/projects/LongBench/analysis/lr_bulk/result/qc/coverage', recursive = TRUE, full.names = TRUE)
 files <- list.files(dirs, pattern = ".picard.RNA_Metrics", full.names = TRUE)
 
@@ -647,7 +694,7 @@ extract_metrics <- function(file) {
   df <- read.delim(text = tab_text, stringsAsFactors = FALSE)
   
   # Select desired columns and convert to numeric
-  cols <- c("PCT_CODING_BASES", "PCT_UTR_BASES",
+  cols <- c("PF_BASES", "PCT_CODING_BASES", "PCT_UTR_BASES",
             "PCT_INTRONIC_BASES", "PCT_INTERGENIC_BASES", "PCT_MRNA_BASES")
   df_sub <- df %>% select(all_of(cols))
   
@@ -669,7 +716,7 @@ result_df <- do.call(rbind, lapply(files, extract_metrics))
 ```
 
 
-```{r plot, fig.width=4, fig.height=4}
+```{r bulk_picard_base_distribution_plots, fig.width=4, fig.height=4}
 # Gather metrics into long format for easier plotting
 plot_df <- result_df %>%
   pivot_longer(cols = c(PCT_INTRONIC_BASES, PCT_INTERGENIC_BASES, PCT_MRNA_BASES),
@@ -681,6 +728,8 @@ summary_df <- plot_df %>%
   summarise(mean_val = mean(value, na.rm=TRUE),
             sd_val = sd(value, na.rm=TRUE),
             .groups = 'drop')
+
+save_plot_data(plot_df, "bulk_picard_base_distribution_raw_points")
 
 # Barplot with error bars
 ggplot(summary_df, aes(x=metric, y=mean_val, fill=platform)) +
@@ -698,10 +747,12 @@ ggplot(summary_df, aes(x = platform, y = mean_val, fill = metric)) +
   theme_bw() +
   theme(axis.text.x = element_text(angle = 45, hjust = 1))
 
+
+
 ```
 
 ## Longest aligned reads
-```{r Longest aligned reads, fig.height=3,fig.width=3}
+```{r bulk_longest_aligned_reads_plot, fig.height=3,fig.width=3}
 dirs <- list.dirs('/home/users/allstaff/you.yu/LongBench/analysis/lr_bulk/result/qc/TopAlignedRead', recursive = TRUE, full.names = TRUE)
 files <- list.files(dirs, pattern = ".tsv", full.names = TRUE)
 
@@ -732,6 +783,7 @@ color_palette <- c(
 )
 # Apply to all files
 result_df <- do.call(rbind, lapply(files, parse_stats))
+save_plot_data(result_df, "bulk_top_aligned_reads_raw_points")
 result_df %>%
   ggplot(aes(x = platform, y = aligned_length, colour = platform)) +
   geom_boxplot() +
@@ -744,7 +796,7 @@ result_df %>%
 
 
 # SC/SN
-```{r}
+```{r define_sc_sn_color_palette}
 color_palette <- c(
   PacBio = "#df1995",
   ONT = "#00789b",
@@ -755,7 +807,7 @@ color_palette <- c(
 ```
 
 ## Vireo QC
-```{r Vireo Doublet and unassigned, fig.height=3, fig.width=6}
+```{r sc_sn_vireo_doublet_unassigned_plot, fig.height=3, fig.width=6}
 # LR
 dirs <- list.dirs('/vast/projects/LongBench/analysis/lr_sc_sn/result/vireo', recursive = TRUE, full.names = TRUE)
 files <- list.files(dirs, pattern = "donor_ids.tsv", full.names = TRUE)
@@ -785,6 +837,8 @@ summary_df <- summary_df %>%
     Type = ifelse(str_detect(protocol, "_sc"), "SC", "SN")
   )
 
+save_plot_data(summary_df, "sc_sn_vireo_doublet_unassigned_raw_points")
+
 # Plot
 ggplot(summary_df, aes(x = protocol, y = proportion*100, fill = Platform, alpha = Type)) +
   geom_col(position = position_dodge(width = 0.7), width = 0.6) +
@@ -795,7 +849,7 @@ ggplot(summary_df, aes(x = protocol, y = proportion*100, fill = Platform, alpha 
   labs(x = "Protocol", y = "Percentage (%)", fill = "Platform", alpha = "Cell Type")
 ```
 
-```{r}
+```{r sc_sn_cell_barcode_lists_load}
 # get sc
 BC_list.sc <- list.files('/vast/projects/LongBench/analysis/lr_sc_sn/result/misc/cell_line_bc_list/sc', pattern = "*BC_list.txt", full.names = TRUE, recursive = T) %>% 
   lapply(function(f) {
@@ -817,7 +871,7 @@ BC_list <- bind_rows(BC_list.sc, BC_list.sn)
 remove(BC_list.sc, BC_list.sn)
 ```
 
-```{r}
+```{r sc_sn_vireo_ambient_load_and_assign}
 dirs <- list.dirs('/vast/projects/LongBench/analysis/lr_sc_sn/result/vireo', recursive = TRUE, full.names = TRUE)
 files <- list.files(dirs, pattern = "prop_ambient.tsv", full.names = TRUE)
 # Read and summarize
@@ -843,7 +897,7 @@ ambient_assigned <- ambient_df %>%
 ```
 
 
-```{r Vireo ambient RNA proportion, fig.height=3, fig.width=4}
+```{r sc_sn_vireo_ambient_rna_proportion_plot, fig.height=3, fig.width=4}
 # Color palette
 color_palette <- c(
   PacBio = "#df1995",
@@ -851,6 +905,8 @@ color_palette <- c(
 )
 
 # Plot
+save_plot_data(ambient_assigned, "sc_sn_vireo_ambient_rna_raw_points")
+
 ggplot(ambient_assigned, aes(x = protocol, y = 1-prob_assigned, fill = Platform, alpha = Type)) +
   geom_boxplot(outlier.size = 0.5, width = 0.6) +
   scale_fill_manual(values = color_palette) +
@@ -867,7 +923,7 @@ ggplot(ambient_assigned, aes(x = protocol, y = 1-prob_assigned, fill = Platform,
 ### Alignment stats (Skipped as no useful information for pseudobulk approach)
 
 ### Genomic Feature
-```{r SC genomic feature}
+```{r sc_sn_alignqc_genomic_feature_load}
 # LR
 dirs <- list.dirs('/vast/projects/LongBench/analysis/lr_sc_sn/result/PseudoBulkQC/AlignQC', recursive = TRUE, full.names = TRUE)
 # Find all alignment stats files
@@ -927,7 +983,7 @@ genoemic.feature$Feature <- factor(genoemic.feature$Feature, levels=c("intergeni
 
 ```
 
-```{r SC SN genomic feature overall proportion,fig.height=3, fig.width=4}
+```{r sc_sn_alignqc_genomic_feature_overall_proportion_plot,fig.height=3, fig.width=4}
 # Compute average proportions per platform
 summary_data <- genoemic.feature %>%
   group_by(Platform, Feature) %>%
@@ -936,6 +992,9 @@ summary_data <- genoemic.feature %>%
   mutate(
       proportion = count / sum(count),
   )
+
+save_plot_data(summary_data, "sc_sn_alignqc_genomic_feature_overall_points")
+
 # Create stacked bar plot
 ggplot(summary_data, aes(x = Platform, y = proportion, fill = Feature)) +
   geom_bar(stat = "identity") +
@@ -948,7 +1007,7 @@ ggplot(summary_data, aes(x = Platform, y = proportion, fill = Feature)) +
 
 
 ### Error state
-```{r load error state SC, include=F, eval=F}
+```{r sc_sn_alignqc_error_state_disabled, include=F, eval=F}
 
 # LR
 dirs <- list.dirs('/vast/projects/LongBench/analysis/lr_sc_sn/result/PseudoBulkQC/AlignQC', recursive = TRUE, full.names = TRUE)
@@ -1040,7 +1099,7 @@ ggplot() +
 ```
 
 ## INTERNAL PRIMING
-```{r internal_priming_proportion SC, fig.height=3, fig.width=3}
+```{r sc_sn_internal_priming_proportion_plot, fig.height=3, fig.width=3}
 dirs <- list.dirs("/vast/projects/LongBench/analysis/lr_sc_sn/result/int_prim_analysis", recursive = TRUE, full.names = TRUE)
 # Find all alignment stats files
 stats_files <- list.files(dirs, pattern = "*summary.txt", full.names = TRUE)
@@ -1088,6 +1147,8 @@ df_summary <- int.prim.stats %>%
     alpha_val = if_else(Sample_Type == "SC", 1, 0.3)
   )
 
+save_plot_data(df_summary, "sc_sn_internal_priming_raw_points")
+
 # Plot
 ggplot(df_summary, aes(x = Platform, y = `Proportion of internal priming reads`*100)) +
   geom_bar(
@@ -1105,7 +1166,7 @@ ggplot(df_summary, aes(x = Platform, y = `Proportion of internal priming reads`*
 
 
 ## PICARD QC
-```{r BASE distribution}
+```{r sc_sn_picard_base_distribution_load}
 dirs <- list.dirs('/vast/projects/LongBench/analysis/lr_sc_sn/result/qc/coverage', recursive = TRUE, full.names = TRUE)
 files <- list.files(dirs, pattern = ".picard.RNA_Metrics", full.names = TRUE)
 
@@ -1140,11 +1201,13 @@ result_df <- do.call(rbind, lapply(files, extract_metrics))
 
 
 
-```{r plot, fig.width=4, fig.height=4}
+```{r sc_sn_picard_base_distribution_plot, fig.width=4, fig.height=4}
 # Gather metrics into long format for easier plotting
 plot_df <- result_df %>%
   pivot_longer(cols = c(PCT_INTRONIC_BASES, PCT_INTERGENIC_BASES, PCT_MRNA_BASES),
                names_to = "metric", values_to = "value")
+
+save_plot_data(plot_df, "sc_sn_picard_base_distribution_raw_points")
 
 # Barplot with error bars
 ggplot(plot_df, aes(x=platform, y=value, fill=metric)) +
