@@ -82,6 +82,21 @@ rule count_reads_in_fastq:
         wc -l {input} | awk '{{print $1/4}}' > {output}
         """
 
+######## Count bases ########
+rule count_bases_in_fastq:
+    input:
+        lambda wildcards: glob.glob(os.path.join(input_fastq_dirs[wildcards.sample], f"{wildcards.cell_line}.fastq*"))[0]
+    output:
+        os.path.join(results_dir, "qc/base_counts/{sample}_{cell_line}.total_bases")
+    resources:
+        cpus_per_task=1,
+        mem_mb=4000
+    shell:
+        """
+        mkdir -p $(dirname {output})
+        zcat {input} | awk 'NR%4==2{{sum+=length($0)}} END{{print sum}}' > {output}
+        """
+
 ######## NanoPlot ########
 rule NanoPlot:
     input:

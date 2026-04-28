@@ -43,6 +43,22 @@ rule subsample_bam_for_QC:
         samtools index {output.bam}
         """
 
+######## Count bases ########
+rule count_bases_in_fastq_sr:
+    input:
+        R1 = lambda wildcards: os.path.join(input_fastq_dirs[wildcards.sample], f"{wildcards.cell_line}_R1.fastq.gz"),
+        R2 = lambda wildcards: os.path.join(input_fastq_dirs[wildcards.sample], f"{wildcards.cell_line}_R2.fastq.gz")
+    output:
+        os.path.join(results_dir, "qc/base_counts/{sample}_{cell_line}.total_bases")
+    resources:
+        cpus_per_task=1,
+        mem_mb=4000
+    shell:
+        """
+        mkdir -p $(dirname {output})
+        zcat {input.R1} {input.R2} | awk 'NR%4==2{{sum+=length($0)}} END{{print sum}}' > {output}
+        """
+
 ######## NanoPlot ########
 rule NanoPlot:
     input:
@@ -179,37 +195,38 @@ rule alignQC_analysis:
 
 
 # Coverage
-# rule picard_coverage_data: # doesn't work
-#     input:
-#         bam = join(config["output_path"], "subjunc/bam/{cell_line}.sorted.bam"),
-#         refFlat = '/home/users/allstaff/you.yu/LongBench/reference_files/GRCh38/refFlat.txt',
-#         picard_dir = "/home/users/allstaff/you.yu/project/software/picard.jar"
-#     output:
-#         os.path.join(results_dir, "qc/coverage/{cell_line}.picard.RNA_Metrics")
-#     resources:
-#         cpus_per_task=16,
-#         mem_mb=32000,
-#         slurm_extra="--mail-type=FAIL --mail-user=you.yu@wehi.edu.au"
-#     shell:
-#         """
-#         module load picard-tools
-#         mkdir -p $(dirname {output})
-#         java -jar {input.picard_dir} \
-#             CollectRnaSeqMetrics  \
-#             I={input.bam} O={output} \
-#             REF_FLAT={input.refFlat} \
-#             STRAND_SPECIFICITY=NONE
-#         """
+rule picard_coverage_data:
+    input:
+        bam = join(config["output_path"], "subjunc/bam/{cell_line}.sorted.bam"),
+        refFlat = '/home/users/allstaff/you.yu/LongBench/reference_files/GRCh38/gencode.v44.annotation.refFlat',
+        picard_dir = "/home/users/allstaff/you.yu/project/software/picard.jar"
+    output:
+        os.path.join(results_dir, "qc/coverage/{cell_line}.picard.RNA_Metrics")
+    resources:
+        cpus_per_task=16,
+        mem_mb=32000
+    shell:
+        """
+        module load picard-tools
+        mkdir -p $(dirname {output})
+        java -jar {input.picard_dir} \
+            CollectRnaSeqMetrics  \
+            I={input.bam} O={output} \
+            REF_FLAT={input.refFlat} \
+            STRAND_SPECIFICITY=FIRST_READ_TRANSCRIPTION_STRAND \
+            VALIDATION_STRINGENCY=LENIENT
+        """
 
 # Entire qc worflow head
 rule qc:
     input:
         expand(
             [
-                rules.fastp.output.R1,
-                rules.fastp.output.R2,
+                # rules.fastp.output.R1,
+                # rules.fastp.output.R2,
                 rules.NanoPlot.output[0],
-                rules.alignQC_analysis.output[0]
+                rules.alignQC_analysis.output[0],
+                rules.picard_coverage_data.output[0]
             ],
             cell_line = config['cell_lines']
         ),

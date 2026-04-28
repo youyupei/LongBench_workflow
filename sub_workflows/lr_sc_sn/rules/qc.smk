@@ -31,6 +31,21 @@ rule Demultiplexing_plot:
 
 
 
+######## Count bases ########
+rule count_bases_in_fastq_lr_sc_sn:
+    input:
+        lambda wildcards: config["samples_fastq_dir"][wildcards.sample]
+    output:
+        os.path.join(results_dir, "qc/base_counts/{sample}.total_bases")
+    resources:
+        cpus_per_task=1,
+        mem_mb=4000
+    shell:
+        """
+        mkdir -p $(dirname {output})
+        zcat -f {input} | awk 'NR%4==2{{sum+=length($0)}} END{{print sum}}' > {output}
+        """
+
 ######## Subsample ########
 rule subsample_2M_reads:
     input:
