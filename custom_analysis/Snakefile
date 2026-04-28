@@ -1,0 +1,33 @@
+"""
+Custom analysis entry point — LongBench project-specific workflows.
+
+Extends the main workflow with analyses that depend on non-standard inputs
+(e.g. FACS data, project-specific comparisons) or are not intended for reuse.
+
+Usage:
+    # Run dRNA comparison only
+    snakemake -s custom_analysis/Snakefile dRNA_comparison_all
+
+    # Run a specific custom rule alongside standard pipeline outputs
+    snakemake -s custom_analysis/Snakefile <rule_name>
+"""
+from snakemake.utils import min_version, _load_configfile
+min_version("6.0")
+
+# Include the full main workflow — gives access to all standard pipeline rules
+# and outputs as upstream dependencies for custom rules.
+include: "../Snakefile"
+
+# ---------------------------------------------------------------------------
+# Custom sub-workflows (project-specific, not intended for general reuse)
+# ---------------------------------------------------------------------------
+
+module dRNA_comparison:
+    snakefile: config['main_wf_dir'] + "/custom_analysis/dRNA_comparison/Snakefile"
+    config: config
+use rule * from dRNA_comparison as dRNA_comparison_*
+
+# ---------------------------------------------------------------------------
+# Custom rules (add includes here as new analyses are developed)
+# ---------------------------------------------------------------------------
+# include: "rules/facs_correlation.smk"

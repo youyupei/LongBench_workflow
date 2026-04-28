@@ -1,0 +1,45 @@
+configfile: "config/config.yaml"
+envvars:
+    "GITHUB_TOKEN"
+
+sys.path.insert(0, config['main_wf_dir'] + "/config/")
+import config_parser
+import glob
+
+# Load global config then merge dRNA-comparison-specific config
+main_cfg  = config_parser.global_config_parser(config['global_config_path'])
+drna_cfg  = config_parser.load_configfile(
+    config['main_wf_dir'] + "/custom_analysis/config/config_dRNA_comparison.yaml")
+config = config_parser.update_config(main_cfg, drna_cfg)
+
+# Define path variables consumed by included rule files
+input_fastq_dirs = config["samples_fastq_dir"]
+results_dir      = config["output_path"]
+scratch_dir      = config["scratch_dir"]
+barcode_list     = config['barcode_list']
+flag_dir         = config['flag_dir']
+# Scripts live in lr_bulk since we reuse its rules
+sub_wf_dir            = config['main_wf_dir'] + "/sub_workflows/lr_bulk"
+config['sub_wf_dir']  = sub_wf_dir
+
+wildcard_constraints:
+    cell_line='|'.join(config['cell_lines']),
+    sample='|'.join(config['sample_id'])
+
+# Reuse lr_bulk rule files — no code duplication
+include: "../../sub_workflows/lr_bulk/rules/minimap2.smk"      # lr_bulk_minimap2_transcript, lr_bulk_minimap2_Genome
+include: "../../sub_workflows/lr_bulk/rules/qc.smk"             # count_reads_in_fastq, NanoPlot, etc.
+include: "../../sub_workflows/lr_bulk/rules/quantification.smk" # oarfish_cov, oarfish_no_cov, etc.
+include: config['main_wf_dir'] + "/modules/utilities.smk"  # utilities_sort_and_index_bam
+
+shell("mkdir -p {results_dir}")
+
+rule all:
+    input:
+        expand([
+            results_dir + "/TranscriptAlignment/{sample}_{cell_line}.bam",
+            results_dir + "/oarfish_cov_output/{sample}/{cell_line}",
+            results_dir + "/qc/read_counts/{sample}_{cell_line}.count",
+        ], sample=config['sample_id'], cell_line=config['cell_lines'])
+    output:
+        touch(os.path.join(results_dir, ".flag/all.done"))

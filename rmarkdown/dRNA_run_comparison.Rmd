@@ -1,0 +1,223 @@
+---
+title: "dRNA Run1 vs Run2 Consistency Check"
+author: "Yupei"
+date: '`r Sys.Date()`'
+version: "v1.2"
+output:
+  html_document:
+    code_folding: hide
+    toc: yes
+    toc_float: yes
+    number_sections: yes
+    toc_depth: 4
+  pdf_document:
+    toc: yes
+    toc_depth: '4'
+params:
+  random_seed: 2024
+  cache_dir: NULL
+  fig.path: NULL
+---
+
+```{r setup_params_template, include=FALSE, eval=FALSE, message=FALSE, warning=FALSE}
+params <- list(
+  random_seed = 2024,
+  cache_dir = NULL,
+  fig.path = NULL
+)
+```
+
+```{r setup_knitr_and_libraries, include=FALSE, message=FALSE, warning=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+knitr::opts_chunk$set(
+  cache = !is.null(params$cache_dir),
+  fig.width = 12,
+  fig.height = 7,
+  message = FALSE,
+  warning = FALSE,
+  fig.path = params$fig.path,
+  dev = if (!is.null(params$fig.path)) c("png", "svg") else NULL
+)
+if (!is.null(params$cache_dir)) {
+  knitr::opts_chunk$set(cache.path = params$cache_dir)
+}
+
+library(tidyverse)
+library(ggplot2)
+library(patchwork)
+library(ggrepel)
+
+# Paths (hard-coded as per project convention — Rmd can be run independently)
+dRNA_comparison_dir <- "/vast/projects/LongBench/analysis/dRNA_comparison/result"
+oarfish_dir_run1    <- file.path(dRNA_comparison_dir, "oarfish_cov_output/dRNA_bulk_run1")
+oarfish_dir_run2    <- file.path(dRNA_comparison_dir, "oarfish_cov_output/dRNA_bulk_run2")
+read_count_dir      <- file.path(dRNA_comparison_dir, "qc/read_counts")
+
+cell_lines <- c("H146", "H69", "H526", "H211", "SHP77", "H1975", "H2228", "HCC827")
+```
+
+# Read Counts per Cell Line
+
+Comparison of sequencing depth between run1 (original) and run2 (top-up) across all eight cell lines.
+
+```{r read_counts}
+load_read_counts <- function(run_id, cell_lines, read_count_dir) {
+  map_dfr(cell_lines, function(cl) {
+    f <- file.path(read_count_dir, paste0(run_id, "_", cl, ".count"))
+    tibble(
+      run  = run_id,
+      cell_line = cl,
+      reads = as.numeric(readLines(f, n = 1))
+    )
+  })
+}
+
+rc_run1 <- load_read_counts("dRNA_bulk_run1", cell_lines, read_count_dir)
+rc_run2 <- load_read_counts("dRNA_bulk_run2", cell_lines, read_count_dir)
+rc_all  <- bind_rows(rc_run1, rc_run2) %>%
+  mutate(run = factor(run, levels = c("dRNA_bulk_run1", "dRNA_bulk_run2"),
+                      labels = c("Run1 (original)", "Run2 (top-up)")))
+
+p_rc <- ggplot(rc_all, aes(x = cell_line, y = reads / 1e6, fill = run)) +
+  geom_col(position = position_dodge(0.8), width = 0.7) +
+  labs(title = "Read counts per cell line",
+       x = "Cell line", y = "Reads (millions)", fill = "Run") +
+  theme_bw(base_size = 13) +
+  theme(axis.text.x = element_text(angle = 30, hjust = 1))
+print(p_rc)
+
+rc_wide <- rc_all %>%
+  pivot_wider(names_from = run, values_from = reads)
+knitr::kable(rc_wide, caption = "Read counts per cell line and run")
+```
+
+# Oarfish Quantification: Transcript-Level Comparison
+
+For each cell line, load oarfish `.quant` files and compare estimated counts between run1 and run2.
+
+```{r load_oarfish}
+load_oarfish_quant <- function(run_dir, cell_lines) {
+  map_dfr(cell_lines, function(cl) {
+    cl_dir  <- file.path(run_dir, cl)
+    qf      <- list.files(cl_dir, pattern = "\\.quant$", full.names = TRUE, all.files = TRUE)
+    if (length(qf) == 0) return(NULL)
+    read_tsv(qf[1], show_col_types = FALSE) %>%
+      select(tname, num_reads) %>%
+      rename(transcript_id = tname, count = num_reads) %>%
+      mutate(cell_line = cl)
+  })
+}
+
+quant_run1 <- load_oarfish_quant(oarfish_dir_run1, cell_lines) %>% rename(count_run1 = count)
+quant_run2 <- load_oarfish_quant(oarfish_dir_run2, cell_lines) %>% rename(count_run2 = count)
+
+quant_merged <- inner_join(quant_run1, quant_run2, by = c("transcript_id", "cell_line"))
+```
+
+## Detected Transcripts per Run
+
+Number of transcripts with >0 estimated counts in each run.
+
+```{r detected_transcripts}
+det_summary <- quant_merged %>%
+  group_by(cell_line) %>%
+  summarise(
+    n_run1     = sum(count_run1 > 0),
+    n_run2     = sum(count_run2 > 0),
+    n_both     = sum(count_run1 > 0 & count_run2 > 0),
+    n_run1_only = sum(count_run1 > 0 & count_run2 == 0),
+    n_run2_only = sum(count_run2 > 0 & count_run1 == 0),
+    .groups = "drop"
+  )
+knitr::kable(det_summary, caption = "Transcript detection summary per cell line")
+
+det_long <- det_summary %>%
+  pivot_longer(c(n_run1, n_run2), names_to = "run", values_to = "n_detected") %>%
+  mutate(run = factor(run, levels = c("n_run1", "n_run2"),
+                      labels = c("Run1 (original)", "Run2 (top-up)")))
+
+p_det <- ggplot(det_long, aes(x = cell_line, y = n_detected, fill = run)) +
+  geom_col(position = position_dodge(0.8), width = 0.7) +
+  labs(title = "Detected transcripts (count > 0) per cell line",
+       x = "Cell line", y = "Number of transcripts", fill = "Run") +
+  theme_bw(base_size = 13) +
+  theme(axis.text.x = element_text(angle = 30, hjust = 1))
+print(p_det)
+```
+
+## Quantification Correlation
+
+Scatter plots of log2(count + 1) between run1 and run2 per cell line.
+
+```{r correlation_plots, fig.width=16, fig.height=12}
+corr_stats <- quant_merged %>%
+  filter(count_run1 > 0 & count_run2 > 0) %>%
+  group_by(cell_line) %>%
+  summarise(
+    pearson  = cor(log2(count_run1 + 1), log2(count_run2 + 1), method = "pearson"),
+    spearman = cor(count_run1, count_run2, method = "spearman"),
+    .groups  = "drop"
+  )
+knitr::kable(corr_stats %>% mutate(across(c(pearson, spearman), ~round(.x, 4))),
+             caption = "Correlation between run1 and run2 (commonly detected transcripts: count > 0 in both runs)")
+
+plots <- map(cell_lines, function(cl) {
+  d <- quant_merged %>%
+    filter(cell_line == cl, count_run1 > 0 & count_run2 > 0) %>%
+    mutate(log_r1 = log2(count_run1 + 1),
+           log_r2 = log2(count_run2 + 1))
+  r  <- filter(corr_stats, cell_line == cl)
+  ggplot(d, aes(x = log_r1, y = log_r2)) +
+    geom_point(alpha = 0.25, size = 0.6) +
+    geom_abline(slope = 1, intercept = 0, colour = "red", linetype = "dashed") +
+    annotate("text", x = Inf, y = -Inf, hjust = 1.1, vjust = -0.5,
+             label = sprintf("r = %.3f\nρ = %.3f", r$pearson, r$spearman), size = 3.5) +
+    labs(title = cl,
+         x = "log2(count+1) Run1", y = "log2(count+1) Run2") +
+    theme_bw(base_size = 11)
+})
+wrap_plots(plots, ncol = 4)
+```
+
+# Transcript Detection Consistency
+
+Fraction of transcripts detected in both runs, run1-only, or run2-only.
+
+```{r detection_consistency}
+consist <- quant_merged %>%
+  filter(count_run1 > 0 | count_run2 > 0) %>%
+  mutate(category = case_when(
+    count_run1 > 0 & count_run2 > 0 ~ "Both",
+    count_run1 > 0 & count_run2 == 0 ~ "Run1 only",
+    count_run1 == 0 & count_run2 > 0 ~ "Run2 only"
+  )) %>%
+  count(cell_line, category) %>%
+  group_by(cell_line) %>%
+  mutate(pct = n / sum(n) * 100)
+
+p_consist <- ggplot(consist, aes(x = cell_line, y = pct, fill = category)) +
+  geom_col(width = 0.7) +
+  scale_fill_manual(values = c("Both" = "#4393C3", "Run1 only" = "#D6604D", "Run2 only" = "#74ADD1")) +
+  labs(title = "Transcript detection consistency across runs",
+       x = "Cell line", y = "Percentage (%)", fill = "Detected in") +
+  theme_bw(base_size = 13) +
+  theme(axis.text.x = element_text(angle = 30, hjust = 1))
+print(p_consist)
+```
+
+# Summary
+
+```{r summary_table}
+summary_tbl <- rc_wide %>%
+  left_join(det_summary, by = "cell_line") %>%
+  left_join(corr_stats, by = "cell_line")
+knitr::kable(summary_tbl %>% mutate(across(c(pearson, spearman), ~round(.x, 4))),
+             caption = "Combined summary: read counts, detection, and correlation per cell line")
+tsv_path <- if (!is.null(params$fig.path)) {
+  sub("_figures[/]*$", "_summary.tsv", params$fig.path)
+} else {
+  file.path(dRNA_comparison_dir, "dRNA_run_comparison_summary.tsv")
+}
+write_tsv(summary_tbl, tsv_path)
+message("Summary table written to: ", tsv_path)
+```
