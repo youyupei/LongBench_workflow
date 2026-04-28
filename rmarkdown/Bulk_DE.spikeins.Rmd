@@ -60,6 +60,8 @@ knitr::opts_chunk$set(
   cache = !is.null(params$cache_dir),  # Enable caching only if cache_dir is provided
   fig.width = 7,                     # Set default figure width
   fig.height = 5,                    # Set default figure height
+  echo = FALSE,                       # Hide code in the output
+  message = FALSE,                    # Suppress messages in the output
   warning = FALSE,                    # Suppress warnings in the output
   fig.path = params$fig.path,         # Set figure path (NULL if not provided)
   dev = if (!is.null(params$fig.path)) c("png", "svg") else NULL  # Set output devices if fig.path is provided

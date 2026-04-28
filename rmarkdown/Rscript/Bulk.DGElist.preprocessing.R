@@ -99,6 +99,24 @@ pb_bulk.gene.dge <- get_dge_from_txi(quant_paths$pb_bulk, ".*/", "oarfish")
 drna_bulk.gene.dge <- get_dge_from_txi(quant_paths$drna_bulk, ".*/", "oarfish")
 
 
+
+## Reformating the transcript names
+# Extract and store original feature IDs before normalization
+extract_and_normalize_ids <- function(dge) {
+  # Store original full ID in $genes (including annotations)
+  if (!"full_id" %in% colnames(dge$genes)) {
+    dge$genes$full_id <- rownames(dge)
+  }
+  # Simplify rownames: remove pipe annotations and version numbers
+  rownames(dge) <- sub("\\|.*", "", rownames(dge))      # Remove pipe-separated info
+  dge
+}
+
+ill_bulk.dge <- extract_and_normalize_ids(ill_bulk.dge)
+ont_bulk.dge.oarfish <- extract_and_normalize_ids(ont_bulk.dge.oarfish)
+pb_bulk.dge.oarfish <- extract_and_normalize_ids(pb_bulk.dge.oarfish)
+ont_drna.dge.oarfish <- extract_and_normalize_ids(ont_drna.dge.oarfish)
+
 # --------------------------------------------------------------
 # OUTPUT
 # --------------------------------------------------------------

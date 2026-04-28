@@ -120,6 +120,8 @@ alignment.stats <- alignment.stats %>%
   mutate(
     Platform = case_when(
       str_detect(platform, "pb.*IP_filtered") ~ "PacBio IP filtered",
+      str_detect(platform, "dRNA.*IP_filtered") ~ "ONT dRNA IP filtered",
+      str_detect(platform, "ont_bulk.*IP_filtered") ~ "ONT cDNA IP filtered",
       str_detect(platform, "dRNA") ~ "ONT dRNA",
       str_detect(platform, "ont_bulk") ~ "ONT cDNA",
       str_detect(platform, "pb") ~ "PacBio",
@@ -144,8 +146,8 @@ alignment.stats <- alignment.stats %>%
   select(-c(TOTAL_READS, TOTAL_BASES))
 
 # Keep the IP filtered as a separate category tibble
-alignment.stats.IP_filter <- alignment.stats %>% filter(Platform == "PacBio IP filtered")
-alignment.stats <- alignment.stats %>% filter(Platform != "PacBio IP filtered")
+alignment.stats.IP_filter <- alignment.stats %>% filter(str_detect(Platform, "IP filtered"))
+alignment.stats <- alignment.stats %>% filter(!str_detect(Platform, "IP filtered"))
 ```
 
 
@@ -234,6 +236,8 @@ error.stats <- error.stats %>%
   mutate(
     Platform = case_when(
       str_detect(platform, "pb.*IP_filtered") ~ "PacBio IP filtered",
+      str_detect(platform, "dRNA.*IP_filtered") ~ "ONT dRNA IP filtered",
+      str_detect(platform, "ont_bulk.*IP_filtered") ~ "ONT cDNA IP filtered",
       str_detect(platform, "dRNA") ~ "ONT dRNA",
       str_detect(platform, "ont_bulk") ~ "ONT cDNA",
       str_detect(platform, "pb") ~ "PacBio",
@@ -241,7 +245,7 @@ error.stats <- error.stats %>%
     ),
     # remove *_
     Cell_line = gsub(".*_", "", platform)
-  ) %>% select(-platform) %>% filter(Platform != "PacBio IP filtered")
+  ) %>% select(-platform) %>% filter(!str_detect(Platform, "IP filtered"))
 
 error.stats <- error.stats %>%
   mutate(
@@ -306,6 +310,9 @@ junc.var <- map_dfr(stats_files, parse_stats)
 junc.var <- junc.var %>%
   mutate(
     Platform = case_when(
+      str_detect(platform, "pb.*IP_filtered") ~ "PacBio IP filtered",
+      str_detect(platform, "dRNA.*IP_filtered") ~ "ONT dRNA IP filtered",
+      str_detect(platform, "ont_bulk.*IP_filtered") ~ "ONT cDNA IP filtered",
       str_detect(platform, "dRNA") ~ "ONT dRNA",
       str_detect(platform, "ont_bulk") ~ "ONT cDNA",
       str_detect(platform, "pb") ~ "PacBio",
@@ -314,6 +321,7 @@ junc.var <- junc.var %>%
     # remove *_
     Cell_line = gsub(".*_", "", platform)
   ) %>%
+  filter(!str_detect(Platform, "IP filtered")) %>%
   select(-platform)
 
 # update all NA to 0
@@ -436,6 +444,8 @@ parse_stats <- function(file) {
       Aligned_length = cut(Aligned_length, breaks=c(seq(0, 4000, by=500), Inf), labels = c("0-500", "500-1000", "1000-1500", "1500-2000", "2000-2500", "2500-3000", "3000-3500", "3500-4000", "4000+")),
       Platform = case_when(
         str_detect(platform, "pb.*IP_filtered") ~ "PacBio IP filtered",
+        str_detect(platform, "dRNA.*IP_filtered") ~ "ONT dRNA IP filtered",
+        str_detect(platform, "ont_bulk.*IP_filtered") ~ "ONT cDNA IP filtered",
         str_detect(platform, "dRNA") ~ "ONT dRNA",
         str_detect(platform, "ont_bulk") ~ "ONT cDNA",
         str_detect(platform, "pb") ~ "PacBio",
@@ -486,6 +496,9 @@ summary_data <- genoemic.feature %>%
   group_by(Platform) %>%
   mutate(
       proportion = count / sum(count),
+      IP_filtering = ifelse(str_detect(Platform, "IP filtered"), "IP filtered", "Not filtered"),
+      # remove IP filtered from Platform for plotting
+      Platform = gsub(" IP filtered", "", Platform)
   )
 
 save_plot_data(summary_data, "bulk_alignqc_genomic_feature_overall_points")
@@ -494,6 +507,7 @@ save_plot_data(summary_data, "bulk_alignqc_genomic_feature_overall_points")
 ggplot(summary_data, aes(x = Platform, y = proportion, fill = Feature)) +
   geom_bar(stat = "identity") +
   theme_minimal() +
+  facet_wrap(~IP_filtering, scales = "free_y") +
   labs(x = "Platform", y = "Proportion", fill = "Feature") +
   scale_fill_brewer(palette = "Set2") + # Adjust color scheme
   theme(axis.text.x = element_text(angle = 45, hjust = 1))
@@ -566,11 +580,14 @@ parse_stats <- function(file) {
     select(completeness, exon_count_anno) %>%
     mutate(
       Platform = case_when(
+        str_detect(platform, "pb.*IP_filtered") ~ "PacBio IP filtered",
+        str_detect(platform, "dRNA.*IP_filtered") ~ "ONT dRNA IP filtered",
+        str_detect(platform, "ont_bulk.*IP_filtered") ~ "ONT cDNA IP filtered",
         str_detect(platform, "dRNA") ~ "ONT dRNA",
         str_detect(platform, "ont_bulk") ~ "ONT cDNA",
         str_detect(platform, "pb") ~ "PacBio",
         TRUE ~ "Illumina",
-      ),
+      ) %>% filter(!str_detect(., "IP filtered")),
       # remove *_
       Cell_line = gsub(".*_", "", platform)
     )

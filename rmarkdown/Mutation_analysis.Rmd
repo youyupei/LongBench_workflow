@@ -25,8 +25,10 @@ knitr::opts_chunk$set(
   cache = TRUE,
   fig.width = 8, 
   fig.height = 6, 
-  warning = F, 
-  fig.path = params$fig.path, 
+  echo = FALSE,
+  message = FALSE,
+  warning = FALSE,
+  fig.path = params$fig.path,
   dev = c("png", "svg"),
   cache.path = ifelse(is.null(params$cache_dir), 
                       paste0(tools::file_path_sans_ext(knitr::current_input()), "_cache/"), 
@@ -62,7 +64,7 @@ color_map <- c(
 ```
 
 # Part 1: Genomic region covered by >=30 read_tsv
-```{r Genomic region coverage >=30, fig.height=2, fig.width=3}
+```{r Genomic region coverage ge 30, fig.height=2, fig.width=3}
 files <- list.files(params$lr_bulk_dir, pattern = "\\.genomic_coverage\\.txt$", full.names = TRUE)
 files <- c(files, list.files(params$sr_bulk_dir, pattern = "\\.genomic_coverage\\.txt$", full.names = TRUE))
 
@@ -733,7 +735,7 @@ TP.matrix$region <- ifelse(is.exonic, "exonic",
                      ifelse(is.intronic, "intronic", "intergenic"))
 ```
 
-```{r CCLE TP}
+```{r CCLE TP v1}
 # Main without DV
 TP.matrix %>%
   select(variant_type, ends_with("_STATUS"), region) %>%
@@ -1473,7 +1475,7 @@ ComplexUpset::upset(
 # Part 5: Allele specific expression (1-R^2)
 
 
-```{r, allele specific splicing, fig.height=7, fig.width=4}
+```{r, allele specific splicing 1, fig.height=7, fig.width=4}
 ASE <- read_tsv(file.path(params$summary_dir,"Allelic_imbalance/CoverageDiv_summary.tsv")) %>% rename(
     "ONT dRNA" = div_drna,
     "ONT cDNA" =  div_ont,

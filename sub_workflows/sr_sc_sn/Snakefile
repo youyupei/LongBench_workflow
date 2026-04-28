@@ -11,9 +11,12 @@ config = config_parser.sub_wf_config_parser(
 
 
 
+results_dir = config["output_path"]
+
 include: "rules/cellranger.smk"
 include: "rules/demuxlet.smk"
 include: "rules/rmarkdown.smk"
+include: "rules/qc.smk"
 
 rule all:
     input:
