@@ -1,0 +1,25 @@
+configfile: "config/config.yaml"
+envvars:
+    "GITHUB_TOKEN"
+
+sys.path.insert(0, config['main_wf_dir'] + "/config/")
+import config_parser
+
+# Load the configuration
+config = config_parser.sub_wf_config_parser(
+    main_cfg_fn = config['global_config_path'],
+    sub_wf_name = "hybrid_bulk")
+
+results_dir = config["output_path"]
+flag_dir = config["flag_dir"]
+
+include: "rules/miniquant.smk"
+
+# make sure the results_dir exists
+shell("mkdir -p {results_dir}")
+
+rule all:
+    input:
+        rules.miniquant_all_dge.output
+    output:
+        touch(os.path.join(results_dir, ".flag/all.done"))

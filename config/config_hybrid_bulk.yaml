@@ -1,0 +1,44 @@
+# Hybrid bulk workflow config
+# miniQuant hybrid quantification + DGE object generation
+
+output_path: "/vast/projects/LongBench/analysis/hybrid_bulk/result"
+scratch_dir: "/vast/scratch/users/you.yu/LongBench/hybrid_bulk"
+
+sample_id:
+  - ont_bulk
+  - pb_bulk
+  - dRNA_bulk
+
+cell_lines:
+  - H146
+  - H69
+  - H526
+  - H211
+  - SHP77
+  - H1975
+  - H2228
+  - HCC827
+
+miniquant_config:
+  container_image: "/vast/projects/LongBench/camilla_analysis/containers/miniQuant_latest.sif"
+  reference_fa: "/vast/projects/LongBench/reference_files/GRCh38.add.spikein/gencode.v44.transcripts.add.spikein.fa"
+  short_reads_strandness: "fr-stranded"
+  mem_gb: 64
+
+  # Library prep argument for miniQuant --long_reads_library_prep
+  long_reads_library_prep:
+    ont_bulk: "cDNA-ONT"
+    pb_bulk: "cDNA-PacBio"
+    dRNA_bulk: "dRNA-ONT"
+
+  # FASTQ path patterns (must include {cell_line})
+  lr_fastq_pattern:
+    ont_bulk: "/vast/projects/LongBench/sequencing_data/ONT_bulk/fastq_q10_filter/{cell_line}.fastq.gz"
+    pb_bulk: "/vast/projects/LongBench/sequencing_data/pb_bulk/{cell_line}.fastq.gz"
+    dRNA_bulk: "/vast/projects/LongBench/sequencing_data/ONT_dRNA/fastq_q10_filter_merged_with_topup/{cell_line}.fastq.gz"
+
+  sr_r1_pattern: "/vast/projects/LongBench/sequencing_data/illumina_bulk/softlinks/{cell_line}_R1.fastq.gz"
+  sr_r2_pattern: "/vast/projects/LongBench/sequencing_data/illumina_bulk/softlinks/{cell_line}_R2.fastq.gz"
+
+bulk_meta: "/vast/projects/LongBench/sequencing_data/illumina_bulk/metadata.txt"
+tx2gene_rds: "/vast/projects/LongBench/analysis/workflow/rmarkdown/RDS/Tx2Gene.map.rds"

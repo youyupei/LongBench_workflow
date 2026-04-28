@@ -7,8 +7,8 @@ rule fastp:
         R1 = join(input_fastq_dirs['ill_bulk'], "{cell_line}_R1.fastq.gz"),
         R2 = join(input_fastq_dirs['ill_bulk'], "{cell_line}_R2.fastq.gz")
     output:
-        R1=os.path.join(scratch_dir, "trimmed_fq/{cell_line}_R1.fastq.gz"),
-        R2=os.path.join(scratch_dir, "trimmed_fq/{cell_line}_R2.fastq.gz"),
+        R1=temp(os.path.join(scratch_dir, "trimmed_fq/{cell_line}_R1.fastq.gz")),
+        R2=temp(os.path.join(scratch_dir, "trimmed_fq/{cell_line}_R2.fastq.gz")),
         html=join(results_dir, "qc/fastp/{cell_line}.html"),
         json=join(results_dir, "qc/fastp/{cell_line}.json")
     conda:
