@@ -202,6 +202,26 @@ rule kallisto_convert:
 
 ## IsoQuant
 
+rule patch_gtf_sirv_transcript_id:
+    """Append .1 to transcript_id for long SIRV entries where gene_id == transcript_id."""
+    input:
+        gtf = config["reference"]["gtf"]
+    output:
+        gtf = os.path.join(scratch_dir, "reference/patched_sirv.gtf")
+    resources:
+        cpus_per_task=1,
+        mem_mb=1000,
+    shell:
+        """
+        mkdir -p $(dirname {output.gtf})
+        awk '{{
+            if ($1 ~ /^SIRV/ && match($0, /gene_id "([^"]+)"; transcript_id "([^"]+)"/, arr) && arr[1] == arr[2]) {{
+                sub(/transcript_id "[^"]+"/, "transcript_id \\"" arr[2] ".1\\"")
+            }}
+            print
+        }}' {input.gtf} > {output.gtf}
+        """
+
 def get_IsoQuant_data_type(wildcards):
     if wildcards.sample.startswith("ont") or wildcards.sample.startswith("dRNA"):
         return "nanopore"
@@ -213,14 +233,16 @@ def get_IsoQuant_data_type(wildcards):
 rule IsoQuant_with_novel:
     input:
         ref_genome = config["reference"]["genome"],
-        gene_annotation = config["reference"]["gtf"],
+        gene_annotation = rules.patch_gtf_sirv_transcript_id.output.gtf,
         genome_bam = results_dir + "/GenomeAlignment/{sample}_{cell_line}.sorted.bam",
     output:
         directory(os.path.join(results_dir,"IsoQuant_output/{sample}/{cell_line}"))
+    retries: 2
     resources:
         cpus_per_task=16,
         mem_mb=50000,
-        slurm_extra="--partition=long --time=7-00:00:00"
+        slurm_partition=lambda wildcards, attempt: config["slurm"]["partition"]["long"] if attempt > 1 else config["slurm"]["partition"]["short"]
+        # slurm_extra="--partition=long --time=7-00:00:00"
     params:
         data_type = get_IsoQuant_data_type
     conda:
@@ -230,7 +252,7 @@ rule IsoQuant_with_novel:
         echo "Running IsoQuant..."
         mkdir -p {output}
         isoquant.py --reference {input.ref_genome} \
-                    --genedb {input.gene_annotation}  --complete_genedb  --no_gtf_check \
+                    --genedb {input.gene_annotation}  --no_gtf_check \
                     --bam {input.genome_bam} \
                     --data_type {params.data_type} \
                     --threads {resources.cpus_per_task} \
@@ -240,14 +262,16 @@ rule IsoQuant_with_novel:
 rule IsoQuant_no_novel:
     input:
         ref_genome = config["reference"]["genome"],
-        gene_annotation = config["reference"]["gtf"],
+        gene_annotation = rules.patch_gtf_sirv_transcript_id.output.gtf,
         genome_bam = results_dir + "/GenomeAlignment/{sample}_{cell_line}.sorted.bam",
     output:
         directory(os.path.join(results_dir,"IsoQuant_output_no_novel/{sample}/{cell_line}"))
+    retries: 2
     resources:
         cpus_per_task=16,
         mem_mb=50000,
-        slurm_extra="--partition=long --time=7-00:00:00"
+        slurm_partition=lambda wildcards, attempt: config["slurm"]["partition"]["long"] if attempt > 1 else config["slurm"]["partition"]["short"]
+        #slurm_extra="--partition=long --time=7-00:00:00"
     params:
         data_type = get_IsoQuant_data_type
     conda:
@@ -257,7 +281,7 @@ rule IsoQuant_no_novel:
         echo "Running IsoQuant..."
         mkdir -p {output}
         isoquant.py --reference {input.ref_genome} \
-                    --genedb {input.gene_annotation}  --complete_genedb  --no_gtf_check --no_model_construction \
+                    --genedb {input.gene_annotation}  --no_gtf_check --no_model_construction \
                     --bam {input.genome_bam} \
                     --data_type {params.data_type} \
                     --threads {resources.cpus_per_task} \
@@ -311,6 +335,42 @@ rule IsoQuant_no_novel_to_dge_bundle:
         """
         Rscript {params.wrapper_script} {params.isoquant_root} {params.output_prefix}
         """
+
+
+# ========================================================
+# IP-filtered quantification (full samples, nonIP reads, Oarfish-cov only)
+# ========================================================
+
+rule oarfish_cov_IP_filtered:
+    input:
+        bam = join(scratch_dir, "int_prim_analysis/full/{sample}_{cell_line}_nonIP_transcript.bam"),
+        ref = config["reference"]["transcript"]
+    output:
+        out_dir = directory(os.path.join(results_dir, "IP_filtered/oarfish_cov_output/{sample}/{cell_line}"))
+    conda:
+        config["conda"]["oarfish"]
+    resources:
+        cpus_per_task=16,
+        mem_mb=64000,
+        slurm_extra="--mail-type=FAIL --mail-user=you.yu@wehi.edu.au"
+    priority: 101
+    shell:
+        """
+        mkdir -p {output.out_dir}
+        oarfish --alignments {input.bam} --threads {resources.cpus_per_task} --output {output.out_dir}/ --model-coverage -d . --filter-group no-filters --num-bootstraps 50
+        """
+
+
+rule run_quantification_IP_filtered:
+    """Target rule: Oarfish-cov quantification on IP-filtered (nonIP) full-sample reads."""
+    input:
+        expand(
+            rules.oarfish_cov_IP_filtered.output[0],
+            sample=config["sample_id"],
+            cell_line=config["cell_lines"]
+        )
+    output:
+        touch(results_dir + "/.flag/run_quantification_IP_filtered.done")
 
 
 # lr_bulk quantification target rule

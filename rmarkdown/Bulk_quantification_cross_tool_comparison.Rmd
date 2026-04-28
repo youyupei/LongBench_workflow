@@ -1,0 +1,639 @@
+---
+title: "Longbench Cross-tool Long-read Quantification Comparison"
+author: "Yupei"
+version: "v1.0"
+output:
+  html_document:
+    code_folding: hide
+    toc: yes
+    toc_float: yes
+    number_sections: yes
+    toc_depth: 4
+  pdf_document:
+    toc: yes
+    toc_depth: '4'
+params:
+  random_seed: 2024
+  cache_dir: NULL
+  fig.path: NULL
+
+  # input oarfish/salmon
+  input_DGEobject_rds: "/vast/projects/LongBench/analysis/workflow/rmarkdown/RDS/bulk_DGE.obj.rds"
+
+  # input isoquant
+  isoquant_ont_bulk_rds: "/home/users/allstaff/you.yu/LongBench/analysis/lr_bulk/result/IsoQuant_output_no_novel/isoquant_bulk_dge.ont_bulk.rds"
+  isoquant_pb_bulk_rds: "/home/users/allstaff/you.yu/LongBench/analysis/lr_bulk/result/IsoQuant_output_no_novel/isoquant_bulk_dge.pb_bulk.rds"
+  isoquant_drna_bulk_rds: "/home/users/allstaff/you.yu/LongBench/analysis/lr_bulk/result/IsoQuant_output_no_novel/isoquant_bulk_dge.dRNA_bulk.rds"
+
+  # input miniquant
+  hybrid_ont_bulk_rds: "/vast/projects/LongBench/analysis/hybrid_bulk/result/miniquant_output/miniquant_bulk_dge.ont_bulk.rds"
+  hybrid_pb_bulk_rds: "/vast/projects/LongBench/analysis/hybrid_bulk/result/miniquant_output/miniquant_bulk_dge.pb_bulk.rds"
+  hybrid_drna_bulk_rds: "/vast/projects/LongBench/analysis/hybrid_bulk/result/miniquant_output/miniquant_bulk_dge.dRNA_bulk.rds"
+
+  sequins_tsv: "/vast/projects/LongBench/reference_files/Sequin_resources/v2.4/rnasequin_isoforms_2.4.tsv"
+  sirv_csv: "/home/users/allstaff/you.yu/LongBench/reference_files/SIRV_Set4_Norm_Sequences_20210507/SIRV_set4_concentration.csv"
+---
+
+# Setup
+
+```{r setup, include=FALSE, message=FALSE, warning=FALSE}
+if (interactive()) {
+  params <- list(
+    random_seed = 2024,
+    cache_dir = NULL,
+    fig.path = NULL,
+    input_DGEobject_rds = "/vast/projects/LongBench/analysis/workflow/rmarkdown/RDS/bulk_DGE.obj.rds",
+    isoquant_ont_bulk_rds = "/home/users/allstaff/you.yu/LongBench/analysis/lr_bulk/result/IsoQuant_output_no_novel/isoquant_bulk_dge.ont_bulk.rds",
+    isoquant_pb_bulk_rds = "/home/users/allstaff/you.yu/LongBench/analysis/lr_bulk/result/IsoQuant_output_no_novel/isoquant_bulk_dge.pb_bulk.rds",
+    isoquant_drna_bulk_rds = "/home/users/allstaff/you.yu/LongBench/analysis/lr_bulk/result/IsoQuant_output_no_novel/isoquant_bulk_dge.dRNA_bulk.rds",
+    hybrid_ont_bulk_rds = "/vast/projects/LongBench/analysis/hybrid_bulk/result/miniquant_output/miniquant_bulk_dge.ont_bulk.rds",
+    hybrid_pb_bulk_rds = "/vast/projects/LongBench/analysis/hybrid_bulk/result/miniquant_output/miniquant_bulk_dge.pb_bulk.rds",
+    hybrid_drna_bulk_rds = "/vast/projects/LongBench/analysis/hybrid_bulk/result/miniquant_output/miniquant_bulk_dge.dRNA_bulk.rds",
+    sequins_tsv = "/vast/projects/LongBench/reference_files/Sequin_resources/v2.4/rnasequin_isoforms_2.4.tsv",
+    sirv_csv = "/home/users/allstaff/you.yu/LongBench/reference_files/SIRV_Set4_Norm_Sequences_20210507/SIRV_set4_concentration.csv"
+  )
+}
+
+if (!is.null(params$cache_dir)) {
+  knitr::opts_chunk$set(cache = TRUE, fig.width = 7, fig.height = 5, warning = FALSE, cache.path = params$cache_dir)
+} else {
+  knitr::opts_chunk$set(cache = FALSE, fig.width = 7, fig.height = 5, warning = FALSE)
+}
+
+knitr::opts_chunk$set(
+  cache = !is.null(params$cache_dir),
+  fig.width = 12,
+  fig.height = 6,
+  echo = FALSE,
+  message = FALSE,
+  warning = FALSE,
+  fig.path = params$fig.path,
+  dev = if (!is.null(params$fig.path)) c("png", "svg") else NULL
+)
+
+set.seed(params$random_seed)
+```
+
+```{r libraries, include=FALSE}
+library(edgeR)
+library(tidyverse)
+library(knitr)
+library(patchwork)
+
+rename <- dplyr::rename
+select <- dplyr::select
+```
+
+```{r helpers, include=FALSE}
+safe_read_rds <- function(path) {
+  if (is.null(path) || !file.exists(path)) return(NULL)
+  readRDS(path)
+}
+
+is.sequins <- function(dge) grepl("^R", rownames(dge))
+is.human <- function(dge) grepl("^ENS", rownames(dge))
+is.sirv_E0 <- function(dge) grepl("^SIRV\\d{3}$", rownames(dge))
+is.sirv_all <- is.sirv_E0 # temporarily only consider the E0 SIRVs as long SIRV is not captures by isoquant
+is.ercc      <- function(dge) grepl("^(ERCC|DQ|EF)", rownames(dge))
+color_palette <- c(
+  PacBio = "#df1995",
+  "ONT dRNA" = "#00789b",
+  "ONT cDNA" = "#04476c"
+)
+
+normalise_feature_ids <- function(dge) {
+  rownames(dge) <- rownames(dge) %>%
+    sub("\\|.*", "", .) %>%
+    sub("\\..*", "", .)
+  dge
+}
+
+normalise_observed_matrix <- function(dge, tx_len_norm = FALSE, log2_1p = FALSE) {
+  counts <- as.matrix(dge$counts)
+
+  if (tx_len_norm) {
+    feature_lengths <- dge$genes$EffectiveLength
+    if (is.null(feature_lengths)) {
+      feature_lengths <- dge$genes$Length
+    }
+    if (is.null(feature_lengths)) {
+      feature_lengths <- rep(1, nrow(counts))
+    }
+    counts <- sweep(counts, 1, feature_lengths, "/")
+  }
+
+  lib_sizes <- colSums(counts, na.rm = TRUE)
+  lib_sizes[lib_sizes == 0] <- NA_real_
+  cpm <- sweep(counts, 2, lib_sizes, "/") * 1e6
+
+  if (log2_1p) {
+    log2(cpm + 1)
+  } else {
+    cpm
+  }
+}
+
+log2_1p_CPM <- function(x) {
+  log2(x * 1e6 / sum(x) + 1)
+}
+
+safe_cor <- function(x, y, method = "pearson") {
+  ok <- is.finite(x) & is.finite(y)
+  x <- x[ok]
+  y <- y[ok]
+
+  if (length(x) < 2 || length(unique(x)) < 2 || length(unique(y)) < 2) {
+    return(NA_real_)
+  }
+
+  cor(x, y, method = method)
+}
+
+safe_length_bin <- function(x) {
+  x <- as.numeric(x)
+  breaks <- unique(quantile(x, probs = seq(0, 1, 0.25), na.rm = TRUE, names = FALSE))
+
+  if (length(breaks) < 2) {
+    return(factor(rep("All lengths", length(x)), levels = "All lengths"))
+  }
+
+  labels <- c("1st Quartile", "2nd Quartile", "3rd Quartile", paste0(seq(4, length(breaks) - 1), "th Quartile"))
+
+  cut(
+    x,
+    breaks = breaks,
+    include.lowest = TRUE,
+    labels = labels[seq_len(length(breaks) - 1)]
+  )
+}
+
+summarise_metric_frame <- function(metric_df, sample_name) {
+  per_bin <- metric_df %>%
+    group_by(Sample, `Transcript length`) %>%
+    summarise(
+      correlation = safe_cor(GT, Observed, method = "pearson"),
+      `mean square error` = mean((GT - Observed)^2, na.rm = TRUE),
+      `mean absolute error` = mean(abs(GT - Observed), na.rm = TRUE),
+      nrmse = {
+        rmse <- sqrt(mean((GT - Observed)^2, na.rm = TRUE))
+        gt_mean <- mean(GT, na.rm = TRUE)
+        if (is.na(gt_mean) || gt_mean == 0) NA_real_ else rmse / gt_mean
+      },
+      .groups = "drop"
+    ) %>%
+    rename(cell_line = Sample)
+
+  overall <- metric_df %>%
+    group_by(Sample) %>%
+    summarise(
+      correlation = safe_cor(GT, Observed, method = "pearson"),
+      `mean square error` = mean((GT - Observed)^2, na.rm = TRUE),
+      `mean absolute error` = mean(abs(GT - Observed), na.rm = TRUE),
+      nrmse = {
+        rmse <- sqrt(mean((GT - Observed)^2, na.rm = TRUE))
+        gt_mean <- mean(GT, na.rm = TRUE)
+        if (is.na(gt_mean) || gt_mean == 0) NA_real_ else rmse / gt_mean
+      },
+      .groups = "drop"
+    ) %>%
+    rename(cell_line = Sample) %>%
+    mutate(`Transcript length` = "All transcript")
+
+  bind_rows(per_bin, overall) %>%
+    mutate(sample = sample_name)
+}
+
+build_sequin_metric_df <- function(dge, tx_len_norm = FALSE) {
+  dge.sequins <- dge[is.sequins(dge), ]
+  observed <- normalise_observed_matrix(dge.sequins, tx_len_norm = tx_len_norm, log2_1p = TRUE) %>%
+    as_tibble(rownames = "NAME")
+
+  sequins.gt <- readr::read_tsv(params$sequins_tsv, show_col_types = FALSE) %>%
+    transmute(
+      NAME,
+      LENGTH,
+      MIX_A = log2_1p_CPM(MIX_A),
+      MIX_B = log2_1p_CPM(MIX_B)
+    ) %>%
+    pivot_longer(
+      cols = c(MIX_A, MIX_B),
+      names_to = "MIX",
+      values_to = "GT"
+    )
+
+  sample_meta <- tibble(
+    Sample = dge.sequins$samples$sample,
+    MIX = dge.sequins$samples$sequins
+  ) %>%
+    mutate(
+      MIX = toupper(trimws(as.character(MIX))),
+      MIX = ifelse(MIX %in% c("A", "MIXA", "MIX_A"), "MIX_A", "MIX_B")
+  )
+
+  purrr::map_dfr(seq_len(nrow(sample_meta)), function(i) {
+    sample_id <- sample_meta$Sample[[i]]
+    mix_id <- sample_meta$MIX[[i]]
+
+    observed %>%
+      select(NAME, all_of(sample_id)) %>%
+      rename(Observed = all_of(sample_id)) %>%
+      mutate(MIX = mix_id) %>%
+      left_join(sequins.gt, by = c("NAME", "MIX")) %>%
+      mutate(
+        Sample = sample_id,
+        `Transcript length` = safe_length_bin(LENGTH)
+      ) %>%
+      select(NAME, Sample, GT, Observed, LENGTH, `Transcript length`)
+  })
+}
+
+get_sequin_quartiled_states <- function(dge, sample_name, tx_len_norm = FALSE) {
+  combined_df <- build_sequin_metric_df(dge, tx_len_norm = tx_len_norm)
+  summarise_metric_frame(combined_df, sample_name)
+}
+
+build_ercc_metric_df <- function(dge, tx_len_norm = FALSE) {
+  dge.ercc <- dge[is.ercc(dge), ]
+  observed <- normalise_observed_matrix(dge.ercc, tx_len_norm = tx_len_norm, log2_1p = TRUE) %>%
+    as_tibble(rownames = "NAME")
+
+  ercc.gt <- readr::read_csv(params$sirv_csv, show_col_types = FALSE) %>%
+    filter(grepl("ERCC", txid)) %>%
+    transmute(NAME = GenBank, GT = log2_1p_CPM(conc))
+
+  observed %>%
+    left_join(ercc.gt, by = "NAME") %>%
+    pivot_longer(cols = -c(NAME, GT), names_to = "Sample", values_to = "Observed") %>%
+    mutate(
+      LENGTH = dge.ercc$genes$Length[match(NAME, rownames(dge.ercc))],
+      `Transcript length` = safe_length_bin(LENGTH)
+    ) %>%
+    select(NAME, Sample, GT, Observed, LENGTH, `Transcript length`)
+}
+
+get_ercc_quartiled_states <- function(dge, sample_name, tx_len_norm = FALSE) {
+  combined_df <- build_ercc_metric_df(dge, tx_len_norm = tx_len_norm)
+  summarise_metric_frame(combined_df, sample_name)
+}
+
+build_sirv_metric_df <- function(dge, tx_len_norm = FALSE) {
+  dge.sirv <- dge[is.sirv_all(dge), ]
+  observed <- normalise_observed_matrix(dge.sirv, tx_len_norm = tx_len_norm, log2_1p = TRUE) %>%
+    as_tibble(rownames = "NAME")
+
+  sirv_gt_value <- log2_1p_CPM(rep(1, nrow(dge.sirv)))[1]
+
+  observed %>%
+    pivot_longer(cols = -NAME, names_to = "Sample", values_to = "Observed") %>%
+    mutate(
+      GT = sirv_gt_value,
+      LENGTH = dge.sirv$genes$Length[match(NAME, rownames(dge.sirv))],
+      `Transcript length` = safe_length_bin(LENGTH)
+    ) %>%
+    select(NAME, Sample, GT, Observed, LENGTH, `Transcript length`)
+}
+
+get_sirv_quartiled_states <- function(dge, sample_name, tx_len_norm = FALSE) {
+  combined_df <- build_sirv_metric_df(dge, tx_len_norm = tx_len_norm)
+  summarise_metric_frame(combined_df, sample_name)
+}
+
+build_tool_registry <- function() {
+  oarfish_bundle <- safe_read_rds(params$input_DGEobject_rds)
+  stopifnot(!is.null(oarfish_bundle))
+
+  isoquant_ont_obj <- safe_read_rds(params$isoquant_ont_bulk_rds)
+  isoquant_pb_obj <- safe_read_rds(params$isoquant_pb_bulk_rds)
+  isoquant_drna_obj <- safe_read_rds(params$isoquant_drna_bulk_rds)
+
+  hybrid_ont_obj <- safe_read_rds(params$hybrid_ont_bulk_rds)
+  hybrid_pb_obj <- safe_read_rds(params$hybrid_pb_bulk_rds)
+  hybrid_drna_obj <- safe_read_rds(params$hybrid_drna_bulk_rds)
+
+  quant_registry <- list(
+    Oarfish = list(
+      ont_bulk.tx.dge = oarfish_bundle$ont_bulk.tx.dge,
+      pb_bulk.tx.dge = oarfish_bundle$pb_bulk.tx.dge,
+      dRNA_bulk.tx.dge = oarfish_bundle$drna_bulk.tx.dge
+    ),
+    IsoQuant = list(
+      ont_bulk.tx.dge = isoquant_ont_obj$ont_bulk.tx.dge,
+      pb_bulk.tx.dge = isoquant_pb_obj$pb_bulk.tx.dge,
+      dRNA_bulk.tx.dge = isoquant_drna_obj$dRNA_bulk.tx.dge
+    ),
+    MiniQuant = list(
+      ont_bulk.tx.dge = hybrid_ont_obj$ont_bulk.TPM.tx.dge,
+      pb_bulk.tx.dge = hybrid_pb_obj$pb_bulk.TPM.tx.dge,
+      dRNA_bulk.tx.dge = hybrid_drna_obj$dRNA_bulk.TPM.tx.dge
+    )
+  )
+
+  purrr::imap(quant_registry, function(tool_entry, tool_name) {
+    list(
+      `ONT cDNA` = if (!is.null(tool_entry$ont_bulk.tx.dge)) normalise_feature_ids(tool_entry$ont_bulk.tx.dge) else NULL,
+      PacBio = if (!is.null(tool_entry$pb_bulk.tx.dge)) normalise_feature_ids(tool_entry$pb_bulk.tx.dge) else NULL,
+      `ONT dRNA` = if (!is.null(tool_entry$dRNA_bulk.tx.dge)) normalise_feature_ids(tool_entry$dRNA_bulk.tx.dge) else NULL
+    )
+  })
+}
+
+average_log_abundance <- function(dge) {
+  rowMeans(normalise_observed_matrix(dge, tx_len_norm = FALSE, log2_1p = TRUE), na.rm = TRUE)
+}
+
+compare_tool_pair <- function(left_tool, right_tool, platform_name, left_dge, right_dge) {
+  if (is.null(left_dge) || is.null(right_dge)) return(NULL)
+
+  common_tx <- intersect(rownames(left_dge), rownames(right_dge))
+  common_samples <- intersect(colnames(left_dge$counts), colnames(right_dge$counts))
+
+  if (length(common_tx) == 0 || length(common_samples) == 0) return(NULL)
+
+  left_sub <- left_dge[common_tx, common_samples]
+  right_sub <- right_dge[common_tx, common_samples]
+
+  left_detected_ids <- rownames(left_dge)[rowSums(left_dge[, common_samples]$counts > 0, na.rm = TRUE) > 0]
+  right_detected_ids <- rownames(right_dge)[rowSums(right_dge[, common_samples]$counts > 0, na.rm = TRUE) > 0]
+  common_detected_ids <- intersect(left_detected_ids, right_detected_ids)
+  common_detected_tx <- length(common_detected_ids)
+  union_detected_tx <- length(union(left_detected_ids, right_detected_ids))
+
+  if (common_detected_tx > 0) {
+    left_signal <- average_log_abundance(left_dge[common_detected_ids, common_samples])
+    right_signal <- average_log_abundance(right_dge[common_detected_ids, common_samples])
+    rmse_value <- sqrt(mean((left_signal - right_signal)^2, na.rm = TRUE))
+  } else {
+    left_signal <- numeric(0)
+    right_signal <- numeric(0)
+    rmse_value <- NA_real_
+  }
+
+  tibble(
+    platform = platform_name,
+    tool_left = left_tool,
+    tool_right = right_tool,
+    common_tx = length(common_tx),
+    common_detected_tx = common_detected_tx,
+    union_detected_tx = union_detected_tx,
+    common_samples = length(common_samples),
+    jaccard_tx = ifelse(union_detected_tx == 0, NA_real_, common_detected_tx / union_detected_tx),
+    pearson = safe_cor(left_signal, right_signal, method = "pearson"),
+    spearman = safe_cor(left_signal, right_signal, method = "spearman"),
+    rmse = rmse_value
+  )
+}
+
+collect_pairwise_tool_metrics <- function(tool_dges, platform_name) {
+  available_tools <- names(tool_dges)[sapply(tool_dges, function(x) !is.null(x[[platform_name]]))]
+
+  if (length(available_tools) < 2) return(NULL)
+
+  pair_index <- combn(available_tools, 2, simplify = FALSE)
+
+  purrr::map_dfr(pair_index, function(tool_pair) {
+    compare_tool_pair(
+      left_tool = tool_pair[[1]],
+      right_tool = tool_pair[[2]],
+      platform_name = platform_name,
+      left_dge = tool_dges[[tool_pair[[1]]]][[platform_name]],
+      right_dge = tool_dges[[tool_pair[[2]]]][[platform_name]]
+    )
+  })
+}
+
+collect_spikein_metric <- function(tool_name, platform_name, dge) {
+  if (is.null(dge)) return(NULL)
+
+  bind_rows(
+    get_sequin_quartiled_states(dge, sample_name = platform_name, tx_len_norm = FALSE) %>% mutate(spikein = "Sequins"),
+    get_ercc_quartiled_states(dge, sample_name = platform_name, tx_len_norm = FALSE) %>% mutate(spikein = "ERCC"),
+    get_sirv_quartiled_states(dge, sample_name = platform_name, tx_len_norm = FALSE) %>% mutate(spikein = "SIRV")
+  ) %>%
+    mutate(tool = tool_name, platform = platform_name)
+}
+
+collect_spikein_raw <- function(tool_name, platform_name, dge) {
+  if (is.null(dge)) return(NULL)
+
+  bind_rows(
+    build_sequin_metric_df(dge, tx_len_norm = FALSE) %>% mutate(spikein = "Sequins"),
+    build_ercc_metric_df(dge,   tx_len_norm = FALSE) %>% mutate(spikein = "ERCC"),
+    build_sirv_metric_df(dge,   tx_len_norm = FALSE) %>% mutate(spikein = "SIRV")
+  ) %>%
+    mutate(tool = tool_name, platform = platform_name)
+}
+```
+
+# Load data
+
+```{r load-data}
+tool_dges <- build_tool_registry()
+tool_dges <- tool_dges[sapply(tool_dges, function(x) any(!sapply(x, is.null)))]
+
+tool_inventory <- purrr::imap_dfr(tool_dges, function(platform_list, tool_name) {
+  purrr::imap_dfr(platform_list, function(dge, platform_name) {
+    if (is.null(dge)) return(NULL)
+    tibble(
+      tool = tool_name,
+      platform = platform_name,
+      tx_features = nrow(dge),
+      samples = ncol(dge$counts),
+      total_signal = sum(dge$counts, na.rm = TRUE),
+      detected_tx = sum(rowSums(dge$counts > 0, na.rm = TRUE) > 0)
+    )
+  })
+})
+
+tool_pairwise <- purrr::map_dfr(c("ONT cDNA", "PacBio", "ONT dRNA"), function(platform_name) {
+  collect_pairwise_tool_metrics(tool_dges, platform_name)
+})
+
+# The isoquant dge does not have LENGTH col in the gene, backfill it with the length of the corresponding feature in the oarfish dge if available, otherwise NA
+tool_dges$IsoQuant$PacBio$genes <- tool_dges$Oarfish$PacBio$genes[rownames(tool_dges$IsoQuant$PacBio), ]
+tool_dges$IsoQuant$`ONT cDNA`$genes <- tool_dges$Oarfish$`ONT cDNA`$genes[rownames(tool_dges$IsoQuant$`ONT cDNA`), ]
+tool_dges$IsoQuant$`ONT dRNA`$genes <- tool_dges$Oarfish$`ONT dRNA`$genes[rownames(tool_dges$IsoQuant$`ONT dRNA`), ]
+tool_dges$MiniQuant$PacBio$genes <- tool_dges$Oarfish$PacBio$genes[rownames(tool_dges$MiniQuant$PacBio), ]
+tool_dges$MiniQuant$`ONT cDNA`$genes <- tool_dges$Oarfish$`ONT cDNA`$genes[rownames(tool_dges$MiniQuant$`ONT cDNA`), ]
+tool_dges$MiniQuant$`ONT dRNA`$genes <- tool_dges$Oarfish$`ONT dRNA`$genes[rownames(tool_dges$MiniQuant$`ONT dRNA`), ]
+
+
+# Compute per-platform common feature set across all tools for a fair spike-in comparison.
+# A feature is kept if it (1) exists in all tools' DGEs and (2) passes filterByExpr in every tool.
+platform_common_features <- purrr::map(c("ONT cDNA", "PacBio", "ONT dRNA"), function(platform_name) {
+  dge_list <- purrr::map(tool_dges, ~ .x[[platform_name]]) %>% purrr::compact()
+
+  # Rowname intersection first
+  common_rows <- Reduce(intersect, purrr::map(dge_list, rownames))
+
+  # filterByExpr on each tool's DGE subsetted to common rows; keep features that pass in all tools
+  keep <- Reduce(`&`, purrr::map(dge_list, function(dge) {
+    dge_sub <- dge[common_rows, ]
+    filterByExpr(dge_sub, group = dge_sub$samples$group, min.count = 5)
+  }))
+
+  common_rows[keep]
+}) %>% setNames(c("ONT cDNA", "PacBio", "ONT dRNA"))
+
+tool_dges_common <- purrr::imap(tool_dges, function(platform_list, tool_name) {
+  purrr::imap(platform_list, function(dge, platform_name) {
+    if (is.null(dge)) return(NULL)
+    common_features <- platform_common_features[[platform_name]]
+    dge[intersect(rownames(dge), common_features), ]
+  })
+})
+
+tool_spikein <- purrr::imap_dfr(tool_dges_common, function(platform_list, tool_name) {
+  purrr::imap_dfr(platform_list, function(dge, platform_name) {
+    collect_spikein_metric(tool_name, platform_name, dge)
+  })
+})
+
+tool_spikein_raw <- purrr::imap_dfr(tool_dges_common, function(platform_list, tool_name) {
+  purrr::imap_dfr(platform_list, function(dge, platform_name) {
+    collect_spikein_raw(tool_name, platform_name, dge)
+  })
+})
+
+tool_spikein_summary <- tool_spikein_raw %>%
+  group_by(tool, platform, spikein) %>%
+  summarise(
+    mean_correlation = safe_cor(GT, Observed, method = "pearson"),
+    mean_nrmse = {
+      rmse <- sqrt(mean((GT - Observed)^2, na.rm = TRUE))
+      gt_mean <- mean(GT, na.rm = TRUE)
+      if (is.na(gt_mean) || gt_mean == 0) NA_real_ else rmse / gt_mean
+    },
+    mean_mse = mean((GT - Observed)^2, na.rm = TRUE),
+    mean_mae = mean(abs(GT - Observed), na.rm = TRUE),
+    .groups = "drop"
+  )
+```
+
+# Inventory
+
+This report compares the long-read transcript quantification outputs from Oarfish, IsoQuant, and MiniQuant. The comparisons are done per platform and focus on three questions:
+
+1. Do the tools detect the same transcript set?
+2. Do the tools assign similar relative abundances to the shared transcripts?
+3. Which tool best matches spike-in truth sets?
+
+```{r tool_inventory_table}
+kable(tool_inventory)
+```
+
+```{r common_feature_summary}
+common_feature_summary <- tibble(
+  platform = names(platform_common_features),
+  common_features = sapply(platform_common_features, length)
+)
+kable(common_feature_summary, caption = "Common features used for spike-in analysis (intersection across all tools)")
+```
+
+```{r tool_inventory_plot, fig.width=9, fig.height=4}
+ggplot(tool_inventory, aes(x = platform, y = detected_tx, fill = tool)) +
+  geom_col(position = "dodge") +
+  theme_minimal() +
+  labs(
+    title = "Detected transcripts by long-read quantification tool",
+    x = NULL,
+    y = "Detected transcripts"
+  )
+```
+
+# Pairwise overlap
+
+```{r pairwise_overlap_table}
+kable(tool_pairwise %>% select(platform, tool_left, tool_right, common_tx, common_detected_tx, union_detected_tx, common_samples, jaccard_tx))
+```
+
+```{r pairwise_overlap_plot, fig.width=9, fig.height=4}
+ggplot(tool_pairwise, aes(x = platform, y = jaccard_tx, fill = interaction(tool_left, tool_right, sep = " vs "))) +
+  geom_col(position = "dodge") +
+  theme_minimal() +
+  labs(
+    title = "Detected Transcript-set overlap between long-read quantification tools",
+    x = NULL,
+    y = "Jaccard index",
+    fill = "Tool pair"
+  )
+```
+
+# Pairwise abundance concordance
+
+The abundance concordance analysis is calculated only on the transcripts shared between each tool pair for the same platform. All matrices are put onto a common per-sample compositional scale before averaging.
+
+```{r pairwise_concordance_table}
+kable(tool_pairwise %>% select(platform, tool_left, tool_right, pearson, spearman, rmse))
+```
+
+```{r pairwise_concordance_plot, fig.width=10, fig.height=4}
+
+p1 <- ggplot(tool_pairwise, aes(x = platform, y = pearson, fill = interaction(tool_left, tool_right, sep = " vs "))) +
+  geom_col(position = "dodge") +
+  theme_minimal() +
+  labs(
+    title = "Shared-transcript abundance concordance",
+    x = NULL,
+    y = "Pearson correlation",
+    fill = "Tool pair"
+  )
+p2 <- ggplot(tool_pairwise, aes(x = platform, y = spearman, fill = interaction(tool_left, tool_right, sep = " vs "))) +
+  geom_col(position = "dodge") +
+  theme_minimal() +
+  labs(
+    title = "Shared-transcript rank concordance",
+    x = NULL,
+    y = "Spearman correlation",
+    fill = "Tool pair"
+  )
+
+p3 <- ggplot(tool_pairwise, aes(x = platform, y = rmse, fill = interaction(tool_left, tool_right, sep = " vs "))) +
+  geom_col(position = "dodge") +
+  theme_minimal() +
+  labs(
+    title = "Shared-transcript abundance deviation",
+    x = NULL,
+    y = "RMSE",
+    fill = "Tool pair"
+  )
+
+# Combine the three plots into a single layout and share the legend
+(p1 | p2 | p3) + plot_layout(guides = "collect")
+```
+
+# Spike-in accuracy
+
+Spike-ins provide an external reference so the tools are not only being compared to one another, but also against known truth.
+
+```{r spikein_summary_table}
+kable(tool_spikein_summary)
+```
+
+```{r spikein_per_quartile_comparison, fig.width=14, fig.height=10}
+ggplot(tool_spikein,
+       aes(x = platform, y = nrmse, fill = tool)) +
+  geom_col(position = "dodge") +
+  facet_grid(spikein ~ `Transcript length`, scales = "free_y") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  labs(
+    title = "Spike-in NRMSE by transcript length quartile and quantification tool",
+    x = NULL,
+    y = "NRMSE"
+  )
+```
+
+```{r spikein_summary_plot, fig.width=10, fig.height=5}
+p1 <- ggplot(tool_spikein_summary, aes(x = platform, y = mean_nrmse, fill = tool)) +
+  geom_col(position = "dodge") +
+  facet_wrap(~ spikein, scales = "free_y") +
+  theme_minimal() +
+  labs(
+    title = "Spike-in accuracy across long-read quantification tools",
+    x = NULL,
+    y = "Mean NRMSE"
+  )
+
+p1
+```
+
