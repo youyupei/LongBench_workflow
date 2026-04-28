@@ -14,7 +14,7 @@ reference:
 
 
 # only include the sample id that you want to process
-sample_id: 
+sample_id:
   - 'ont_bulk'
   - 'pb_bulk'
   - 'dRNA_bulk'
@@ -29,12 +29,12 @@ samples_raw_dir:
 samples_raw_bam_dir:
   ont_bulk: "/home/users/allstaff/you.yu/LongBench/sequencing_data/ONT_bulk/"
   
-samples_fastq_dir: 
+samples_fastq_dir:
   ont_bulk: "/home/users/allstaff/you.yu/LongBench/sequencing_data/ONT_bulk/fastq_q10_filter"
   pb_bulk: "/home/users/allstaff/you.yu/LongBench/sequencing_data/pb_bulk"
   dRNA_bulk: "/home/users/allstaff/you.yu/LongBench/sequencing_data/ONT_dRNA/fastq_q10_filter_merged_with_topup"
-  # dRNA_bulk_topup: "/home/users/allstaff/you.yu/LongBench/sequencing_data/ONT_dRNA/fastq_topup_q10_filter"
-  #dRNA_bulk_q10: "/vast/scratch/users/you.yu/LongBench/dRNA/fastq_q10_filter"
+  # dRNA_bulk_run2: "/home/users/allstaff/you.yu/LongBench/sequencing_data/ONT_dRNA/fastq_topup_q10_filter"
+  # dRNA_bulk_run1: "/vast/scratch/users/you.yu/LongBench/dRNA/fastq_q10_filter"
 
 barcode_list:
   - 1: H146
@@ -73,5 +73,5 @@ minimap2_trans_options:
   ont_bulk: "-ax lr:hq --eqx -N 100 "
   pb_bulk: "-ax lr:hq --eqx -N 100 "
   dRNA_bulk: "-ax map-ont --eqx -N 100 " # I used a  similar setting to the old cDNA data
-  dRNA_bulk_q10: "-ax map-ont --eqx -N 100 " 
+  dRNA_bulk_q10: "-ax map-ont --eqx -N 100 "
   dRNA_bulk_topup: "-ax map-ont --eqx -N 100 "

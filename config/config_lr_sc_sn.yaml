@@ -21,7 +21,7 @@ reference:
   
 samples_fastq_dir:
   ont_sn: "/home/users/allstaff/you.yu/LongBench/sequencing_data/ONT_sn/ont_sn_clean_q10_filter.fastq"
-  ont_sc: "/home/users/allstaff/you.yu/LongBench/sequencing_data/ONT_sc/ont_sc_clean_q10_filter.fastq"
+  ont_sc: "/home/users/allstaff/you.yu/LongBench/sequencing_data/ONT_sc/ont_sc_clean_q10_filter.fastq.gz"
   pb_sc: "/home/users/allstaff/you.yu/LongBench/sequencing_data/pb_sc/pb_sc.fastq.gz"
   pb_sn: "/home/users/allstaff/you.yu/LongBench/sequencing_data/pb_sn/pb_sn.fastq.gz"
 

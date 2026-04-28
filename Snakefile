@@ -43,9 +43,14 @@ module sr_bulk:
     config:config
 use rule * from sr_bulk as sr_bulk_*
 
+module hybrid_bulk:
+    snakefile: f'sub_workflows/hybrid_bulk/Snakefile'
+    config:config
+use rule * from hybrid_bulk as hybrid_bulk_*
+
 # get sub-workflow config:
 sub_wf_config = {}
-for sub_wf in ['lr_sc_sn', 'lr_bulk', 'sr_bulk', "sr_sc_sn"]:
+for sub_wf in ['lr_sc_sn', 'lr_bulk', 'sr_bulk', "sr_sc_sn", "hybrid_bulk"]:
     sub_wf_config[sub_wf] = config_parser.sub_wf_config_parser(
         main_cfg_fn = config['global_config_path'], 
         sub_wf_name = sub_wf)
@@ -54,9 +59,9 @@ include: "rules/qc_plot.smk"
 # include: "rules/DE_analysis.smk"
 include: "rules/sc_cell_line_anno.smk"
 include: "rules/rarefraction_analysis.smk"
-include: "rules/rarefraction_analysis_sc.smk"
-include: "rules/annotation_redundency_analysis.smk"
+# include: "rules/annotation_redundency_analysis.smk"
 include: "rules/rmarkdown.smk"
+include: "rules/base_count_analysis.smk"
 
 
 rule all:
@@ -65,9 +70,10 @@ rule all:
         rules.lr_sc_sn_all.input,
         rules.sr_sc_sn_all.input,
         rules.sr_bulk_all.input,
+        rules.hybrid_bulk_all.input,
         rules.main_qc_plot.output,
         rules.run_cell_line_annotation_pipeline.output,
         # rules.rmd_bulk_de_human.output,
         rules.knit_rmarkdown.input,
-        rules.lr_sc_rarefraction_analysis.output
+        # rules.lr_sc_rarefraction_analysis.output
     default_target: True

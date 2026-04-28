@@ -5,6 +5,7 @@ conda/envs
 **/rmarkdown/*
 **/.parallel/**
 **/.keras/**
+**/.claude/**
 
 # Do not ignore .Rmd files
 !**/rmarkdown/*.Rmd
