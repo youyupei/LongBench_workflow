@@ -26,18 +26,36 @@ rule read_number_plot:
         sr_sc_out = expand(
             os.path.join(sr_sc_result_dir, 'cellranger/{sample_name}'),
             sample_name = sub_wf_config['sr_sc_sn']["sample_name"]
+        ),
+        lr_bulk_base_count = expand(
+            join(lr_bulk_result_dir, "qc/base_counts/{sample}_{cell_line}.total_bases"),
+            sample = sub_wf_config['lr_bulk']["sample_id"],
+            cell_line = sub_wf_config['lr_bulk']["cell_lines"]
+        ),
+        sr_bulk_base_count = expand(
+            join(sr_bulk_result_dir, "qc/base_counts/{sample}_{cell_line}.total_bases"),
+            sample = sub_wf_config['sr_bulk']["sample_id"],
+            cell_line = sub_wf_config['sr_bulk']["cell_lines"]
+        ),
+        lr_sc_sn_base_count = expand(
+            join(lr_sc_sn_result_dir, "qc/base_counts/{sample}.total_bases"),
+            sample = sub_wf_config['lr_sc_sn']["sample_id"]
+        ),
+        sr_sc_sn_base_count = expand(
+            join(sr_sc_result_dir, "qc/base_counts/{sample_name}.total_bases"),
+            sample_name = sub_wf_config['sr_sc_sn']["sample_name"]
         )
     output:
-        report(join(figures_output_path, "qc/read_number_plot.svg"), 
+        report(join(figures_output_path, "qc/read_number_plot.svg"),
                 category = "QC", subcategory = "Read number"),
         join(figures_output_path, "qc/read_number_table.txt")
     params:
-        bulk_sample_name = expand("{sample}_{cell_line}", 
+        bulk_sample_name = expand("{sample}_{cell_line}",
                             sample = sub_wf_config['lr_bulk']["sample_id"],
                             cell_line = sub_wf_config['lr_bulk']["cell_lines"]),
         lr_sc_sample_name = sub_wf_config['lr_sc_sn']["sample_id"],
         sr_sc_sample_name = sub_wf_config['sr_sc_sn']["sample_name"],
-        sr_sample_name = expand("Illumina_{cell_line}", 
+        sr_sample_name = expand("Illumina_{cell_line}",
                             cell_line = sub_wf_config['lr_bulk']["cell_lines"])
     script:
         join(config['main_wf_dir'], "scripts/read_count_plot.R")

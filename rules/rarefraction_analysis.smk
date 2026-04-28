@@ -126,3 +126,29 @@ rule rarefraction_analysis:
         )
     output:
         touch(join(config['flag_dir'], "rarefraction_analysis.done"))
+
+
+rule rarefraction_table:
+    input:
+        flag = rules.rarefraction_analysis.output,
+        script = join(config['main_wf_dir'], 'scripts/rarefraction_analysis.R')
+    output:
+        csv = "/vast/projects/LongBench/analysis/main_workflow/result/rarefraction_analysis/rarefraction_tx_g_detection.csv"
+    resources:
+        cpus_per_task = 4,
+        mem_mb = 64000
+    shell:
+        "cd {config[main_wf_dir]}/scripts && Rscript {input.script}"
+
+
+rule rarefraction_plot:
+    input:
+        csv = rules.rarefraction_table.output.csv,
+        script = join(config['main_wf_dir'], 'scripts/rarefraction_plot_only.R')
+    output:
+        touch(join(config['flag_dir'], "rarefraction_plot.done"))
+    resources:
+        cpus_per_task = 1,
+        mem_mb = 16000
+    shell:
+        "cd {config[main_wf_dir]}/scripts && Rscript {input.script}"

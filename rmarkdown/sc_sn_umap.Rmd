@@ -2,7 +2,7 @@
 title: "SC SN QC and preporcessing"
 author: "Yupei"
 date: '`r Sys.Date()`'
-version: 'v1.0'
+version: 'v1.5'
 output:
   html_document:
     code_folding: hide
@@ -18,7 +18,9 @@ params:
     cache_dir: NULL
     filtered_so_rds_out: '/vast/projects/LongBench/analysis/workflow/rmarkdown/RDS/sc_sn_filtered_so.rds'
 ---
-The cellline annotation is after outlier removal and then filter using vireo result
+v1.0 The cellline annotation is after outlier removal and then filter using vireo result
+v1.5 Add FACS median size correlation analysis
+
 
 ```{r setup, include=FALSE}
 # this is a repeat of params for direct execution in non-rmarkdown environment
@@ -32,14 +34,100 @@ if (!exists("params")) {
 }
 
 library(tidyverse)
-source('/home/users/allstaff/you.yu/LongBench/analysis/workflow/sub_workflows/lr_sc_sn/rmarkdown/sc_long_preprocessing.R')
+source('/vast/projects/LongBench/analysis/workflow/sub_workflows/lr_sc_sn/rmarkdown/sc_long_preprocessing.R')
+
+# Override BioMart-dependent loader with a timeout-safe version
+get_gene_names_from_biomart <- function(gene_ids, dataset = "hsapiens_gene_ensembl") {
+  mirrors <- c("useast", "uswest", "asia", "www")
+  mart <- NULL
+
+  for (m in mirrors) {
+    mart <- tryCatch(
+      biomaRt::useEnsembl(biomart = "genes", dataset = dataset, mirror = m),
+      error = function(e) NULL
+    )
+    if (!is.null(mart)) break
+  }
+
+  if (is.null(mart)) {
+    mart <- tryCatch(
+      biomaRt::useEnsembl(biomart = "genes", dataset = dataset, host = "https://www.ensembl.org"),
+      error = function(e) NULL
+    )
+  }
+
+  if (is.null(mart)) {
+    return(rep(NA_character_, length(gene_ids)))
+  }
+
+  bm <- tryCatch(
+    biomaRt::getBM(
+      attributes = c("ensembl_gene_id", "external_gene_name"),
+      filters = "ensembl_gene_id",
+      values = unique(gene_ids),
+      mart = mart
+    ),
+    error = function(e) NULL
+  )
+
+  if (is.null(bm) || nrow(bm) == 0) {
+    return(rep(NA_character_, length(gene_ids)))
+  }
+
+  bm <- bm[!is.na(bm$external_gene_name) & bm$external_gene_name != "", , drop = FALSE]
+  bm <- bm[!duplicated(bm$ensembl_gene_id), , drop = FALSE]
+
+  bm$external_gene_name[match(gene_ids, bm$ensembl_gene_id)]
+}
+
+load_flames_gene_quant <- function(fn_flames_gene_quant, project = "singlecell", min.cells = 3, min.features = 0, assay = "Gene_quant") {
+  counts <- read.csv(fn_flames_gene_quant, row.names = 1)
+  counts[is.na(counts)] <- 0
+
+  gene_ids_all <- sub("\\..*$", "", rownames(counts))
+  gene_names <- get_gene_names_from_biomart(gene_ids_all)
+
+  if (all(is.na(gene_names) | gene_names == "")) {
+    message("BioMart unavailable, using Ensembl gene IDs as feature names.")
+    gene_names <- gene_ids_all
+  }
+
+  keep_idx <- !is.na(gene_names) & gene_names != ""
+  keep_idx <- keep_idx & !duplicated(gene_names)
+
+  counts <- counts[keep_idx, , drop = FALSE]
+  gene_names <- gene_names[keep_idx]
+  gene_ids <- gene_ids_all[keep_idx]
+  rownames(counts) <- gene_names
+
+  so <- Seurat::CreateSeuratObject(
+    counts = counts,
+    project = project,
+    min.cells = min.cells,
+    min.features = min.features,
+    assay = assay
+  )
+
+  so[["percent.mt"]] <- Seurat::PercentageFeatureSet(so, features = grep("^MT", rownames(so), value = TRUE)) %>% round(2)
+  so[["percent.ribo"]] <- Seurat::PercentageFeatureSet(so, features = grep("^RP[SL]", rownames(so), value = TRUE)) %>% round(2)
+
+  so@misc$gene_info_map <- data.frame(gene_name = gene_names, gene_id = gene_ids)
+  qc_fun <- get0("add_qc_state", mode = "function")
+  if (!is.null(qc_fun)) {
+    so <- qc_fun(so, "raw_gene_quant")
+  }
+  so
+}
 
 knitr::opts_chunk$set(
   cache = TRUE,
+  cache.lazy = FALSE,
   fig.width = 15, 
   fig.height = 10, 
-  warning = F, 
-  fig.path = params$fig.path, 
+  echo = FALSE,
+  message = FALSE,
+  warning = FALSE,
+  fig.path = params$fig.path,
   dev = c("png", "svg"),
   cache.path = ifelse(is.null(params$cache_dir), 
                       paste0(tools::file_path_sans_ext(knitr::current_input()), "_cache/"), 
@@ -78,29 +166,29 @@ library(kableExtra)
 params_sc <- list(
   random_seed=2024,
   cache_dir=NULL,
-  sc_long_preprocessing_script= '/home/users/allstaff/you.yu/LongBench/analysis/workflow/sub_workflows/lr_sc_sn/rmarkdown/sc_long_preprocessing.R',
-  vireo_out_ont= '/home/users/allstaff/you.yu/LongBench/analysis/lr_sc_sn/result/vireo/ont_sc_vireo',
-  vireo_out_pb='/home/users/allstaff/you.yu/LongBench/analysis/lr_sc_sn/result/vireo/pb_sc_vireo',
-  vireo_out_ill='/home/users/allstaff/you.yu/LongBench/analysis/illumina_sc_sn/result/vireo/ill_sc_vireo',
+  sc_long_preprocessing_script= '/vast/projects/LongBench/analysis/workflow/sub_workflows/lr_sc_sn/rmarkdown/sc_long_preprocessing.R',
+  vireo_out_ont= '/vast/projects/LongBench/analysis/lr_sc_sn/result/vireo/ont_sc_vireo',
+  vireo_out_pb='/vast/projects/LongBench/analysis/lr_sc_sn/result/vireo/pb_sc_vireo',
+  vireo_out_ill='/vast/projects/LongBench/analysis/illumina_sc_sn/result/vireo/ill_sc_vireo',
   out_annotated_so_rds= NULL,
   fn_flames_gene_quant_ont= "/vast/projects/LongBench/analysis/lr_sc_sn/result/flames_out/ont_sc/gene_count.csv",
   fn_flames_gene_quant_pb="/vast/projects/LongBench/analysis/lr_sc_sn/result/flames_out/pb_sc/gene_count.csv",
-  cell_ranger_out="/home/users/allstaff/you.yu/LongBench/analysis/illumina_sc_sn/result/cellranger/ill_sc/outs/filtered_feature_bc_matrix",
-  output_figures="/home/users/allstaff/you.yu/LongBench/analysis/lr_sc_sn/result/figures/test_clustering_annotation.pdf"
+  cell_ranger_out="/vast/projects/LongBench/analysis/illumina_sc_sn/result/cellranger/ill_sc/outs/filtered_feature_bc_matrix",
+  output_figures="/vast/projects/LongBench/analysis/lr_sc_sn/result/figures/test_clustering_annotation.pdf"
 )
 
 params_sn <- list(
   random_seed=2024,
   cache_dir=NULL,
-  sc_long_preprocessing_script= '/home/users/allstaff/you.yu/LongBench/analysis/workflow/sub_workflows/lr_sc_sn/rmarkdown/sc_long_preprocessing.R',
-  vireo_out_ont= '/home/users/allstaff/you.yu/LongBench/analysis/lr_sc_sn/result/vireo/ont_sn_vireo',
-  vireo_out_pb='/home/users/allstaff/you.yu/LongBench/analysis/lr_sc_sn/result/vireo/pb_sn_vireo',
-  vireo_out_ill='/home/users/allstaff/you.yu/LongBench/analysis/illumina_sc_sn/result/vireo/ill_sn_vireo',
+  sc_long_preprocessing_script= '/vast/projects/LongBench/analysis/workflow/sub_workflows/lr_sc_sn/rmarkdown/sc_long_preprocessing.R',
+  vireo_out_ont= '/vast/projects/LongBench/analysis/lr_sc_sn/result/vireo/ont_sn_vireo',
+  vireo_out_pb='/vast/projects/LongBench/analysis/lr_sc_sn/result/vireo/pb_sn_vireo',
+  vireo_out_ill='/vast/projects/LongBench/analysis/illumina_sc_sn/result/vireo/ill_sn_vireo',
   out_annotated_so_rds= NULL,
   fn_flames_gene_quant_ont= "/vast/projects/LongBench/analysis/lr_sc_sn/result/flames_out/ont_sn/gene_count.csv",
   fn_flames_gene_quant_pb="/vast/projects/LongBench/analysis/lr_sc_sn/result/flames_out/pb_sn/gene_count.csv",
-  cell_ranger_out="/home/users/allstaff/you.yu/LongBench/analysis/illumina_sc_sn/result/cellranger/ill_sn/outs/filtered_feature_bc_matrix",
-  output_figures="/home/users/allstaff/you.yu/LongBench/analysis/lr_sc_sn/result/figures/test_clustering_annotation.pdf"
+  cell_ranger_out="/vast/projects/LongBench/analysis/illumina_sc_sn/result/cellranger/ill_sn/outs/filtered_feature_bc_matrix",
+  output_figures="/vast/projects/LongBench/analysis/lr_sc_sn/result/figures/test_clustering_annotation.pdf"
 )
 
 ```
@@ -122,7 +210,7 @@ so_ont[["qc.pass"]] <- check.qc.pass(so_ont)
 so_pb[["qc.pass"]] <- check.qc.pass(so_pb)
 so_ill[["qc.pass"]] <- check.qc.pass(so_ill)
 
-barcode_tibble <- readr::read_csv("/home/users/allstaff/you.yu/LongBench/analysis/figures/sc_sn_annotation/sc_cell_line_annotation_post_qc.csv")
+barcode_tibble <- readr::read_csv("/vast/projects/LongBench/analysis/figures/sc_sn_annotation/sc_cell_line_annotation_post_qc.csv")
 so_ont$cell_line <- barcode_tibble$merged_cellline_anno[match(colnames(so_ont), barcode_tibble$barcode)]
 so_pb$cell_line <- barcode_tibble$merged_cellline_anno[match(colnames(so_pb), barcode_tibble$barcode)]
 so_ill$cell_line <- barcode_tibble$merged_cellline_anno[match(colnames(so_ill), barcode_tibble$barcode)]
@@ -154,7 +242,7 @@ so_pb[["qc.pass"]] <- check.qc.pass(so_pb)
 so_ill[["qc.pass"]] <- check.qc.pass(so_ill)
 
 
-barcode_tibble <- readr::read_csv("/home/users/allstaff/you.yu/LongBench/analysis/figures/sc_sn_annotation/sn_cell_line_annotation_post_qc.csv")
+barcode_tibble <- readr::read_csv("/vast/projects/LongBench/analysis/figures/sc_sn_annotation/sn_cell_line_annotation_post_qc.csv")
 so_ont$cell_line <- barcode_tibble$merged_cellline_anno[match(colnames(so_ont), barcode_tibble$barcode)]
 so_pb$cell_line <- barcode_tibble$merged_cellline_anno[match(colnames(so_pb), barcode_tibble$barcode)]
 so_ill$cell_line <- barcode_tibble$merged_cellline_anno[match(colnames(so_ill), barcode_tibble$barcode)]
@@ -220,7 +308,7 @@ so_ill.sn <- so_ill.sn %>% get_clusters(ndim = 30, res = 0.5, seed = params$rand
 ```
 
 
-```{r, echo=F}
+```{r, echo=F, cache=FALSE}
 # Define custom colors
 # Define custom colors
 cell_line_color_palette <- c(
@@ -265,5 +353,171 @@ so_list <- list(
 
 # save the seurat objects
 saveRDS(so_list, file = params$filtered_so_rds_out,compress = FALSE)
-rm(so_list)
+```
+
+With the so_list, plot the boxplot of library size for each cell line and protocol.
+```{r, fig.width=8, fig.height=6}
+if (!exists("so_list")) {
+  so_list <- readRDS(params$filtered_so_rds_out)
+}
+
+library_size_df <- purrr::imap_dfr(so_list, function(so, protocol_name) {
+  tmp <- FetchData(
+    so,
+    vars = c("cell_line", "nCount_Gene_quant")
+  )
+  tmp$protocol <- protocol_name
+  tmp
+}) %>%
+  tidyr::separate(protocol, into = c("Sequencer", "Library.Type"), sep = " ", remove = FALSE) %>%
+  dplyr::filter(!is.na(cell_line), cell_line != "", !cell_line %in% c("unassigned", "doublet")) %>%
+  dplyr::mutate(
+    protocol = factor(protocol, levels = names(so_list)),
+    Sequencer = factor(Sequencer, levels = c("Illumina", "ONT", "PacBio")),
+    Library.Type = factor(Library.Type, levels = c("SC", "SN"))
+  )
+
+ggplot(library_size_df, aes(x = cell_line, y = nCount_Gene_quant, fill = protocol)) +
+  geom_boxplot(outlier.size = 0.2, width = 0.7) +
+  facet_wrap(~Library.Type, scales = "free_y") +
+  scale_fill_manual(values = c(
+    "Illumina SC" = "#e88b20",
+    "PacBio SC" = "#df1995",
+    "ONT SC" = "#00789b",
+    "Illumina SN" = "#f1b86e",
+    "PacBio SN" = "#e66db9",
+    "ONT SN" = "#4ba4bf"
+  )) +
+  theme_minimal(base_size = 12) +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    legend.position = "bottom"
+  ) +
+  labs(x = "Cell line", y = "Library size (nCount_Gene_quant)", fill = "Protocol")
+```
+
+Correlation of median library size with FACS median size metadata.
+```{r, fig.width=10, fig.height=6}
+facs_xlsx <- "/vast/projects/LongBench/meta_data/FACS_Median_size.xlsx"
+
+if (!file.exists(facs_xlsx)) {
+  stop(glue::glue("FACS metadata file not found: {facs_xlsx}"))
+}
+
+facs_df_raw <- readxl::read_excel(facs_xlsx)
+
+# infer columns robustly
+cellline_col <- names(facs_df_raw)[stringr::str_detect(tolower(names(facs_df_raw)), "cell.?line|cellline")][1]
+sample_col <- names(facs_df_raw)[stringr::str_detect(tolower(names(facs_df_raw)), "sample")][1]
+numeric_cols <- names(facs_df_raw)[vapply(facs_df_raw, is.numeric, logical(1))]
+
+# prefer FSC-A, then SSC-A, then any numeric median/size-like column
+facs_candidates <- names(facs_df_raw)[stringr::str_detect(tolower(names(facs_df_raw)), "fsc|ssc|facs|median|size")]
+facs_candidates <- facs_candidates[facs_candidates %in% numeric_cols]
+facs_candidates <- c(
+  facs_candidates[stringr::str_detect(tolower(facs_candidates), "fsc")],
+  facs_candidates[stringr::str_detect(tolower(facs_candidates), "ssc")],
+  facs_candidates
+) %>% unique()
+facs_col <- facs_candidates[1]
+
+if (is.na(facs_col)) {
+  if (length(numeric_cols) == 0) {
+    stop("Could not find a numeric FACS median-size column in FACS_Median_size.xlsx")
+  }
+  facs_col <- numeric_cols[1]
+}
+
+known_cell_lines <- sort(unique(library_size_df$cell_line))
+known_cell_lines_upper <- toupper(known_cell_lines)
+
+extract_cell_line <- function(x) {
+  if (is.na(x) || x == "") return(NA_character_)
+  xu <- toupper(as.character(x))
+
+  # Alias used in FACS sample names: HCC -> HCC827
+  if ("HCC827" %in% known_cell_lines && stringr::str_detect(xu, "(^|[^A-Z0-9])HCC([^A-Z0-9]|$)")) {
+    return("HCC827")
+  }
+
+  hit <- known_cell_lines[stringr::str_detect(xu, paste0("(^|[^A-Z0-9])", known_cell_lines_upper, "([^A-Z0-9]|$)"))]
+  if (length(hit) == 0) return(NA_character_)
+  hit[1]
+}
+
+if (!is.na(cellline_col)) {
+  facs_df <- facs_df_raw %>%
+    dplyr::transmute(
+      cell_line = as.character(.data[[cellline_col]]),
+      facs_median_size = as.numeric(.data[[facs_col]])
+    )
+} else if (!is.na(sample_col)) {
+  facs_df <- facs_df_raw %>%
+    dplyr::transmute(
+      sample_name = as.character(.data[[sample_col]]),
+      cell_line = purrr::map_chr(sample_name, extract_cell_line),
+      facs_median_size = as.numeric(.data[[facs_col]])
+    )
+} else {
+  stop("Could not infer cell-line information: no cell-line column and no sample column found in FACS_Median_size.xlsx")
+}
+
+facs_df <- facs_df %>%
+  dplyr::filter(!is.na(cell_line), cell_line != "", !is.na(facs_median_size))
+
+median_libsize_df <- library_size_df %>%
+  dplyr::group_by(protocol, Sequencer, Library.Type, cell_line) %>%
+  dplyr::summarise(median_library_size = median(nCount_Gene_quant, na.rm = TRUE), .groups = "drop") %>%
+  dplyr::left_join(facs_df, by = "cell_line") %>%
+  dplyr::filter(!is.na(facs_median_size))
+
+cor_stats <- median_libsize_df %>%
+  dplyr::group_by(protocol) %>%
+  dplyr::summarise(
+    n = dplyr::n(),
+    pearson_r = cor(median_library_size, facs_median_size, method = "pearson", use = "complete.obs"),
+    spearman_rho = cor(median_library_size, facs_median_size, method = "spearman", use = "complete.obs"),
+    .groups = "drop"
+  )
+
+print(cor_stats)
+
+p <- ggplot(median_libsize_df, aes(x = facs_median_size, y = median_library_size, color = Sequencer)) +
+  geom_point(size = 2.5, alpha = 0.9) +
+  geom_smooth(method = "lm", se = FALSE, linewidth = 0.5, color = "grey30") +
+  facet_wrap(~protocol, scales = "free_y") +
+  scale_color_manual(values = c("Illumina" = "#e88b20", "ONT" = "#00789b", "PacBio" = "#df1995")) +
+  theme_minimal(base_size = 12) +
+  labs(
+    x = glue::glue("FACS median size ({facs_col})"),
+    y = "Median library size (nCount_Gene_quant)",
+    color = "Sequencer"
+  )
+
+if (requireNamespace("ggrepel", quietly = TRUE)) {
+  p <- p + ggrepel::geom_text_repel(
+    aes(label = cell_line),
+    size = 3,
+    box.padding = 0.35,
+    point.padding = 0.25,
+    max.overlaps = Inf,
+    show.legend = FALSE
+  )
+} else {
+  message("Package 'ggrepel' not installed; using geom_text with overlap checking.")
+  p <- p + geom_text(
+    aes(label = cell_line),
+    size = 3,
+    vjust = -0.6,
+    check_overlap = TRUE,
+    show.legend = FALSE
+  )
+}
+
+p
+```
+
+# Session Info
+```{r}
+sessionInfo()
 ```
