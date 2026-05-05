@@ -141,7 +141,7 @@ rule rmd_mutation_analysis:
     params:
         rmd_output_dir = rmd_output_dir
     shell:
-        "Rscript {input.knit_script} {input.rmd} {params.rmd_output_dir}"
+        "module load pandoc && Rscript {input.knit_script} {input.rmd} {params.rmd_output_dir}"
 
 
 # ─── Stage 2a: Bulk identification (→ bulk_identification.rds) ───────────────

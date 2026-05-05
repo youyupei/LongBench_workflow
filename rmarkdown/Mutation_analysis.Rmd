@@ -41,6 +41,7 @@ knitr::opts_chunk$set(
 library(tidyverse)
 library(dplyr)
 library(ggplot2)
+library(patchwork)
 
 
 # # Temporarily add params as a runable list
@@ -389,7 +390,7 @@ ComplexUpset::upset(
 
 
 # Part 2.5: Blacklist?
-```{r, fig.height=4, fig.width=10}
+```{r, eval=FALSE, fig.height=4, fig.width=10}
 library(VariantAnnotation)
 library(rtracklayer)
 library(dplyr)
@@ -452,7 +453,7 @@ ComplexUpset::upset(
   intersect = c( 'dRNA',  'cDNA' , 'PacBio', 'illumina')
 )
 ```
-```{r}
+```{r, eval=FALSE}
 library(VariantAnnotation)
 library(rtracklayer)
 library(dplyr)
@@ -861,7 +862,7 @@ TP.matrix.phase <- read_tsv(file.path(params$summary_dir, "Muatation_calling_sum
 FP.matrix.phase <- FP.matrix.phase %>%
   # Split the SNP_ID column into two new columns: sample and locus
   separate(SNP_ID, into = c("sample", "locus"), sep = ":", extra = "merge") %>%
-  rename(
+  dplyr::rename(
     `PacBio phased` = pacbio,
     `ONT dRNA phased` = drna,
     `ONT cDNA phased` = ont
@@ -993,7 +994,7 @@ TP.summary.mtx.phase %>%
 # Part 4:  Allelic imbalance
 ## 1. Allele frequency distribution by platform
 ### 1.1. Read and arrange the data
-```{r AF distribution DP > 30, fig.height=3, fig.width=4}
+```{r AF distribution DP ge 30, fig.height=3, fig.width=4}
 
 full_table <- read_tsv(file.path(params$summary_dir, "Allelic_imbalance/summary.tsv"))
 
@@ -1476,7 +1477,7 @@ ComplexUpset::upset(
 
 
 ```{r, allele specific splicing 1, fig.height=7, fig.width=4}
-ASE <- read_tsv(file.path(params$summary_dir,"Allelic_imbalance/CoverageDiv_summary.tsv")) %>% rename(
+ASE <- read_tsv(file.path(params$summary_dir,"Allelic_imbalance/CoverageDiv_summary.tsv")) %>% dplyr::rename(
     "ONT dRNA" = div_drna,
     "ONT cDNA" =  div_ont,
      "PacBio" = div_pacbio,
@@ -1618,11 +1619,11 @@ longcallR_results.ase <- lapply(longcallR_files, function(x) {
         Cell_lines = sub(".*_", "", file)
     )
 })  %>%
-    bind_rows() %>% 
-    select(-file) %>% 
-    rename(
+    bind_rows() %>%
+    select(-file) %>%
+    dplyr::rename(
         Gene_name = `#Gene_name`
-    ) 
+    )
 ```
 
 ## Plotting the LongcallR results (upset plot)
@@ -1790,11 +1791,11 @@ longcallR_results.asj <- lapply(longcallR_files, function(x) {
         Cell_lines = sub(".*_", "", file)
     )
 })  %>%
-    bind_rows() %>% 
-    select(-file) %>% 
-    rename(
+    bind_rows() %>%
+    select(-file) %>%
+    dplyr::rename(
         Gene_name = `#Gene_name`
-    ) 
+    )
 
 # gene coverage
 longcallR_files <- list.files(
@@ -1820,7 +1821,7 @@ longcallR_results.cov <- lapply(longcallR_files, function(x) {
 }) %>%
   bind_rows() %>%
   select(-file) %>%
-  rename(
+  dplyr::rename(
     Gene_name = `#Gene_name`
   )
 
