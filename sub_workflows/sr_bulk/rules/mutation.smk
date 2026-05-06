@@ -21,7 +21,7 @@ rule Deepvariant_celline:
     #     config['conda']['AlignQC']
     resources:
         cpus_per_task=32,
-        mem_mb=400000,
+        mem_mb=30000,
         slurm_extra="--mail-type=FAIL --mail-user=you.yu@wehi.edu.au"
     output:
         directory(os.path.join(results_dir, "Deepvariants/{cell_line}"))
@@ -58,13 +58,37 @@ rule DeepVariant:
 
 
 
+rule clair3_illumina:
+    input:
+        bam = join(results_dir, "subjunc/bam/{cell_line}.sorted.bam"),
+        ref = config['reference']['genome'],
+    output:
+        vcf = scratch_dir + "/Mutation/clair3/{cell_line}/merge_output.vcf.gz"
+    conda:
+        config['conda']['clair3']
+    resources:
+        cpus_per_task = 16,
+        mem_mb        = 32000
+    shell:
+        """
+        mkdir -p $(dirname {output.vcf})
+        run_clair3.sh \
+            --bam_fn      {input.bam} \
+            --ref_fn      {input.ref} \
+            --model_path  $CONDA_PREFIX/bin/models/ilmn \
+            --output       $(dirname {output.vcf}) \
+            --threads     {resources.cpus_per_task} \
+            --platform    ilmn \
+            --include_all_ctgs
+        """
+
 rule  whatshap:
     input:
         ref = config['reference']['genome'],
         bam= join(results_dir,"subjunc/bam/{cell_line}.sorted.bam"),
-        vcf = lambda w: f"/vast/projects/LongBench/analysis/variant_allele_specific_analysis/Clair3-illumina/spikeins/all_contigs/{w.cell_line}/merge_output.vcf.gz"
+        vcf = rules.clair3_illumina.output.vcf
     output:
-        vcf = results_dir + "/Mutation/{cell_line}.phased.vcf"
+        vcf = results_dir + "/Mutation/whatshap/{cell_line}.phased.vcf"
     conda:
         config['conda']['whatshap']
     resources:
@@ -72,14 +96,15 @@ rule  whatshap:
         mem_mb=64000
     shell:
         """
-        whatshap phase -o {output.vcf} --ignore-read-groups --reference={input.ref} {input.vcf} {input.bam} 
+        mkdir -p $(dirname {output.vcf})
+        whatshap phase -o {output.vcf} --ignore-read-groups --reference={input.ref} {input.vcf} {input.bam}
         """
 
 rule whatshap_stat:
     input:
         vcf = rules.whatshap.output.vcf
     output:
-        stat = results_dir + "/Mutation/{cell_line}.phased.vcf.stat"
+        stat = results_dir + "/Mutation/whatshap/{cell_line}.phased.vcf.stat"
     conda:
         config['conda']['whatshap']
     resources:
@@ -173,6 +198,7 @@ rule mutation_all:
     input:
         expand(
             [rules.whatshap.output.vcf,
+             rules.clair3_illumina.output.vcf,
              rules.whatshap_stat.output.stat,
              rules.genomic_coverage_analysis.output.cov],
             cell_line=config['cell_lines']

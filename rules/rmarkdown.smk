@@ -137,7 +137,27 @@ rule rmd_mutation_analysis:
         touch(join(flag_dir, 'rmd.mutation_analysis.done'))
     resources:
         cpus_per_task = 1,
-        mem_mb = 8000
+        mem_mb = 64000
+    params:
+        rmd_output_dir = rmd_output_dir
+    shell:
+        "module load pandoc && Rscript {input.knit_script} {input.rmd} {params.rmd_output_dir}"
+
+
+rule rmd_mutation_analysis_downsample:
+    input:
+        rmd = join(rmd_dir, 'Mutation_analysis_downsample.Rmd'),
+        knit_script = knit_script,
+        genomic_cov = expand(
+            "/vast/projects/LongBench/analysis/lr_bulk_ds/result/Mutation/{sample}_{cell_line}.genomic_coverage.txt",
+            sample=["ont_bulk", "pb_bulk", "dRNA_bulk"],
+            cell_line=["H146", "H69", "H526", "H211", "SHP77", "H1975", "H2228", "HCC827"]
+        )
+    output:
+        touch(join(flag_dir, 'rmd.mutation_analysis_downsample.done'))
+    resources:
+        cpus_per_task = 1,
+        mem_mb = 64000
     params:
         rmd_output_dir = rmd_output_dir
     shell:
@@ -509,6 +529,7 @@ rule knit_rmarkdown:
         # Stage 1
         rules.rmd_QC_plots.output,
         rules.rmd_mutation_analysis.output,
+        rules.rmd_mutation_analysis_downsample.output,
         # Stage 2
         rules.rmd_bulk_identification_analysis.output,
         rules.rmd_bulk_DE_analysis.output,

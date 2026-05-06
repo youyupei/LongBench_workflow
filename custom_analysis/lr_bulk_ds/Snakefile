@@ -1,0 +1,106 @@
+configfile: "config/config.yaml"
+
+sys.path.insert(0, config['main_wf_dir'] + "/config/")
+import config_parser
+import glob
+from os.path import join
+
+# Load global config then merge lr_bulk_ds-specific config
+main_cfg = config_parser.global_config_parser(config['global_config_path'])
+ds_cfg   = config_parser.load_configfile(
+    config['main_wf_dir'] + "/custom_analysis/config/config_lr_bulk_ds.yaml")
+config   = config_parser.update_config(main_cfg, ds_cfg)
+
+results_dir  = config["output_path"]
+scratch_dir  = config["scratch_dir"]
+lr_bulk_dir  = config["lr_bulk_results_dir"]
+flag_dir     = config["flag_dir"]
+sub_wf_dir            = config['main_wf_dir'] + "/sub_workflows/lr_bulk"
+config['sub_wf_dir']  = sub_wf_dir
+
+shell("mkdir -p {results_dir}")
+
+wildcard_constraints:
+    cell_line='|'.join(config['cell_lines']),
+    sample='|'.join(config['sample_id'])
+
+# Reuse lr_bulk mutation rules unchanged — clair3_rna, whatshap, longcallR etc.
+# Platform mappings already cover ont_bulk / pb_bulk / dRNA_bulk.
+include: "../../sub_workflows/lr_bulk/rules/mutation.smk"
+include: config['main_wf_dir'] + "/modules/utilities.smk"
+
+
+# ── Step 1: extract read IDs from the downsampled FASTQ ──────────────────────
+
+rule extract_ds_read_ids:
+    input:
+        fastq=lambda w: glob.glob(os.path.join(
+            config['samples_fastq_ds'][w.sample]['dir'],
+            config['samples_fastq_ds'][w.sample]['pattern'].format(cell_line=w.cell_line)
+        ))[0]
+    output:
+        readids=scratch_dir + "/GenomeAlignment/{sample}_{cell_line}.ds_readids.txt"
+    resources:
+        cpus_per_task=2,
+        mem_mb=8000
+    shell:
+        "zcat {input.fastq} | awk 'NR%4==1 {{print substr($1,2)}}' > {output.readids}"
+
+
+# ── Step 2: subset the full-data BAM to those read IDs ───────────────────────
+
+rule subset_bam_by_ds_readids:
+    input:
+        bam    =lr_bulk_dir + "/GenomeAlignment/{sample}_{cell_line}.sorted.bam",
+        readids=scratch_dir + "/GenomeAlignment/{sample}_{cell_line}.ds_readids.txt"
+    output:
+        bam=scratch_dir + "/GenomeAlignment/{sample}_{cell_line}.sorted.bam",
+        bai=scratch_dir + "/GenomeAlignment/{sample}_{cell_line}.sorted.bam.bai"
+    resources:
+        cpus_per_task=8,
+        mem_mb=32000
+    shell:
+        """
+        samtools view -N {input.readids} -b -@ {resources.cpus_per_task} {input.bam} \
+            | samtools sort -@ {resources.cpus_per_task} -o {output.bam}
+        samtools index {output.bam}
+        """
+
+
+# ── Step 3: symlink subsetted BAM into results_dir so mutation rules find it ─
+# clair3_rna, whatshap, longcallR in mutation.smk all look for
+# results_dir + "/GenomeAlignment/{sample}_{cell_line}.sorted.bam"
+
+rule link_ds_bam:
+    input:
+        bam = scratch_dir + "/GenomeAlignment/{sample}_{cell_line}.sorted.bam",
+        bai = scratch_dir + "/GenomeAlignment/{sample}_{cell_line}.sorted.bam.bai"
+    output:
+        bam = results_dir + "/GenomeAlignment/{sample}_{cell_line}.sorted.bam",
+        bai = results_dir + "/GenomeAlignment/{sample}_{cell_line}.sorted.bam.bai"
+    shell:
+        """
+        mkdir -p $(dirname {output.bam})
+        ln -sf {input.bam} {output.bam}
+        ln -sf {input.bai} {output.bai}
+        """
+
+
+# ── Target rule ───────────────────────────────────────────────────────────────
+
+rule all:
+    input:
+        expand(
+            [rules.clair3_rna.output.vcf,
+             rules.whatshap.output.vcf,
+             rules.whatshap_stat.output.stat,
+             rules.genomic_coverage_analysis.output.cov,
+             rules.longcallR.output.vcf,
+             rules.longcallR_analsyis_ase.output.flag,
+             rules.longcallR_analsyis_asj.output.flag],
+            sample=config['sample_id'],
+            cell_line=config['cell_lines']
+        )
+    output:
+        touch(os.path.join(flag_dir, "lr_bulk_ds_all.done"))
+    default_target: True

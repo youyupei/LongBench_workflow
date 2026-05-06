@@ -62,6 +62,7 @@ include: "rules/rarefraction_analysis.smk"
 # include: "rules/annotation_redundency_analysis.smk"
 include: "rules/rmarkdown.smk"
 include: "rules/base_count_analysis.smk"
+include: "rules/variant_analysis.smk"
 
 
 rule all:

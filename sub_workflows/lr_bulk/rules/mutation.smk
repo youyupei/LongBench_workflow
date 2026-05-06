@@ -1,17 +1,50 @@
 
 
-clair3_tmp_sample_name_map = {
-    'ont_bulk': 'ont',
-    'pb_bulk': 'pacbio',
-    'dRNA_bulk': 'drna',
+_clair3_rna_platform = {
+    'ont_bulk':  'ont_r10_dorado_cdna',
+    'dRNA_bulk': 'ont_dorado_drna004',
+    'pb_bulk':   'hifi_mas_minimap2',
 }
+
+rule clair3_rna:
+    input:
+        bam = results_dir + "/GenomeAlignment/{sample}_{cell_line}.sorted.bam",
+        ref = config['reference']['genome'],
+    output:
+        vcf = scratch_dir + "/Mutation/clair3_rna/{sample}/{cell_line}/output_enable_phasing.vcf.gz" # temporary output to vastly reduce the storage usage in project directory, will move to project directory after successful run
+    container:
+        "docker://hkubal/clair3-rna:v0.2.2"
+    params:
+        platform = lambda w: _clair3_rna_platform[w.sample]
+    resources:
+        cpus_per_task = 16,
+        mem_mb        = 64000,
+        # slurm_partition = lambda wildcards, attempt: (
+        #     config["slurm"]["partition"]["long"]
+        #     if wildcards.sample == "pb_bulk"
+        #     else config["slurm"]["partition"]["short"]
+        # )
+    shell:
+        """
+        mkdir -p $(dirname {output.vcf})
+        export CONDA_PREFIX=/opt/conda/envs/clair3_rna
+        /opt/bin/run_clair3_rna \
+            --bam_fn      {input.bam} \
+            --ref_fn      {input.ref} \
+            --output_dir  $(dirname {output.vcf}) \
+            --platform    {params.platform} \
+            --threads     {resources.cpus_per_task} \
+            --include_all_ctgs \
+            --enable_phasing_model
+        """
+
 rule  whatshap:
     input:
         ref = config['reference']['genome'],
         bam= results_dir + "/GenomeAlignment/{sample}_{cell_line}.sorted.bam",
-        vcf = lambda w: f"/home/users/allstaff/you.yu/LongBench/analysis/variant_allele_specific_analysis/Clair3-RNA/spikeins/all_contigs/{clair3_tmp_sample_name_map[w.sample]}/{w.cell_line}/output_enable_phasing.vcf.gz"
+        vcf = rules.clair3_rna.output.vcf
     output:
-        vcf = results_dir + "/Mutation/{sample}_{cell_line}.phased.vcf"
+        vcf = results_dir + "/Mutation/whatshap/{sample}_{cell_line}.phased.vcf"
     conda:
         config['conda']['whatshap']
     resources:
@@ -19,14 +52,15 @@ rule  whatshap:
         mem_mb=64000
     shell:
         """
-        whatshap phase -o {output.vcf} --ignore-read-groups --reference={input.ref} {input.vcf} {input.bam} 
+        mkdir -p $(dirname {output.vcf})
+        whatshap phase -o {output.vcf} --ignore-read-groups --reference={input.ref} {input.vcf} {input.bam}
         """
 
 rule whatshap_stat:
     input:
         vcf = rules.whatshap.output.vcf
     output:
-        stat = results_dir + "/Mutation/{sample}_{cell_line}.phased.vcf.stat"
+        stat = results_dir + "/Mutation/whatshap/{sample}_{cell_line}.phased.vcf.stat"
     conda:
         config['conda']['whatshap']
     resources:
@@ -169,7 +203,7 @@ rule longcallR_analsyis_ase:
         output_prefix = lambda w: results_dir + f"/LongcallR/{w.sample}_{w.cell_line}.longcallR"
     resources:
         cpus_per_task=8,
-        mem_mb=64000
+        mem_mb=16000
     shell:
         """
         TMPDIR=/tmp python3 {params.script} \
@@ -193,9 +227,10 @@ rule longcallR_analsyis_asj:
         script = '/stornext/General/data/user_managed/grpu_mritchie_1/Yupei/github/external/longcallR/allele_specific/longcallR-asj.py',    
         min_coverage = 30,
         output_prefix = lambda w: results_dir + f"/LongcallR/{w.sample}_{w.cell_line}.merged_genes_exons"
+    retries: 2
     resources:
         cpus_per_task=8,
-        mem_mb=500000
+        mem_mb=lambda wildcards, attempt: 128000 if attempt > 1 else 64000
     shell:
         """
         python3 {params.script} \
@@ -212,7 +247,8 @@ rule longcallR_analsyis_asj:
 rule mutation_all:
     input:
         expand(
-            [rules.whatshap.output.vcf,
+            [rules.clair3_rna.output.vcf,
+             rules.whatshap.output.vcf,
              rules.whatshap_stat.output.stat,
              rules.genomic_coverage_analysis.output.cov,
              #rules.longcallR_analsyis_ase.output.flag,

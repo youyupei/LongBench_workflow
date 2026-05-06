@@ -1,0 +1,56 @@
+sample_id:
+  - 'ont_bulk'
+  - 'pb_bulk'
+  - 'dRNA_bulk'
+
+barcode_list:
+  - 1: H146
+  - 2: H69
+  - 3: H526
+  - 4: H211
+  - 5: SHP77
+  - 6: H1975
+  - 7: H2228
+  - 8: HCC827
+
+cell_lines:
+  - H146
+  - H69
+  - H526
+  - H211
+  - SHP77
+  - H1975
+  - H2228
+  - HCC827
+
+# Source of full-data sorted BAMs to subset from
+lr_bulk_results_dir: "/vast/projects/LongBench/analysis/lr_bulk/result"
+
+# Downsampled FASTQs — flat directory, non-standard filename per platform
+samples_fastq_ds:
+  ont_bulk:
+    dir: "/vast/projects/LongBench/sequencing_data/bulk_gb_downsample"
+    pattern: "{cell_line}_bulk_ONT_subset_*.fastq.gz"
+  pb_bulk:
+    dir: "/vast/projects/LongBench/sequencing_data/bulk_gb_downsample"
+    pattern: "{cell_line}_bulk_PB_subset_*.fastq.gz"
+  dRNA_bulk:
+    dir: "/vast/projects/LongBench/sequencing_data/bulk_gb_downsample"
+    pattern: "{cell_line}_dRNA_ONT_merged_subset_*.fastq.gz"
+
+output_path: "/vast/projects/LongBench/analysis/lr_bulk_ds/result"
+scratch_dir: "/vast/scratch/users/you.yu/LongBench/lr_bulk_ds"
+flag_dir: "/vast/projects/LongBench/analysis/workflow/.flag/lr_bulk_ds"
+
+reference:
+  genome: "/home/users/allstaff/you.yu/LongBench/reference_files/GRCh38.add.spikein/GRCh38.primary_assembly.genome.add.spikein.fa"
+  genome_masked: "/vast/projects/LongBench/reference_files/GRCh38/GRCh38.N-masked.genome.fa"
+  gtf: "/home/users/allstaff/you.yu/LongBench/reference_files/GRCh38.add.spikein/gencode.v44.transcripts.add.spikein.gtf"
+  gtf_gz: "/home/users/allstaff/you.yu/LongBench/reference_files/GRCh38.add.spikein/gencode.v44.transcripts.add.spikein.gtf.gz"
+  gtf_sorted: "/home/users/allstaff/you.yu/LongBench/reference_files/GRCh38.add.spikein/gencode.v44.transcripts.add.spikein.sorted.gtf"
+  gtf_human: "/home/users/allstaff/you.yu/LongBench/reference_files/GRCh38/gencode.v44.annotation.gtf"
+  transcript: "/home/users/allstaff/you.yu/LongBench/reference_files/GRCh38.add.spikein/gencode.v44.transcripts.add.spikein.fa"
+  genePred: "/home/users/allstaff/you.yu/LongBench/reference_files/GRCh38.add.spikein/gencode.v44.transcripts.add.spikein.gtf.genePred"
+  bed_human: "/home/users/allstaff/you.yu/LongBench/reference_files/GRCh38/gencode.v44.annotation.gtf.bed"
+  picard_reference: "/home/users/allstaff/you.yu/LongBench/reference_files/GRCh38/refFlat.txt"
+  bed_housekeeping_genes: "/home/users/allstaff/you.yu/LongBench/reference_files/GRCh38/hg38.HouseKeepingGenes.bed"
