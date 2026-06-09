@@ -79,7 +79,7 @@ rule Filter_and_Subsample_bam_for_qc:
     shell:
         """
         mkdir -p $(dirname {output.bam})
-        samtools view --subsample {wildcards.subsample_rate} --subsample-seed {params.seed} -F2034 {input.bam} -h | samtools sort -o {output.bam}
+        samtools view --subsample {wildcards.subsample_rate} --subsample-seed {params.seed} -F2304 {input.bam} -h | samtools sort -o {output.bam}
         samtools index {output.bam}
         """
 
@@ -257,15 +257,14 @@ rule RSeQC_junction_annotation:
 ## AlignQC
 rule alignQC_analysis:
     input: 
-        #fa=config['reference']['genome'], 
-        fa="/vast/scratch/users/you.yu/LongBench/reference/GRCh38.primary_assembly.genome.fa",
+        fa=config['reference']['genome'], 
         anno=config['reference']['gtf_gz'],
         genome_bam = os.path.join(scratch_dir,"subsample_data/{sample}/genome_map_subsample_rate_0.01.bam"),
         bai = os.path.join(scratch_dir,"subsample_data/{sample}/genome_map_subsample_rate_0.01.bam.bai")
     # conda:
     #     config['conda']['AlignQC']
     resources:
-        cpus_per_task=16,
+        cpus_per_task=8,
         mem_mb=800000,
         slurm_extra="--mail-type=FAIL --mail-user=you.yu@wehi.edu.au" # tmp use bonus qos
    
