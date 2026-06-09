@@ -1,3 +1,5 @@
+setwd("~/LongBench/analysis/workflow/scripts")
+
 library(limma)
 library(edgeR)
 library(tidyverse)
@@ -35,14 +37,7 @@ color_palette <- c(
 
 
 # function for splitting the transcript origin
-is.sequins <- function(dge) {grepl("^R", rownames(dge))}
 is.human <- function(dge) {grepl("^ENS", rownames(dge))}
-is.sirv_or_ercc <- function(dge) {!is.human(dge) & !is.sequins(dge)} # this is the whole SIRV set4 (ERCC + SIRV E0 + Long SIRV)
-is.sirv_E0 <- function(dge) {grepl("^SIRV\\d{3}$", rownames(dge))} 
-is.sirv_all <- function(dge) {grepl("^SIRV", rownames(dge))} # including all SIRV E0 and Long SIRV
-is.long_sirv <- function(dge) {grepl("^SIRV\\d{4}", rownames(dge))}
-is.ercc <- function(dge) {!is.human(dge) & !is.sequins(dge) & !is.sirv_all(dge)}
-
 
 # Set up environment
 calcTxNum <- function(G.Tx.map){
@@ -50,7 +45,7 @@ calcTxNum <- function(G.Tx.map){
   txcount = table(G.Tx.map$gene_id)
   txnum = as.numeric(txcount[match(G.Tx.map$gene_id, names(txcount))])
 }
-# SIRV
+
 
 params <- list(
     random_seed = 2024,
@@ -66,24 +61,9 @@ params <- list(
     ill_bulk_salmon_dir = "/vast/projects/LongBench/analysis/sr_bulk/result/salmon/salmon_quant",
     bulk_meta = "/vast/projects/LongBench/sequencing_data/illumina_bulk/metadata.txt"
 )
+
 bulk.meta <- read.csv(params$bulk_meta)
 rownames(bulk.meta) <- bulk.meta$sample
-SIRV_tx <- GenomicFeatures::makeTxDbFromGFF(params$sirv_ercc_gtf, format = "gtf") %>% GenomicFeatures::transcripts(columns = c("tx_id", "tx_name", "gene_id"))
-SIRV.G.Tx.map <- tibble(
-  gene_id = SIRV_tx$gene_id %>% unlist,
-  tx_name = SIRV_tx$tx_name
-)
-rm(SIRV_tx)
-SIRV.G.Tx.map$tx_count <- SIRV.G.Tx.map %>% calcTxNum
-
-# Sequins
-sequins_tx  <- GenomicFeatures::makeTxDbFromGFF(params$sequins_gtf, format = "gtf") %>% GenomicFeatures::transcripts(columns = c("tx_id", "tx_name", "gene_id"))
-sequins.G.Tx.map <- tibble(
-  gene_id = sequins_tx$gene_id %>% unlist,
-  tx_name = sequins_tx$tx_name
-)
-rm(sequins_tx)
-sequins.G.Tx.map$tx_count <- sequins.G.Tx.map %>% calcTxNum
 
 # Human
 human_tx  <- GenomicFeatures::makeTxDbFromGFF(params$human_gtf, format = "gtf") %>% GenomicFeatures::transcripts(columns = c("tx_id", "tx_name", "gene_id"))
@@ -95,11 +75,10 @@ rm(human_tx)
 human.G.Tx.map$tx_count <- human.G.Tx.map %>% calcTxNum
 
 # get the tx2gene mapping
-combined_tx2gene <- rbind(human.G.Tx.map, sequins.G.Tx.map, SIRV.G.Tx.map)[, c("tx_name", "gene_id")]
+combined_tx2gene <- human.G.Tx.map[, c("tx_name", "gene_id")]
 
 
 # single process
-
 single_process_oarfish <- function(quant_dir, method = "oarfish", length_interval=c(0,500,1000,2000, 3000, Inf)) {
     if (method == "oarfish") {
         tx.dge <- get_dge_from_oarfish(quant_dir, ".*/")
@@ -123,14 +102,15 @@ single_process_oarfish <- function(quant_dir, method = "oarfish", length_interva
 
     rst <- data.frame(
       file = quant_dir,
-      total.tx.ident = colSums(tx.dge$counts >= 5) %>% mean,
-      total.gene.ident = colSums(gene.dge$counts >= 10) %>% mean
+      total.tx.ident =  filterByExpr(tx.dge, group = tx.dge$samples$group, min.count=5)  %>% sum,
+      #%colSums(tx.dge$counts >= 5) %>% mean,
+      total.gene.ident = filterByExpr(gene.dge, group = gene.dge$samples$group, min.count=10)  %>% sum #colSums(gene.dge$counts >= 10) %>% mean
     )
     # add count by length bins
-    for (x in labels) {
-      rst[glue("{x}.tx.ident")] <- colSums(tx.dge[tx.length == x, ]$counts >= 5) %>% mean
-      rst[glue("{x}.gene.ident")] <- colSums(gene.dge[gene.length == x, ]$counts >= 10) %>% mean
-    }
+    # for (x in labels) {
+    #   rst[glue("{x}.tx.ident")] <- colSums(tx.dge[tx.length == x, ]$counts >= 5) %>% mean
+    #   rst[glue("{x}.gene.ident")] <- colSums(gene.dge[gene.length == x, ]$counts >= 10) %>% mean
+    # }
     return(rst)
 }
 
@@ -169,7 +149,7 @@ rst <- rst %>%
     ) %>% select(-file)
 
 # save the results as a csv file
-write.csv(rst, "/vast/projects/LongBench/analysis/main_workflow/result/rarefraction_analysis/rarefraction_tx_g_detection.csv", row.names = FALSE)
+write.csv(rst, "/vast/projects/LongBench/analysis/main_workflow/result/rarefraction_analysis/rarefraction_tx_g_detection_test.csv", row.names = FALSE)
 
 message("CSV saved to: /vast/projects/LongBench/analysis/main_workflow/result/rarefraction_analysis/rarefraction_tx_g_detection.csv")
 

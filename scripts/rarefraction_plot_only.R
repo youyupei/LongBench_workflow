@@ -12,7 +12,7 @@ color_palette <- c(
     ONT_1 = "#04476c",
     Illumina = "#e88b20"
 )
-labels <- c("0-500", "500-1000", "1000-2000", "2000-3000", "3000-Inf")
+# labels <- c("0-500", "500-1000", "1000-2000", "2000-3000", "3000-Inf")
 
 fig_dir <- "/vast/projects/LongBench/analysis/figures/rarefraction_analysis"
 dir.create(fig_dir, recursive = TRUE, showWarnings = FALSE)
@@ -100,44 +100,5 @@ p3_gb <- ggplot(data, aes(x = `Average gigabases`, y = total.tx.ident / total.ge
 
 ggsave(file.path(fig_dir, "rarefraction_gb_tx_gene_txpergene.pdf"), p1_gb / p2_gb / p3_gb, width = 6, height = 12)
 
-# length-stratified plots — theme applied per panel, no & operator
-make_len_plots <- function(xvar, yvar_suffix, ylabel) {
-    lapply(labels, function(l) {
-        ggplot(data, aes(x = .data[[xvar]], y = .data[[paste0(l, yvar_suffix)]], color = protocols)) +
-            geom_point() + geom_line() +
-            scale_color_manual(values = color_palette[c("Illumina", "ONT_1", "ONT_2", "PacBio")] %>% unname()) +
-            theme_minimal() + theme(legend.position = "bottom") +
-            labs(x = xvar, y = ylabel, title = glue("Rarefaction Curve (length {l})"))
-    }) %>% wrap_plots(ncol = 3, guides = "collect")
-}
-
-ggsave(file.path(fig_dir, "rarefraction_reads_tx_by_length.pdf"),
-       make_len_plots("Average read count", ".tx.ident", "Transcripts Detected"), width = 15, height = 10)
-ggsave(file.path(fig_dir, "rarefraction_gb_tx_by_length.pdf"),
-       make_len_plots("Average gigabases", ".tx.ident", "Transcripts Detected"), width = 15, height = 10)
-
-ggsave(file.path(fig_dir, "rarefraction_reads_gene_by_length.pdf"),
-       make_len_plots("Average read count", ".gene.ident", "Genes Detected"), width = 15, height = 10)
-ggsave(file.path(fig_dir, "rarefraction_gb_gene_by_length.pdf"),
-       make_len_plots("Average gigabases", ".gene.ident", "Genes Detected"), width = 15, height = 10)
-
-make_len_ratio_plots <- function(xvar) {
-    lapply(labels, function(l) {
-        ggplot(data, aes(
-            x = .data[[xvar]],
-            y = .data[[paste0(l, ".tx.ident")]] / .data[[paste0(l, ".gene.ident")]],
-            color = protocols
-        )) +
-            geom_point() + geom_line() +
-            scale_color_manual(values = color_palette[c("Illumina", "ONT_1", "ONT_2", "PacBio")] %>% unname()) +
-            theme_minimal() + theme(legend.position = "bottom") +
-            labs(x = xvar, y = "Transcripts per gene detected", title = glue("Rarefaction Curve (length {l})"))
-    }) %>% wrap_plots(ncol = 3, guides = "collect")
-}
-
-ggsave(file.path(fig_dir, "rarefraction_reads_txpergene_by_length.pdf"),
-       make_len_ratio_plots("Average read count"), width = 15, height = 10)
-ggsave(file.path(fig_dir, "rarefraction_gb_txpergene_by_length.pdf"),
-       make_len_ratio_plots("Average gigabases"), width = 15, height = 10)
 
 message("All figures saved to: ", fig_dir)
