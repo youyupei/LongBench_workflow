@@ -89,7 +89,7 @@ reports share. They should not be run manually unless re-running in isolation.
 |---|---|---|
 | `Tx2Gene.map.R` | `RDS/Tx2Gene.map.rds` | Bulk DGE preprocessing, GC analysis |
 | `Bulk.DGElist.preprocessing.R` | `RDS/bulk_DGE.obj.rds` | Most bulk Rmd reports |
-| `Bulk.DGElist.preprocessing.IP_filtered.R` | `RDS/bulk_DGE.IP_filtered.obj.rds` | `Bulk_identification_IP_filtered.Rmd` |
+| `Bulk.DGElist.preprocessing.IP_filtered.R` | `RDS/bulk_DGE.IP_filtered.obj.rds` | *(report removed; RDS retained for reference)* |
 | `Sc.DGElist.preprocessing.R` | `RDS/sc_DGE.obj.rds` | `SC_identification_DE_analysis.Rmd` |
 | `get_intronic_gene.R` | `RDS/intronic_gene_and_exon_count.rds` | Bulk identification reports |
 
@@ -105,37 +105,24 @@ reports share. They should not be run manually unless re-running in isolation.
 ### Bulk — transcript identification
 | Report | Description |
 |---|---|
-| `Bulk_identification.Rmd` | Main bulk transcript identification benchmarking (oarfish/FLAMES vs reference) |
-| `Bulk_identification_IsoQuant.Rmd` | Same analysis using IsoQuant quantification |
-| `Bulk_identification_IP_filtered.Rmd` | Identification after internal-priming filtering |
 | `Bulk_identification_3way_comparison.Rmd` | Three-tool comparison of identification results |
-| `Bulk_identification_tool_comparison.Rmd` | Broader tool comparison |
-| `02_Bulk_Identification.Rmd` | Revised/numbered version of the identification report |
+| `02_Bulk_Identification.Rmd` | Main bulk transcript identification benchmarking |
 
 ### Bulk — quantification
 | Report | Description |
 |---|---|
-| `Bulk_quantification_analysis.Rmd` | Quantification accuracy benchmarking (oarfish) |
-| `Bulk_quantification_analysis_IsoQuant.Rmd` | Quantification with IsoQuant |
-| `Bulk_quantification_analysis_MiniQuant.Rmd` | Quantification with MiniQuant |
-| `Bulk_quantification_cross_tool_comparison.Rmd` | Cross-tool quantification comparison |
-| `04_Bulk_quantification.Rmd` | Revised/numbered quantification report |
+| `Bulk_quantification_analysis_IsoQuant.Rmd` | Quantification benchmarking with IsoQuant |
+| `Bulk_quantification_analysis_MiniQuant.Rmd` | Quantification benchmarking with MiniQuant |
+| `04_Bulk_quantification.Rmd` | Main quantification benchmarking report |
 
 ### Bulk — differential expression
 | Report | Description |
 |---|---|
 | `Bulk_DE_Summary.Rmd` | Main bulk DE benchmarking summary |
 | `Bulk_DE_Summary_20M.Rmd` | DE summary at 20M read depth |
-| `Bulk_DE_benchmarking.Rmd` | Detailed DE benchmarking |
-| `Bulk_DE_benchmarkin_20M.Rmd` | DE benchmarking at 20M depth |
-| `Bulk_DE_benchmarking_IsoQuant.Rmd` | DE benchmarking with IsoQuant |
 | `Bulk_DE_IsoQuant.Rmd` | DE analysis using IsoQuant counts |
-| `Bulk_DE_analysis_continue.Rmd` | Extended DE analysis (reads `bulk_DE.rds`) |
-| `Bulk_DE_analysis_continue_IsoQuant.Rmd` | Extended DE with IsoQuant |
 | `Bulk_DE.spikeins.Rmd` | DE analysis on spike-in transcripts |
 | `Bulk_DE.spikeins_IsoQuant.Rmd` | Spike-in DE with IsoQuant |
-| `Bulk_DE_platform_specificity.Rmd` | Platform-specific DE patterns |
-| `Bulk_DE_rarefaction.Rmd` | DE performance vs. sequencing depth |
 | `05_Bulk_DE_logFC_analysis.Rmd` | logFC concordance analysis |
 | `Bulk_BCV.Rmd` | Biological coefficient of variation analysis |
 
