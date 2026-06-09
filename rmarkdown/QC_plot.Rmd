@@ -2,7 +2,7 @@
 title: "QC plots from AlignQC and internal priming analysis"
 author: "Yupei"
 date: '`r Sys.Date()`'
-version: "v1.2"
+version: "v1.7"
 output:
   html_document:
     code_folding: hide
@@ -809,6 +809,82 @@ result_df %>%
   scale_color_manual(values = color_palette) + 
   theme(legend.position = "none") +
   labs(y = "Top 100 aligned length", x = "Sequencing protocols")
+
+result_df %>%
+  ggplot(aes(x = cell_line, y = aligned_length, colour = platform)) +
+  geom_boxplot() +
+  #scale_y_log10() +
+  theme_minimal() +
+  scale_color_manual(values = color_palette) + 
+  theme(legend.position = "none") +
+  labs(y = "Top 100 aligned length", x = "Cell lines")
+
+
+
+result_df %>%
+  ggplot(aes(x = cell_line, y = mean_quality, colour = platform)) +
+  geom_boxplot() +
+  #scale_y_log10() +
+  theme_minimal() +
+  scale_color_manual(values = color_palette) + 
+  theme(legend.position = "none") +
+  labs(y = "Mean quality of Top 100 aligned length", x = "Cell lines")
+
+```
+
+## NanoPlot: Quality vs Length Correlation
+```{r bulk_nanoplot_qual_length_correlation}
+nanoplot_dirs <- list.dirs(
+  '/home/users/allstaff/you.yu/LongBench/analysis/lr_bulk/result/qc/NanoPlot',
+  recursive = FALSE, full.names = TRUE
+)
+nanoplot_files <- file.path(nanoplot_dirs, "NanoPlot-data.tsv.gz")
+nanoplot_files <- nanoplot_files[file.exists(nanoplot_files)]
+
+nanoplot_cor <- lapply(nanoplot_files, function(f) {
+  sample_name <- basename(dirname(f))
+  df <- read_tsv(f, col_names = c("quals", "lengths"), skip = 1, show_col_types = FALSE)
+  tibble(
+    sample    = sample_name,
+    platform  = str_extract(sample_name, "^[^_]+_[^_]+"),
+    cell_line = str_extract(sample_name, "(?<=bulk_).+"),
+    pearson   = cor(df$quals, df$lengths, method = "pearson"),
+    spearman  = cor(df$quals, df$lengths, method = "spearman")
+  )
+}) |> bind_rows()
+
+knitr::kable(nanoplot_cor, digits = 4,
+             col.names = c("Sample", "Platform", "Cell line", "Pearson r", "Spearman rho"))
+```
+
+```{r bulk_nanoplot_qual_length_correlation_plot, fig.height=3, fig.width=5}
+nanoplot_cor_long <- nanoplot_cor %>%
+  pivot_longer(cols = c(pearson, spearman), names_to = "method", values_to = "correlation") %>%
+  mutate(
+    platform = recode(platform,
+      "dRNA_bulk" = "ONT dRNA",
+      "ont_bulk"  = "ONT cDNA",
+      "pb_bulk"   = "PacBio"
+    ),
+    method = recode(method, pearson = "Pearson", spearman = "Spearman")
+  )
+
+color_palette_nano <- c(
+  "ONT dRNA" = "#00789b",
+  "ONT cDNA" = "#04476c",
+  PacBio     = "#df1995"
+)
+
+ggplot(nanoplot_cor_long, aes(x = platform, y = correlation, colour = platform)) +
+  geom_boxplot(outlier.shape = NA, width = 0.4) +
+  geom_jitter(aes(shape = cell_line), width = 0.15, size = 2) +
+  facet_wrap(~method) +
+  scale_colour_manual(values = color_palette_nano) +
+  theme_minimal() +
+  ylim(c(-1, 1)) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1), legend.position = "right") +
+  labs(x = "Platform", y = "Correlation", colour = "Platform", shape = "Cell line",
+       title = "Quality vs Read Length Correlation (NanoPlot)")
 ```
 
 
@@ -932,6 +1008,19 @@ ggplot(ambient_assigned, aes(x = protocol, y = 1-prob_assigned, fill = Platform,
   scale_y_log10() +
   theme_minimal()
 
+
+ambient_assigned %>%
+  mutate(ambient_prop = 1 - prob_assigned) %>%
+  select(protocol, ambient_prop) %>%
+  group_by(protocol) %>%
+  summarise(
+    median = median(ambient_prop),
+    mean = mean(ambient_prop),
+    q1 = quantile(ambient_prop, 0.25),
+    q3 = quantile(ambient_prop, 0.75),
+    min = min(ambient_prop),
+    max = max(ambient_prop)
+  )
 ```
 
 
@@ -1232,4 +1321,314 @@ ggplot(plot_df, aes(x=platform, y=value, fill=metric)) +
   labs(y="Percentage", x="Metric", title="Genominc feature % by Platform") +
   theme_bw() +
   theme(axis.text.x = element_text(angle=45, hjust=1))
+```
+
+# Read Count
+
+```{r read_count_data_load}
+read_count_df <- read.table(
+  "/vast/projects/LongBench/analysis/figures/qc/read_count_summary.tsv",
+  header = TRUE, sep = "\t"
+) |>
+  mutate(
+    datatype = factor(datatype, levels = c("Illumina", "PacBio", "ONT dRNA", "ONT cDNA")),
+    sample   = factor(sample, levels = sample)
+  )
+
+fill_scale <- scale_fill_manual(values = c(
+  Illumina  = "#e88b20",
+  PacBio    = "#df1995",
+  `ONT dRNA` = "#00789b",
+  `ONT cDNA` = "#04476c"
+))
+```
+
+## Read counts and Gigabases
+```{r read_count_barplots, fig.width=14, fig.height=5}
+bar_theme <- theme_minimal() +
+  theme(axis.text.x = element_text(angle = 60, hjust = 1))
+
+p1 <- ggplot(read_count_df, aes(x = sample, y = read_count / 1e6, fill = datatype)) +
+  geom_bar(stat = "identity") + bar_theme + fill_scale +
+  labs(x = NULL, y = "Read counts (Millions)", fill = "Platform")
+
+p2 <- ggplot(read_count_df, aes(x = sample, y = gb, fill = datatype)) +
+  geom_bar(stat = "identity") + bar_theme + fill_scale +
+  labs(x = "Sample", y = "Gigabases (Gb)", fill = "Platform")
+
+gridExtra::grid.arrange(p1, p2, ncol = 1)
+```
+
+## Dual-axis (reads + Gb)
+```{r read_count_dual_axis, fig.width=14, fig.height=5}
+max_reads_M  <- max(read_count_df$read_count / 1e6, na.rm = TRUE)
+max_gb       <- max(read_count_df$gb, na.rm = TRUE)
+to_primary   <- function(x) x / max_gb * max_reads_M
+from_primary <- function(x) x / max_reads_M * max_gb
+
+ggplot(read_count_df, aes(x = sample)) +
+  geom_bar(aes(y = read_count / 1e6, fill = datatype), stat = "identity") +
+  geom_point(aes(y = to_primary(gb), color = datatype), size = 2.5) +
+  geom_line(aes(y = to_primary(gb), group = 1), color = "grey40", linewidth = 0.4) +
+  scale_y_continuous(
+    name = "Read counts (Millions)",
+    sec.axis = sec_axis(transform = from_primary, name = "Gigabases (Gb)")
+  ) +
+  fill_scale +
+  scale_color_manual(values = c(
+    Illumina = "#e88b20", PacBio = "#df1995",
+    `ONT dRNA` = "#00789b", `ONT cDNA` = "#04476c"
+  ), guide = "none") +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 60, hjust = 1),
+    axis.title.y.right = element_text(color = "grey40"),
+    axis.text.y.right  = element_text(color = "grey40")
+  ) +
+  labs(x = "Sample", fill = "Platform")
+```
+
+# Read Length and Quality
+
+```{r read_length_quality_data_load}
+rlq <- read.table(
+  "/vast/projects/LongBench/analysis/figures/qc/read_length_quality_summary.tsv",
+  header = TRUE, sep = "\t"
+) |>
+  mutate(
+    datatype = factor(datatype, levels = c("PacBio", "ONT dRNA", "ONT cDNA", "Illumina")),
+    sample   = factor(sample, levels = sample)
+  )
+
+datatype_colors <- c(
+  PacBio    = "#df1995",
+  `ONT dRNA` = "#00789b",
+  `ONT cDNA` = "#04476c",
+  Illumina  = "#e88b20"
+)
+```
+
+## Quality score distribution
+```{r read_quality_boxplot, fig.width=20, fig.height=6}
+ggplot(rlq, aes(x = sample, fill = datatype,
+                ymin = qual_whisker_low, lower = qual_Q1, middle = qual_median,
+                upper = qual_Q3, ymax = qual_whisker_high)) +
+  geom_boxplot(stat = "identity") +
+  theme_minimal() +
+  labs(x = "Sample", y = "Quality Score", fill = "Data type") +
+  scale_fill_manual(values = datatype_colors) +
+  theme(text = element_text(size = 14),
+        axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+## Read length distribution
+```{r read_length_boxplot, fig.width=20, fig.height=6}
+ggplot(rlq, aes(x = sample, fill = datatype,
+                ymin = length_whisker_low, lower = length_Q1, middle = length_median,
+                upper = length_Q3, ymax = length_whisker_high)) +
+  geom_boxplot(stat = "identity") +
+  theme_minimal() +
+  labs(x = "Sample", y = "Read Length (bp)", fill = "Data type") +
+  scale_fill_manual(values = datatype_colors) +
+  coord_cartesian(ylim = c(0, 5000)) +
+  theme(text = element_text(size = 14),
+        axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+## Summary table
+```{r read_length_quality_summary_table}
+knitr::kable(rlq, digits = 2)
+```
+
+# Summary Table
+
+```{r summary_table_build}
+sc_sn_platforms <- c("ONT SC", "ONT SN", "PacBio SC", "PacBio SN",
+                     "Illumina SC", "Illumina SN")
+
+# Helper: parse a raw two-column stats file (metric / value) into a wide numeric tibble
+parse_raw_stats <- function(file) {
+  read.table(file, sep = "\t", col.names = c("metric", "value"), fill = TRUE) %>%
+    pivot_wider(names_from = metric, values_from = value) %>%
+    mutate(across(everything(), as.numeric))
+}
+
+# Helper: map SC/SN directory name to Platform label
+sc_sn_dir_to_platform <- c(
+  ont_sc = "ONT SC", ont_sn = "ONT SN",
+  pb_sc  = "PacBio SC", pb_sn  = "PacBio SN"
+)
+
+# --- 1. Aligned reads % (bulk in memory + SC/SN from full-dataset AlignQC) ---
+aligned_pct <- alignment.stats %>%
+  select(Platform, Cell_line, pct_aligned = ALIGNED_READS)
+
+sc_sn_align_files <- list.files(
+  "/vast/projects/LongBench/analysis/lr_sc_sn/result/qc/AlignQC",
+  pattern = "alignment_stats.txt", recursive = TRUE, full.names = TRUE
+)
+sc_sn_aligned_pct <- map_dfr(sc_sn_align_files, function(f) {
+  dir_name <- strsplit(f, "/")[[1]] |> rev() %>% .[[3]]
+  raw <- parse_raw_stats(f)
+  tibble(Platform  = sc_sn_dir_to_platform[dir_name],
+         Cell_line = NA_character_,
+         pct_aligned = raw$ALIGNED_READS / raw$TOTAL_READS * 100)
+})
+aligned_pct <- bind_rows(aligned_pct, sc_sn_aligned_pct)
+
+# --- 2. Error rate % (bulk in memory + SC/SN from full-dataset AlignQC) ---
+error_pct <- error.stats %>%
+  select(Platform, Cell_line, pct_any_error = ANY_ERROR)
+
+sc_sn_error_files <- list.files(
+  "/vast/projects/LongBench/analysis/lr_sc_sn/result/qc/AlignQC",
+  pattern = "error_stats.txt", recursive = TRUE, full.names = TRUE
+)
+sc_sn_error_pct <- map_dfr(sc_sn_error_files, function(f) {
+  dir_name <- strsplit(f, "/")[[1]] |> rev() %>% .[[3]]
+  raw <- parse_raw_stats(f)
+  tibble(Platform  = sc_sn_dir_to_platform[dir_name],
+         Cell_line = NA_character_,
+         pct_any_error = raw$ANY_ERROR / raw$ALIGNMENT_BASES * 100)
+})
+error_pct <- bind_rows(error_pct, sc_sn_error_pct)
+
+# --- 3. Genomic features: LR bulk + SR bulk (re-read; variable overwritten by SC/SN chunk) ---
+bulk_gf_files <- c(
+  list.files(
+    list.dirs("/vast/projects/LongBench/analysis/lr_bulk/result/qc/AlignQC/",
+              recursive = TRUE, full.names = TRUE),
+    pattern = "read_genomic_features.txt.gz", full.names = TRUE
+  ),
+  list.files(
+    list.dirs("/vast/projects/LongBench/analysis/sr_bulk/result/qc/AlignQC/",
+              recursive = TRUE, full.names = TRUE),
+    pattern = "read_genomic_features.txt.gz", full.names = TRUE
+  )
+)
+
+parse_bulk_gf <- function(file) {
+  platform_str <- strsplit(file, "/")[[1]] |> rev() %>% .[[3]]
+  read_tsv(file, col_names = c("Read_id", "Feature", "exon_count", "Aligned_length"),
+           show_col_types = FALSE) %>%
+    mutate(
+      Platform = case_when(
+        str_detect(platform_str, "pb.*IP_filtered")       ~ "PacBio IP filtered",
+        str_detect(platform_str, "dRNA.*IP_filtered")     ~ "ONT dRNA IP filtered",
+        str_detect(platform_str, "ont_bulk.*IP_filtered") ~ "ONT cDNA IP filtered",
+        str_detect(platform_str, "dRNA")     ~ "ONT dRNA",
+        str_detect(platform_str, "ont_bulk") ~ "ONT cDNA",
+        str_detect(platform_str, "pb")       ~ "PacBio",
+        TRUE ~ "Illumina"
+      ),
+      Cell_line = gsub(".*_", "", platform_str)
+    ) %>%
+    group_by(Platform, Cell_line, Feature) %>%
+    summarise(count = n(), .groups = "drop")
+}
+
+bulk_gf_summary <- map_dfr(bulk_gf_files, parse_bulk_gf) %>%
+  filter(!str_detect(Platform, "IP filtered")) %>%
+  group_by(Platform, Cell_line) %>%
+  mutate(pct = count / sum(count) * 100) %>%
+  select(Platform, Cell_line, Feature, pct) %>%
+  pivot_wider(names_from = Feature, values_from = pct, names_glue = "pct_{Feature}")
+
+# --- 4. SC/SN genomic features from full-dataset AlignQC (one row per platform type) ---
+sc_sn_gf_files <- list.files(
+  "/vast/projects/LongBench/analysis/lr_sc_sn/result/qc/AlignQC",
+  pattern = "read_genomic_features.txt.gz", recursive = TRUE, full.names = TRUE
+)
+sc_sn_gf_summary <- map_dfr(sc_sn_gf_files, function(f) {
+  dir_name <- strsplit(f, "/")[[1]] |> rev() %>% .[[3]]
+  read_tsv(f, col_names = c("Read_id", "Feature", "exon_count", "Aligned_length"),
+           show_col_types = FALSE) %>%
+    mutate(Platform = sc_sn_dir_to_platform[dir_name], Cell_line = NA_character_) %>%
+    group_by(Platform, Cell_line, Feature) %>%
+    summarise(count = n(), .groups = "drop")
+}) %>%
+  group_by(Platform, Cell_line) %>%
+  mutate(pct = count / sum(count) * 100) %>%
+  select(Platform, Cell_line, Feature, pct) %>%
+  pivot_wider(names_from = Feature, values_from = pct, names_glue = "pct_{Feature}")
+
+# --- 5. Combine ---
+bulk_combined <- aligned_pct %>%
+  filter(!Platform %in% sc_sn_platforms) %>%
+  left_join(error_pct %>% filter(!Platform %in% sc_sn_platforms),
+            by = c("Platform", "Cell_line")) %>%
+  left_join(bulk_gf_summary, by = c("Platform", "Cell_line"))
+
+# Skeleton ensures all SC/SN platforms appear even if AlignQC files are absent
+all_sc_sn <- tibble(Platform = sc_sn_platforms, Cell_line = NA_character_)
+sc_sn_combined <- all_sc_sn %>%
+  left_join(sc_sn_gf_summary, by = c("Platform", "Cell_line")) %>%
+  left_join(aligned_pct %>% filter(Platform %in% sc_sn_platforms),
+            by = c("Platform", "Cell_line")) %>%
+  left_join(error_pct %>% filter(Platform %in% sc_sn_platforms),
+            by = c("Platform", "Cell_line"))
+
+# --- 6. Join read counts/Gb and mean quality/length ---
+sc_sn_sample_key <- c(
+  "ONT SC"       = "ont_sc",
+  "ONT SN"       = "ont_sn",
+  "PacBio SC"    = "pb_sc",
+  "PacBio SN"    = "pb_sn",
+  "Illumina SC"  = "ill_sc",
+  "Illumina SN"  = "ill_sn"
+)
+# Prefix for read_count_df lookup (Illumina bulk stored as "Illumina_H146")
+rc_prefix_bulk <- c(
+  "ONT cDNA" = "ont_bulk",
+  "PacBio"   = "pb_bulk",
+  "ONT dRNA" = "dRNA_bulk",
+  "Illumina" = "Illumina"
+)
+# Prefix for rlq lookup (Illumina bulk stored as "ill_bulk_H146")
+rlq_prefix_bulk <- c(
+  "ONT cDNA" = "ont_bulk",
+  "PacBio"   = "pb_bulk",
+  "ONT dRNA" = "dRNA_bulk",
+  "Illumina" = "ill_bulk"
+)
+
+read_counts_lookup <- read_count_df %>%
+  select(sample, read_count, gb) %>%
+  mutate(sample = as.character(sample))
+
+rlq_lookup <- rlq %>%
+  select(sample, qual_mean, length_median) %>%
+  mutate(sample = as.character(sample))
+
+qc_summary <- bind_rows(bulk_combined, sc_sn_combined) %>%
+  mutate(
+    rc_sample  = case_when(
+      Platform %in% sc_sn_platforms ~ sc_sn_sample_key[Platform],
+      TRUE ~ paste0(rc_prefix_bulk[Platform], "_", Cell_line)
+    ),
+    rlq_sample = case_when(
+      Platform %in% sc_sn_platforms ~ sc_sn_sample_key[Platform],
+      TRUE ~ paste0(rlq_prefix_bulk[Platform], "_", Cell_line)
+    )
+  ) %>%
+  left_join(read_counts_lookup, by = c("rc_sample"  = "sample")) %>%
+  left_join(rlq_lookup,         by = c("rlq_sample" = "sample")) %>%
+  mutate(gb = gb / 1e9) %>%
+  select(Platform, Cell_line, read_count, gb, pct_aligned, pct_any_error,
+         pct_intergenic, pct_intron, pct_exon, qual_mean, length_median) %>%
+  arrange(Platform, Cell_line)
+
+# --- Write TSV ---
+if (!is.null(params$fig.path)) {
+  write_tsv(qc_summary, file.path(params$fig.path, "qc_summary_table.tsv"))
+}
+
+knitr::kable(qc_summary, digits = 2,
+             col.names = c("Platform", "Cell line",
+                           "# Passed reads", "Total bases (Gb)",
+                           "Aligned reads (%)",
+                           "Read-to-reference discordance (%)",
+                           "Intergenic reads (%)", "Intronic reads (%)",
+                           "Exonic reads (%)",
+                           "Mean quality", "Median read length (bp)"))
 ```

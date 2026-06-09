@@ -44,10 +44,14 @@ all_data <- do.call(rbind, lapply(seq_along(file_paths), function(i) {
 
 # Specify datatype
 all_data$datatype <- ifelse(grepl("pb", all_data$sample), "PacBio",
-              ifelse(grepl("dRNA", all_data$sample), "ONT dRNA", "ONT cDNA")
+         ifelse(grepl("dRNA", all_data$sample), "ONT dRNA",
+         ifelse(grepl("^ill_", all_data$sample), "Illumina", "ONT cDNA"))
 )
 # fix levels of datatype
-all_data$datatype <- factor(all_data$datatype, levels = c("PacBio", "ONT dRNA", "ONT cDNA"))
+all_data$datatype <- factor(
+  all_data$datatype,
+  levels = c("PacBio", "ONT dRNA", "ONT cDNA", "Illumina")
+)
 
 # Boxplot for quals
 p1 <- ggplot(all_data, aes(x = sample, y = quals, fill = datatype)) +
@@ -59,7 +63,9 @@ p1 <- ggplot(all_data, aes(x = sample, y = quals, fill = datatype)) +
     text = element_text(size = 25),
     axis.text.x = element_text(angle = 45, hjust = 1)
   ) +
-  scale_fill_manual(values = color_palette[c("PacBio", "ONT", "ONT_1")] |> unname())
+  scale_fill_manual(
+    values = color_palette[c("PacBio", "ONT", "ONT_1", "Illumina")] |> unname()
+  )
 
 # Boxplot for lengths
 p2 <- ggplot(all_data, aes(x = sample, y = lengths, fill = datatype)) +
@@ -72,15 +78,17 @@ p2 <- ggplot(all_data, aes(x = sample, y = lengths, fill = datatype)) +
     axis.text.x = element_text(angle = 45, hjust = 1)
   ) +
   ylim(0, 5000) +
-  scale_fill_manual(values = color_palette[c("PacBio", "ONT", "ONT_1")] |> unname())
+  scale_fill_manual(
+    values = color_palette[c("PacBio", "ONT", "ONT_1", "Illumina")] |> unname()
+  )
 
 # arrange the plots in a grid and save
 library(gridExtra)
 
-rst <- p1 / (p2 + theme(legend.position = "none")) +
-        patchwork::plot_layout(
-          guides = "collect"
-        ) & theme(plot.margin = unit(c(1, 1, 1, 1), "cm"))
+margin_theme <- theme(plot.margin = unit(c(1, 1, 1, 1), "cm"))
+rst <- (p1 + margin_theme) /
+       (p2 + theme(legend.position = "none") + margin_theme) +
+       patchwork::plot_layout(guides = "collect")
 
 # save the plots
 # increase the left margin
