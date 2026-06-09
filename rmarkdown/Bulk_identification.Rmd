@@ -30,7 +30,8 @@ params <- list(
   random_seed = 2024,
   cache_dir = NULL,
   bulk_meta = "/vast/projects/LongBench/sequencing_data/illumina_bulk/metadata.txt",
-  out.rds= '/vast/projects/LongBench/analysis/workflow/rmarkdown/RDS/bulk_identification.rds'
+  out.rds= '/vast/projects/LongBench/analysis/workflow/rmarkdown/RDS/bulk_identification.rds',
+  input_DGEobject_rds = '/vast/projects/LongBench/analysis/workflow/rmarkdown/RDS/bulk_DGE.obj.rds'
 )
 ```
 
@@ -182,21 +183,25 @@ gene_length_lookup <- tx_ref_df %>%
     summarise(mean_length = mean(Length, na.rm = TRUE), .groups = "drop") %>%
     mutate(gene_id= sub("\\..*", "", gene_id))
 
-# Connect to Ensembl
+# Connect to Ensembl (cache result to avoid repeated network calls)
 library(biomaRt)
-ensembl <- useEnsembl(biomart = "genes", dataset = "hsapiens_gene_ensembl")
-
+biotypes_cache <- file.path(dirname(params$out.rds), "biotypes_cache.rds")
+if (file.exists(biotypes_cache)) {
+  biotypes <- readRDS(biotypes_cache)
+} else {
+  ensembl <- useEnsembl(biomart = "genes", dataset = "hsapiens_gene_ensembl")
+  biotypes <- getBM(
+    attributes = c("ensembl_gene_id", "gene_biotype"),
+    filters = "ensembl_gene_id",
+    values = gene_discovery$gene_id,
+    mart = ensembl
+  )
+  saveRDS(biotypes, biotypes_cache)
+}
 
 gene_discovery <- gene_discovery %>%
     left_join(gene_length_lookup, by = c("gene_id")) %>%
     rename(`Gene length` = mean_length)
-
-biotypes <- getBM(
-  attributes = c("ensembl_gene_id", "gene_biotype"),
-  filters = "ensembl_gene_id",
-  values = gene_discovery$gene_id,
-  mart = ensembl
-)
 
 
 gene_discovery <- gene_discovery %>%
@@ -264,7 +269,7 @@ ComplexUpset::upset(
         'Intersection size'=ComplexUpset::intersection_size(
             counts=TRUE,
             mapping=aes(fill=biotype),
-            text=element_text(size = 3, vjust=-0.2)
+            text=list(element_text(size = 3, vjust=-0.2))
         ) + scale_fill_manual(values = c("Non-protein-coding"="#BAC5CB",
                               "Protein-coding"='#B5C952'))
     ),
@@ -368,7 +373,7 @@ ComplexUpset::upset(
    base_annotations=list(
         'Intersection size'=ComplexUpset::intersection_size(
             counts=TRUE,
-            text=element_text(size = 3, vjust=-0.2)
+            text=list(element_text(size = 3, vjust=-0.2))
         )
     ),
   guides='over',
@@ -750,7 +755,7 @@ ComplexUpset::upset(
         'Intersection size'=ComplexUpset::intersection_size(
             counts=TRUE,
             mapping=aes(fill=biotype),
-            text=element_text(size = 3, vjust=-0.2)
+            text=list(element_text(size = 3, vjust=-0.2))
         ) + scale_fill_manual(values = c("Non-protein-coding"="#BAC5CB",
                               "Protein-coding"='#B5C952'))
     ),

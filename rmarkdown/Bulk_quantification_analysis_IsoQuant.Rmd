@@ -1,7 +1,7 @@
 ---
 title: "Longbench Quantification analysis (IsoQuant-substituted)"
 author: "Yupei"
-version: "v1.0"
+version: "v1.2"
 output:
   html_document:
     code_folding: hide
@@ -102,6 +102,8 @@ safe_read_rds <- function(path) {
   stopifnot(file.exists(path))
   readRDS(path)
 }
+
+common_tx_summary_rds <- "bulk_quantification_common_tx_summary.rds"
 
 
 ```
@@ -293,6 +295,20 @@ keep_tx <- filterByExpr(ill_bulk.tx.dge,  group = ill_bulk.tx.dge$samples$group,
            filterByExpr(drna_bulk.tx.dge, group = drna_bulk.tx.dge$samples$group, min.count = 5)
 
 table(keep_tx)
+
+isoquant_common_tx_summary <- tibble(
+  active_longread_tool = "IsoQuant",
+  common_tx_before_filter = length(common_tx),
+  common_tx_after_filter = sum(keep_tx),
+  common_tx_fraction = sum(keep_tx) / length(common_tx)
+)
+
+if (file.exists(common_tx_summary_rds)) {
+  bulk_common_tx_summary <- readRDS(common_tx_summary_rds) %>% mutate(source = "Bulk_quantification_analysis")
+  isoquant_common_tx_summary <- isoquant_common_tx_summary %>% mutate(source = "Bulk_quantification_analysis_IsoQuant")
+  common_tx_comparison <- bind_rows(bulk_common_tx_summary, isoquant_common_tx_summary)
+  kable(common_tx_comparison, digits = 3)
+}
 
 ill_bulk.tx.dge  <- ill_bulk.tx.dge[keep_tx, ]
 ont_bulk.tx.dge  <- ont_bulk.tx.dge[keep_tx, ]
@@ -1069,11 +1085,24 @@ myMDS <- function(dge, mds, title) {
   p1 | p2
 }
 
+myMDS_data <- function(dge, mds) {
+  data.frame(
+    Dim1        = mds$x,
+    Dim2        = mds$y,
+    Cancer.type = dge$samples$group,
+    Data.type   = dge$samples$platform,
+    Sequins.mix = dge$samples$sequins
+  )
+}
+
 mds.gene <- plotMDS(log.tpm.gene.dge, plot = FALSE)
 mds.tx   <- plotMDS(log.tpm.tx.dge,   plot = FALSE)
 
 myMDS(log.tpm.gene.dge, mds.gene, "Human gene counts (IsoQuant)")
 myMDS(log.tpm.tx.dge,   mds.tx,   "Human transcript counts (IsoQuant)")
+
+myMDS_data(log.tpm.gene.dge, mds.gene)
+myMDS_data(log.tpm.tx.dge,   mds.tx)
 ```
 
 ## PVCA — Human

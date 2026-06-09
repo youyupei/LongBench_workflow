@@ -1,0 +1,766 @@
+---
+title: "DE analysis continue (IsoQuant quantification)"
+author: "Yupei"
+date: '`r Sys.Date()`'
+version: 'v1.0'
+output:
+  html_document:
+    code_folding: hide
+    toc: yes
+    toc_float: yes
+    number_sections: yes
+    toc_depth: 4
+  pdf_document:
+    toc: yes
+    toc_depth: '4'
+params:
+  random_seed: 2024
+  cache_dir: NULL
+  fig.path: NULL
+  bulk_DE_rds: "/vast/projects/LongBench/analysis/workflow/rmarkdown/RDS/bulk_DE_isoquant.rds"
+  tx2gene_rds: "/vast/projects/LongBench/analysis/workflow/rmarkdown/RDS/Tx2Gene.map.rds"
+  log2FC_cutoff: 0
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+	echo = TRUE,
+	fig.height = 5,
+	fig.width = 7,
+	warning = FALSE,
+	cache = FALSE
+)
+
+if(!exists("params")) {
+  params <- list(
+    random_seed = 2024,
+    cache_dir = NULL,
+    fig.path = NULL,
+    bulk_DE_rds = "/vast/projects/LongBench/analysis/workflow/rmarkdown/RDS/bulk_DE_isoquant.rds",
+    tx2gene_rds = "/vast/projects/LongBench/analysis/workflow/rmarkdown/RDS/Tx2Gene.map.rds",
+    log2FC_cutoff = 0
+  )
+}
+```
+
+```{r Libraries, include=FALSE}
+library(limma)
+library(edgeR)
+library(tidyverse)
+library(RColorBrewer)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(ggrepel)
+library(glue)
+library(ggplot2)
+library(gridExtra)
+library(ggExtra)
+library(knitr)
+library(kableExtra)
+library(rtracklayer)
+library(scales)
+library(UpSetR)
+library(ggtree)
+library(aplot)
+library(ggpubr)
+library(patchwork)
+output_list <- list() # used to store result for downstream analysis
+
+# setup some conflict functions
+rename <- dplyr::rename
+select <- dplyr::select
+
+knitr::opts_chunk$set(
+  cache = !is.null(params$cache_dir),  # Enable caching only if cache_dir is provided
+  fig.width = 15,                     # Set default figure width
+  fig.height = 10,                    # Set default figure height
+  echo = FALSE,                       # Hide code in the output
+  message = FALSE,                    # Suppress messages in the output
+  warning = FALSE,                    # Suppress warnings in the output
+  fig.path = params$fig.path,         # Set figure path (NULL if not provided)
+  dev = if (!is.null(params$fig.path)) c("png", "svg") else NULL  # Set output devices if fig.path is provided
+)
+
+# Set cache.path only if params$cache_dir is not NULL
+if (!is.null(params$cache_dir)) {
+  knitr::opts_chunk$set(cache.path = params$cache_dir)
+}
+```
+
+# Setup:
+```{r Load bulk DE result}
+bulk_DE_rst <- readRDS(params$bulk_DE_rds)
+dge_lists <- bulk_DE_rst$dge_lists
+dte_lists <- bulk_DE_rst$dte_lists
+
+# Create a mapping from old names to new platform names
+name_map <- c(
+  ill = "Illumina",
+  ont = "ONT cDNA",
+  pb = "PacBio",
+  drna = "ONT dRNA"
+)
+
+# Update the names of the list using the mapping
+names(dge_lists) <- name_map[names(dge_lists)]
+names(dte_lists) <- name_map[names(dte_lists)]
+
+platforms <- c("Illumina", "ONT cDNA", "PacBio", "ONT dRNA")
+comparisons <- c("AvsL", "PvsL", "AvsP")
+
+# tx2gene lookup: strip version suffixes so bare ENST IDs (IsoQuant) match
+tx2gene <- readRDS(params$tx2gene_rds)$human.G.Tx.map %>%
+  mutate(
+    gene_id = sub("\\..*", "", gene_id),
+    tx_name = sub("\\..*", "", tx_name)
+  ) %>%
+  select(transcript_id = tx_name, gene_id) %>%
+  distinct(transcript_id, .keep_all = TRUE)
+```
+
+
+
+Comparison of gene-level and transcript-level log fold changes (logFC) across platforms and conditions. Each scatter plot shows the relationship between gene-level logFC (x-axis) and the logFC of the most significantly differentially expressed transcript (y-axis) for genes with at least one significant transcript (P < 0.05). Points represent genes, and the dashed line indicates equality (logFC_gene = logFC_transcript). Plots are faceted by platform and pairwise comparison.
+```{r,fig.height=10, fig.width=8}
+scatter_plots <- list()
+library(ggpubr)
+for (platform in platforms) {
+  for (comp in comparisons) {
+    dge <- dge_lists[[platform]][[paste0(comp, ".DE")]]$table %>%
+      rownames_to_column("gene_id")
+
+    dte <- dte_lists[[platform]][[paste0(comp, ".DE")]]$table %>%
+      rownames_to_column("transcript_id") %>%
+      left_join(tx2gene, by = "transcript_id")
+
+    dte_sig <- dte %>% mutate(FDR = p.adjust(PValue, method = "BH")) %>% filter(FDR < 0.05)
+    top_dte <- dte_sig %>% group_by(gene_id) %>% slice_min(PValue, n = 1) %>% ungroup()
+
+    joined <- top_dte %>%
+      inner_join(dge, by = "gene_id", suffix = c("_transcript", "_gene"))
+
+    p <- ggplot(joined, aes(x = logFC_gene, y = logFC_transcript)) +
+      geom_point(alpha = 0.2, size=0.3) +
+      geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "gray50") +
+      labs(title = paste(toupper(platform), comp), x = "Gene logFC", y = "Transcript logFC") +
+      theme_minimal()
+
+    scatter_plots[[paste(platform, comp)]] <- p
+  }
+}
+
+ggarrange(plotlist = scatter_plots, ncol = 3, nrow = 4)
+```
+
+
+
+# Log FC Correlation between platform pairs
+```{r LFC correlation, fig.height=4, fig.width=8}
+get_de_union <- function(level, comp) {
+  lists <- if (level == "gene") dge_lists else dte_lists
+  id_col <- if (level == "gene") "gene_id" else "transcript_id"
+  purrr::map(platforms, function(plt) {
+    tbl <- lists[[plt]][[paste0(comp, ".DE")]]$table %>%
+      tibble::rownames_to_column(id_col) %>%
+      mutate(FDR = p.adjust(PValue, method = "BH"))
+    tbl[[id_col]][tbl$FDR < 0.05]
+  }) %>% purrr::reduce(union)
+}
+
+get_combined_logfc_plot <- function(level = "gene", p1, p2, filter_fdr = TRUE, min_cpm = NULL) {
+  require(dplyr)
+  require(ggplot2)
+  require(stringr)
+  require(purrr)
+
+  all_data <- purrr::map_dfr(comparisons, function(comp) {
+    lists <- if (level == "gene") dge_lists else dte_lists
+    id_col <- if (level == "gene") "gene_id" else "transcript_id"
+
+    get_tbl <- function(plt) {
+      tbl <- lists[[plt]][[paste0(comp, ".DE")]]$table %>%
+        tibble::rownames_to_column(id_col)
+      if (level == "transcript")
+        tbl <- tbl %>% left_join(tx2gene, by = "transcript_id")
+      tbl
+    }
+
+    df1 <- get_tbl(p1)
+    df2 <- get_tbl(p2)
+
+    if (filter_fdr) {
+      de_union <- get_de_union(level, comp)
+      df1 <- df1 %>% filter(.data[[id_col]] %in% de_union)
+      df2 <- df2 %>% filter(.data[[id_col]] %in% de_union)
+    }
+
+    joined <- full_join(df1[, c(id_col, "logFC", "logCPM")],
+                        df2[, c(id_col, "logFC", "logCPM")],
+                        by = id_col, suffix = c("_p1", "_p2")) %>%
+      drop_na(logFC_p1, logFC_p2) %>%
+      mutate(mean_logCPM = (logCPM_p1 + logCPM_p2) / 2)
+
+    joined$comparison <- comp
+    joined
+  })
+
+  cors <- all_data %>%
+    group_by(comparison) %>%
+    summarise(
+      r = cor(logFC_p1, logFC_p2, use = "complete.obs"),
+      slope = coef(lm(logFC_p2 ~ logFC_p1))[2]
+    ) %>%
+    mutate(label = paste0("r = ", round(r, 2)))
+
+  ggplot(all_data, aes(x = logFC_p1, y = logFC_p2)) +
+    geom_point(aes(color = mean_logCPM), alpha = 0.4, size = 0.3) +
+    scale_color_viridis_c(name = "mean\nlogCPM", option = "plasma") +
+    geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "gray50") +
+    geom_smooth(method = "lm", se = FALSE, color = "black", linewidth = 0.3) +
+    facet_wrap(~comparison, ncol = 3) +
+    geom_text(data = cors, aes(x = -Inf, y = Inf, label = label),
+              inherit.aes = FALSE, hjust = -0.1, vjust = 1.2, size = 3.5) +
+    labs(
+      title = paste0(level, ": ", p1, " vs ", p2),
+      x = paste0("logFC (", p1, ")"),
+      y = paste0("logFC (", p2, ")")
+    ) +
+    theme_minimal(base_size = 8)
+}
+
+# Arrange figures
+platform_pairs <- combn(platforms, 2, simplify = FALSE)
+make_6panel_plot <- function(level, filter_fdr = TRUE) {
+  plotlist <- map(platform_pairs, ~ get_combined_logfc_plot(level, .x[1], .x[2], filter_fdr = filter_fdr))
+  ggarrange(plotlist = plotlist, ncol = 3, nrow = 2)
+}
+
+gene_logfc_combined <- make_6panel_plot("gene")
+gene_logfc_combined
+rm(gene_logfc_combined); gc()
+
+tx_logfc_combined <- make_6panel_plot("transcript")
+tx_logfc_combined
+rm(tx_logfc_combined); gc()
+
+gene_logfc_nofdr <- make_6panel_plot("gene", filter_fdr = FALSE)
+gene_logfc_nofdr
+rm(gene_logfc_nofdr); gc()
+
+tx_logfc_nofdr <- make_6panel_plot("transcript", filter_fdr = FALSE)
+tx_logfc_nofdr
+rm(tx_logfc_nofdr); gc()
+```
+
+## LogFC Correlation: platform-specific DE features
+
+For each comparison, identify features DE (FDR < 0.05) in **exactly one platform** across all four platforms. Then plot the logFC correlation of those platform-specific features between each pair — showing how the "missed" platform captures those signals.
+
+```{r LFC correlation platform-specific, fig.height=4, fig.width=8}
+get_platform_specific_ids <- function(level, comp) {
+  lists <- if (level == "gene") dge_lists else dte_lists
+  id_col <- if (level == "gene") "gene_id" else "transcript_id"
+  de_per_platform <- purrr::map(platforms, function(plt) {
+    tbl <- lists[[plt]][[paste0(comp, ".DE")]]$table %>%
+      tibble::rownames_to_column(id_col) %>%
+      mutate(FDR = p.adjust(PValue, method = "BH"))
+    tbl[[id_col]][tbl$FDR < 0.05]
+  })
+  names(de_per_platform) <- platforms
+  all_ids <- unlist(de_per_platform)
+  id_counts <- table(all_ids)
+  names(id_counts)[id_counts == 1]
+}
+
+get_platform_specific_plot <- function(level = "gene", p1, p2) {
+  require(dplyr); require(ggplot2); require(purrr); require(stringr)
+  lists <- if (level == "gene") dge_lists else dte_lists
+  id_col <- if (level == "gene") "gene_id" else "transcript_id"
+
+  all_data <- purrr::map_dfr(comparisons, function(comp) {
+    specific_ids <- get_platform_specific_ids(level, comp)
+
+    get_tbl <- function(plt) {
+      tbl <- lists[[plt]][[paste0(comp, ".DE")]]$table %>%
+        tibble::rownames_to_column(id_col)
+      if (level == "transcript")
+        tbl <- tbl %>% left_join(tx2gene, by = "transcript_id")
+      tbl %>% filter(.data[[id_col]] %in% specific_ids)
+    }
+
+    full_join(get_tbl(p1)[, c(id_col, "logFC", "logCPM")],
+              get_tbl(p2)[, c(id_col, "logFC", "logCPM")],
+              by = id_col, suffix = c("_p1", "_p2")) %>%
+      drop_na(logFC_p1, logFC_p2) %>%
+      mutate(mean_logCPM = (logCPM_p1 + logCPM_p2) / 2, comparison = comp)
+  })
+
+  cors <- all_data %>%
+    group_by(comparison) %>%
+    summarise(r = cor(logFC_p1, logFC_p2, use = "complete.obs"),
+              n = dplyr::n(), .groups = "drop") %>%
+    mutate(label = paste0("r = ", round(r, 2), "\nn = ", n))
+
+  ggplot(all_data, aes(x = logFC_p1, y = logFC_p2)) +
+    geom_point(aes(color = mean_logCPM), alpha = 0.4, size = 0.3) +
+    scale_color_viridis_c(name = "mean\nlogCPM", option = "plasma") +
+    geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "gray50") +
+    geom_smooth(method = "lm", se = FALSE, color = "black", linewidth = 0.3) +
+    facet_wrap(~comparison, ncol = 3) +
+    geom_text(data = cors, aes(x = -Inf, y = Inf, label = label),
+              inherit.aes = FALSE, hjust = -0.1, vjust = 1.2, size = 3) +
+    labs(title = paste0(level, " (platform-specific): ", p1, " vs ", p2),
+         x = paste0("logFC (", p1, ")"), y = paste0("logFC (", p2, ")")) +
+    theme_minimal(base_size = 8)
+}
+
+ps_gene <- map(platform_pairs, ~ get_platform_specific_plot("gene", .x[1], .x[2]))
+ggarrange(plotlist = ps_gene, ncol = 3, nrow = 2)
+rm(ps_gene); gc()
+
+ps_tx <- map(platform_pairs, ~ get_platform_specific_plot("transcript", .x[1], .x[2]))
+ggarrange(plotlist = ps_tx, ncol = 3, nrow = 2)
+rm(ps_tx); gc()
+```
+
+## LogFC Correlation: one-platform-specific features vs all others
+
+For each platform, take features DE (FDR < 0.05) **exclusively in that platform** (not DE in any other), then plot the logFC of those features in that platform against each of the other three platforms.
+
+```{r LFC correlation one-platform-specific, fig.height=2.5, fig.width=12}
+get_exclusive_ids <- function(level, comp, specific_plt) {
+  lists <- if (level == "gene") dge_lists else dte_lists
+  id_col <- if (level == "gene") "gene_id" else "transcript_id"
+  de_sets <- purrr::map(platforms, function(plt) {
+    tbl <- lists[[plt]][[paste0(comp, ".DE")]]$table %>%
+      tibble::rownames_to_column(id_col) %>%
+      mutate(FDR = p.adjust(PValue, method = "BH"))
+    tbl[[id_col]][tbl$FDR < 0.05]
+  })
+  names(de_sets) <- platforms
+  other_ids <- purrr::reduce(de_sets[setdiff(platforms, specific_plt)], union)
+  setdiff(de_sets[[specific_plt]], other_ids)
+}
+
+get_exclusive_vs_others_plot <- function(level = "gene", specific_plt) {
+  require(dplyr); require(ggplot2); require(purrr)
+  lists <- if (level == "gene") dge_lists else dte_lists
+  id_col <- if (level == "gene") "gene_id" else "transcript_id"
+  other_plts <- setdiff(platforms, specific_plt)
+
+  plotlist <- purrr::map(other_plts, function(other_plt) {
+    all_data <- purrr::map_dfr(comparisons, function(comp) {
+      excl_ids <- get_exclusive_ids(level, comp, specific_plt)
+
+      get_tbl <- function(plt) {
+        tbl <- lists[[plt]][[paste0(comp, ".DE")]]$table %>%
+          tibble::rownames_to_column(id_col)
+        if (level == "transcript")
+          tbl <- tbl %>% left_join(tx2gene, by = "transcript_id")
+        tbl %>% filter(.data[[id_col]] %in% excl_ids)
+      }
+
+      full_join(get_tbl(specific_plt)[, c(id_col, "logFC", "logCPM")],
+                get_tbl(other_plt)[,   c(id_col, "logFC", "logCPM")],
+                by = id_col, suffix = c("_p1", "_p2")) %>%
+        drop_na(logFC_p1, logFC_p2) %>%
+        mutate(mean_logCPM = (logCPM_p1 + logCPM_p2) / 2, comparison = comp)
+    })
+
+    cors <- all_data %>%
+      group_by(comparison) %>%
+      summarise(r = cor(logFC_p1, logFC_p2, use = "complete.obs"),
+                n = dplyr::n(), .groups = "drop") %>%
+      mutate(label = paste0("r = ", round(r, 2), "\nn = ", n))
+
+    ggplot(all_data, aes(x = logFC_p1, y = logFC_p2)) +
+      geom_point(aes(color = mean_logCPM), alpha = 0.4, size = 0.3) +
+      scale_color_viridis_c(name = "mean\nlogCPM", option = "plasma") +
+      geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "gray50") +
+      geom_smooth(method = "lm", se = FALSE, color = "black", linewidth = 0.3) +
+      facet_wrap(~comparison, ncol = 3) +
+      geom_text(data = cors, aes(x = -Inf, y = Inf, label = label),
+                inherit.aes = FALSE, hjust = -0.1, vjust = 1.2, size = 3) +
+      labs(title = paste0(specific_plt, "-specific ", level, "s vs ", other_plt),
+           x = paste0("logFC (", specific_plt, ")"),
+           y = paste0("logFC (", other_plt, ")")) +
+      theme_minimal(base_size = 8)
+  })
+
+  ggarrange(plotlist = plotlist, ncol = 3, nrow = 1)
+}
+
+for (level in c("gene", "transcript")) {
+  for (plt in platforms) {
+    p <- get_exclusive_vs_others_plot(level, plt)
+    print(p)
+    rm(p); gc()
+  }
+}
+```
+
+## LogFC Correlation: multi-transcript genes only
+
+Restrict transcript-level logFC correlation to transcripts belonging to genes with **≥ 2 significant transcripts (P < 0.05) in at least one platform** of each pair. This isolates genes where multiple isoforms are detected, where platform disagreement is most biologically informative.
+
+```{r LFC correlation multi-tx, fig.height=4, fig.width=8}
+get_multitx_logfc_plot <- function(p1, p2) {
+  require(dplyr); require(ggplot2); require(purrr); require(stringr)
+
+  all_data <- purrr::map_dfr(comparisons, function(comp) {
+    df1 <- dte_lists[[p1]][[paste0(comp, ".DE")]]$table %>%
+      tibble::rownames_to_column("transcript_id") %>%
+      left_join(tx2gene, by = "transcript_id") %>%
+      mutate(FDR = p.adjust(PValue, method = "BH")) %>% filter(FDR < 0.05)
+
+    df2 <- dte_lists[[p2]][[paste0(comp, ".DE")]]$table %>%
+      tibble::rownames_to_column("transcript_id") %>%
+      left_join(tx2gene, by = "transcript_id") %>%
+      mutate(FDR = p.adjust(PValue, method = "BH")) %>% filter(FDR < 0.05)
+
+    # Genes with >= 2 expressed transcripts in p1 OR p2 (no significance filter)
+    all1 <- dte_lists[[p1]][[paste0(comp, ".DE")]]$table %>%
+      tibble::rownames_to_column("transcript_id") %>%
+      left_join(tx2gene, by = "transcript_id")
+    all2 <- dte_lists[[p2]][[paste0(comp, ".DE")]]$table %>%
+      tibble::rownames_to_column("transcript_id") %>%
+      left_join(tx2gene, by = "transcript_id")
+
+    multi_genes <- union(
+      all1 %>% count(gene_id) %>% filter(n >= 2) %>% pull(gene_id),
+      all2 %>% count(gene_id) %>% filter(n >= 2) %>% pull(gene_id)
+    )
+
+    df1 <- df1 %>% filter(gene_id %in% multi_genes)
+    df2 <- df2 %>% filter(gene_id %in% multi_genes)
+
+    full_join(df1[, c("transcript_id", "logFC", "logCPM")],
+              df2[, c("transcript_id", "logFC", "logCPM")],
+              by = "transcript_id", suffix = c("_p1", "_p2")) %>%
+      drop_na(logFC_p1, logFC_p2) %>%
+      mutate(mean_logCPM = (logCPM_p1 + logCPM_p2) / 2,
+             comparison  = comp)
+  })
+
+  cors <- all_data %>%
+    group_by(comparison) %>%
+    summarise(r = cor(logFC_p1, logFC_p2, use = "complete.obs"),
+              n = dplyr::n(), .groups = "drop") %>%
+    mutate(label = paste0("r = ", round(r, 2), "\nn = ", n))
+
+  ggplot(all_data, aes(x = logFC_p1, y = logFC_p2)) +
+    geom_point(aes(color = mean_logCPM), alpha = 0.4, size = 0.3) +
+    scale_color_viridis_c(name = "mean\nlogCPM", option = "plasma") +
+    geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "gray50") +
+    geom_smooth(method = "lm", se = FALSE, color = "black", linewidth = 0.3) +
+    facet_wrap(~comparison, ncol = 3) +
+    geom_text(data = cors, aes(x = -Inf, y = Inf, label = label),
+              inherit.aes = FALSE, hjust = -0.1, vjust = 1.2, size = 3) +
+    labs(
+      title = paste0("transcript (multi-tx genes): ", p1, " vs ", p2),
+      x = paste0("logFC (", p1, ")"),
+      y = paste0("logFC (", p2, ")")
+    ) +
+    theme_minimal(base_size = 8)
+}
+
+multitx_combined <- map(platform_pairs, ~ get_multitx_logfc_plot(.x[1], .x[2]))
+multitx_plot <- ggarrange(plotlist = multitx_combined, ncol = 3, nrow = 2)
+multitx_plot
+rm(multitx_combined, multitx_plot); gc()
+```
+
+
+# Top Expressed Features: logFC Correlation Analysis
+
+One concern for the lower transcript-level correlations is insufficient sequencing depth across many transcript features. Here we restrict logFC correlation to the top-N most highly expressed genes or transcripts (ranked by mean logCPM across comparisons from the first platform in each pair), without any significance filter. If correlations improve markedly when restricting to highly expressed features, this implicates low-count noise rather than genuine isoform-level disagreement between platforms.
+
+## Correlation vs expression rank cutoff
+```{r cor vs topn, fig.height=6, fig.width=15}
+# Helper: retrieve DE result table for a given platform / comparison / level
+get_de_table <- function(platform, comp, level = "gene") {
+  if (level == "gene") {
+    dge_lists[[platform]][[paste0(comp, ".DE")]]$table %>%
+      tibble::rownames_to_column("gene_id")
+  } else {
+    dte_lists[[platform]][[paste0(comp, ".DE")]]$table %>%
+      tibble::rownames_to_column("transcript_id")
+  }
+}
+
+# Compute Pearson r of logFC for top-N expressed features across a platform pair
+compute_cor_vs_topn <- function(level = "gene", p1, p2,
+                                top_ns = c(100, 200, 500, 1000, 2000, 5000, NA)) {
+  id_col <- if (level == "gene") "gene_id" else "transcript_id"
+
+  # Expression rank: mean logCPM across comparisons using p1 as reference
+  expr_rank <- purrr::map_dfr(comparisons, ~ get_de_table(p1, .x, level) %>%
+                                select(all_of(id_col), logCPM)) %>%
+    group_by(across(all_of(id_col))) %>%
+    summarise(mean_logCPM = mean(logCPM), .groups = "drop") %>%
+    arrange(desc(mean_logCPM)) %>%
+    mutate(rank = row_number())
+
+  # All logFC data joined for p1 and p2, no significance filter
+  all_joined <- purrr::map_dfr(comparisons, function(comp) {
+    df1 <- get_de_table(p1, comp, level) %>% select(all_of(id_col), logFC)
+    df2 <- get_de_table(p2, comp, level) %>% select(all_of(id_col), logFC)
+    full_join(df1, df2, by = id_col, suffix = c("_p1", "_p2")) %>%
+      drop_na(logFC_p1, logFC_p2) %>%
+      left_join(expr_rank %>% select(all_of(id_col), rank), by = id_col) %>%
+      mutate(comparison = comp)
+  })
+
+  purrr::map_dfr(top_ns, function(n) {
+    filtered <- if (is.na(n)) all_joined else dplyr::filter(all_joined, rank <= n)
+    filtered %>%
+      group_by(comparison) %>%
+      summarise(
+        r = cor(logFC_p1, logFC_p2, use = "complete.obs"),
+        n_features = dplyr::n(),
+        .groups = "drop"
+      ) %>%
+      mutate(
+        top_n = if (is.na(n)) "All" else as.character(n),
+        level = level,
+        pair = paste(p1, "vs", p2)
+      )
+  })
+}
+
+top_ns <- c(100, 200, 500, 1000, 2000, 5000, 10000, NA)
+
+cor_vs_topn <- bind_rows(
+  purrr::map_dfr(platform_pairs, ~ compute_cor_vs_topn("gene",       .x[1], .x[2], top_ns)),
+  purrr::map_dfr(platform_pairs, ~ compute_cor_vs_topn("transcript", .x[1], .x[2], top_ns))
+) %>%
+  mutate(top_n = factor(top_n, levels = c("100", "200", "500", "1000", "2000", "5000", "10000", "All")))
+
+cor_vs_topn %>%
+  group_by(pair, level, top_n) %>%
+  summarise(mean_r = mean(r), .groups = "drop") %>%
+  ggplot(aes(x = top_n, y = mean_r, color = level, group = level)) +
+  geom_line() +
+  geom_point(size = 2) +
+  facet_wrap(~pair, ncol = 3) +
+  scale_color_manual(values = c(gene = "#B4CD55", transcript = "#AE98EB")) +
+  labs(
+    title = "logFC correlation vs expression rank cutoff (mean across comparisons)",
+    x = "Top N most-expressed features",
+    y = "Mean Pearson r",
+    color = "Level"
+  ) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+## Scatter plots: top 2000 expressed features
+```{r top 2000 scatter, fig.height=4, fig.width=8}
+make_top_n_scatter <- function(level, top_n = 2000) {
+  id_col     <- if (level == "gene") "gene_id" else "transcript_id"
+  dot_color  <- if (level == "gene") "#B4CD55" else "#AE98EB"
+
+  plotlist <- map(platform_pairs, function(pair) {
+    p1 <- pair[1]; p2 <- pair[2]
+
+    top_ids <- purrr::map_dfr(comparisons, ~ get_de_table(p1, .x, level) %>%
+                                select(all_of(id_col), logCPM)) %>%
+      group_by(across(all_of(id_col))) %>%
+      summarise(mean_logCPM = mean(logCPM), .groups = "drop") %>%
+      slice_max(mean_logCPM, n = top_n) %>%
+      pull(all_of(id_col))
+
+    all_data <- purrr::map_dfr(comparisons, function(comp) {
+      df1 <- get_de_table(p1, comp, level) %>% filter(.data[[id_col]] %in% top_ids)
+      df2 <- get_de_table(p2, comp, level) %>% filter(.data[[id_col]] %in% top_ids)
+      full_join(
+        df1 %>% select(all_of(id_col), logFC),
+        df2 %>% select(all_of(id_col), logFC),
+        by = id_col, suffix = c("_p1", "_p2")
+      ) %>% drop_na() %>% mutate(comparison = comp)
+    })
+
+    cors <- all_data %>%
+      group_by(comparison) %>%
+      summarise(r = cor(logFC_p1, logFC_p2, use = "complete.obs"), .groups = "drop") %>%
+      mutate(label = paste0("r = ", round(r, 2)))
+
+    ggplot(all_data, aes(x = logFC_p1, y = logFC_p2)) +
+      geom_point(color = dot_color, alpha = 0.4, size = 0.3) +
+      geom_density_2d(color = "gray60", size = 0.3) +
+      geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "gray50") +
+      geom_smooth(method = "lm", se = FALSE, color = "black", size = 0.3) +
+      facet_wrap(~comparison, ncol = 3) +
+      geom_text(data = cors, aes(x = -Inf, y = Inf, label = label),
+                inherit.aes = FALSE, hjust = -0.1, vjust = 1.2, size = 3.5) +
+      labs(
+        title = paste0(level, " top ", top_n, ": ", p1, " vs ", p2),
+        x = paste0("logFC (", p1, ")"),
+        y = paste0("logFC (", p2, ")")
+      ) +
+      theme_minimal(base_size = 8)
+  })
+
+  ggarrange(plotlist = plotlist, ncol = 3, nrow = 2)
+}
+
+make_top_n_scatter("gene",       top_n = 2000)
+make_top_n_scatter("transcript", top_n = 2000)
+```
+
+## Version 2: Global mean logCPM ranking
+
+Rather than ranking by a single platform's expression, here we compute the mean logCPM per feature averaged across **all 4 platforms × 3 comparisons** (12 values per feature). This gives a platform-neutral expression estimate for ranking, removing the winner's-curse bias of version 1.
+
+```{r global mean logCPM rank, fig.height=6, fig.width=15}
+# Mean logCPM per feature across all platforms and comparisons
+get_global_expr <- function(level = "gene") {
+  id_col <- if (level == "gene") "gene_id" else "transcript_id"
+  purrr::map_dfr(platforms, function(platform) {
+    purrr::map_dfr(comparisons, function(comp) {
+      get_de_table(platform, comp, level) %>%
+        select(all_of(id_col), logCPM)
+    })
+  }) %>%
+    group_by(across(all_of(id_col))) %>%
+    summarise(mean_logCPM_global = mean(logCPM), .groups = "drop")
+}
+
+gene_global_expr <- get_global_expr("gene")
+tx_global_expr   <- get_global_expr("transcript")
+
+compute_cor_vs_topn_global <- function(level = "gene", p1, p2,
+                                       top_ns = c(100, 200, 500, 1000, 2000, 5000, 10000, NA)) {
+  id_col      <- if (level == "gene") "gene_id" else "transcript_id"
+  global_expr <- if (level == "gene") gene_global_expr else tx_global_expr
+
+  global_rank <- global_expr %>%
+    arrange(desc(mean_logCPM_global)) %>%
+    mutate(rank = row_number())
+
+  all_joined <- purrr::map_dfr(comparisons, function(comp) {
+    df1 <- get_de_table(p1, comp, level) %>% select(all_of(id_col), logFC)
+    df2 <- get_de_table(p2, comp, level) %>% select(all_of(id_col), logFC)
+    full_join(df1, df2, by = id_col, suffix = c("_p1", "_p2")) %>%
+      drop_na(logFC_p1, logFC_p2) %>%
+      left_join(global_rank %>% select(all_of(id_col), rank), by = id_col) %>%
+      mutate(comparison = comp)
+  })
+
+  purrr::map_dfr(top_ns, function(n) {
+    filtered <- if (is.na(n)) all_joined else dplyr::filter(all_joined, rank <= n)
+    filtered %>%
+      group_by(comparison) %>%
+      summarise(
+        r          = cor(logFC_p1, logFC_p2, use = "complete.obs"),
+        n_features = dplyr::n(),
+        .groups    = "drop"
+      ) %>%
+      mutate(
+        top_n = if (is.na(n)) "All" else as.character(n),
+        level = level,
+        pair  = paste(p1, "vs", p2)
+      )
+  })
+}
+
+cor_vs_topn_global <- bind_rows(
+  purrr::map_dfr(platform_pairs, ~ compute_cor_vs_topn_global("gene",       .x[1], .x[2], top_ns)),
+  purrr::map_dfr(platform_pairs, ~ compute_cor_vs_topn_global("transcript", .x[1], .x[2], top_ns))
+) %>%
+  mutate(top_n = factor(top_n, levels = c("100", "200", "500", "1000", "2000", "5000", "10000", "All")))
+
+cor_vs_topn_global %>%
+  group_by(pair, level, top_n) %>%
+  summarise(mean_r = mean(r), .groups = "drop") %>%
+  ggplot(aes(x = top_n, y = mean_r, color = level, group = level)) +
+  geom_line() +
+  geom_point(size = 2) +
+  facet_wrap(~pair, ncol = 3) +
+  scale_color_manual(values = c(gene = "#B4CD55", transcript = "#AE98EB")) +
+  labs(
+    title = "logFC correlation vs top-N cutoff (global mean logCPM ranking, all platforms)",
+    x     = "Top N features (ranked by global mean logCPM)",
+    y     = "Mean Pearson r (across comparisons)",
+    color = "Level"
+  ) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+## Version 3: Global mean logCPM threshold filter
+
+Instead of a rank cutoff, filter features by a minimum global mean logCPM threshold. This is more interpretable — each point on the x-axis corresponds to a biological expression level rather than an arbitrary rank.
+
+```{r logCPM threshold filter, fig.height=6, fig.width=15}
+thresholds <- seq(-2, 6, by = 1)
+
+compute_cor_vs_threshold <- function(level = "gene", p1, p2, thresholds) {
+  id_col      <- if (level == "gene") "gene_id" else "transcript_id"
+  global_expr <- if (level == "gene") gene_global_expr else tx_global_expr
+
+  all_joined <- purrr::map_dfr(comparisons, function(comp) {
+    df1 <- get_de_table(p1, comp, level) %>% select(all_of(id_col), logFC)
+    df2 <- get_de_table(p2, comp, level) %>% select(all_of(id_col), logFC)
+    full_join(df1, df2, by = id_col, suffix = c("_p1", "_p2")) %>%
+      drop_na(logFC_p1, logFC_p2) %>%
+      left_join(global_expr, by = id_col) %>%
+      mutate(comparison = comp)
+  })
+
+  purrr::map_dfr(thresholds, function(thr) {
+    filtered <- dplyr::filter(all_joined, mean_logCPM_global >= thr)
+    filtered %>%
+      group_by(comparison) %>%
+      summarise(
+        r          = cor(logFC_p1, logFC_p2, use = "complete.obs"),
+        n_features = dplyr::n(),
+        .groups    = "drop"
+      ) %>%
+      mutate(threshold = thr, level = level, pair = paste(p1, "vs", p2))
+  })
+}
+
+cor_vs_threshold <- bind_rows(
+  purrr::map_dfr(platform_pairs, ~ compute_cor_vs_threshold("gene",       .x[1], .x[2], thresholds)),
+  purrr::map_dfr(platform_pairs, ~ compute_cor_vs_threshold("transcript", .x[1], .x[2], thresholds))
+)
+
+# Correlation vs threshold
+cor_vs_threshold %>%
+  group_by(pair, level, threshold) %>%
+  summarise(mean_r = mean(r), .groups = "drop") %>%
+  ggplot(aes(x = threshold, y = mean_r, color = level, group = level)) +
+  geom_line() +
+  geom_point(size = 2) +
+  facet_wrap(~pair, ncol = 3) +
+  scale_color_manual(values = c(gene = "#B4CD55", transcript = "#AE98EB")) +
+  labs(
+    title = "logFC correlation vs global mean logCPM threshold",
+    x     = "Minimum global mean logCPM",
+    y     = "Mean Pearson r (across comparisons)",
+    color = "Level"
+  ) +
+  theme_minimal()
+```
+
+```{r n features vs threshold, fig.height=6, fig.width=15}
+# Number of features retained at each threshold
+cor_vs_threshold %>%
+  group_by(pair, level, threshold) %>%
+  summarise(mean_n = mean(n_features), .groups = "drop") %>%
+  ggplot(aes(x = threshold, y = mean_n, color = level, group = level)) +
+  geom_line() +
+  geom_point(size = 2) +
+  facet_wrap(~pair, ncol = 3) +
+  scale_color_manual(values = c(gene = "#B4CD55", transcript = "#AE98EB")) +
+  scale_y_log10() +
+  labs(
+    title = "Number of features retained vs global mean logCPM threshold",
+    x     = "Minimum global mean logCPM",
+    y     = "Mean N features (log scale)",
+    color = "Level"
+  ) +
+  theme_minimal()
+```

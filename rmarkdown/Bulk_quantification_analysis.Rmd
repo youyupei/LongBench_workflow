@@ -1,7 +1,7 @@
 ---
 title: "Longbench Quantification analysis"
 author: "Yupei"
-version: "v4.0"
+version: "v4.1"
 output:
   html_document:
     code_folding: hide
@@ -22,9 +22,9 @@ params:
   input_DGEobject_rds: "/vast/projects/LongBench/analysis/workflow/rmarkdown/RDS/bulk_DGE.obj.rds"
   
   # input isoquant
-  isoquant_ont_bulk_rds: "/home/users/allstaff/you.yu/LongBench/analysis/lr_bulk/result/IsoQuant_output_no_novel_bc/isoquant_bulk_dge.ont_bulk.rds"
-  isoquant_pb_bulk_rds: "/home/users/allstaff/you.yu/LongBench/analysis/lr_bulk/result/IsoQuant_output_no_novel_bc/isoquant_bulk_dge.pb_bulk.rds"
-  isoquant_drna_bulk_rds: "/home/users/allstaff/you.yu/LongBench/analysis/lr_bulk/result/IsoQuant_output_no_novel_bc/isoquant_bulk_dge.dRNA_bulk.rds"
+  isoquant_ont_bulk_rds: "/home/users/allstaff/you.yu/LongBench/analysis/lr_bulk/result/IsoQuant_output_no_novel/isoquant_bulk_dge.ont_bulk.rds"
+  isoquant_pb_bulk_rds: "/home/users/allstaff/you.yu/LongBench/analysis/lr_bulk/result/IsoQuant_output_no_novel/isoquant_bulk_dge.pb_bulk.rds"
+  isoquant_drna_bulk_rds: "/home/users/allstaff/you.yu/LongBench/analysis/lr_bulk/result/IsoQuant_output_no_novel/isoquant_bulk_dge.dRNA_bulk.rds"
   
   # input miniquant
   hybrid_ont_bulk_rds: "/vast/projects/LongBench/analysis/hybrid_bulk/result/miniquant_output/miniquant_bulk_dge.ont_bulk.rds"
@@ -43,7 +43,7 @@ params:
 # Great param list when running interactively
 if (interactive()) {
   params <- list(
-    active_longread_tool = "MiniQuant",
+    active_longread_tool = "Oarfish",
       # input oarfish/salmon
     input_DGEobject_rds = "/vast/projects/LongBench/analysis/workflow/rmarkdown/RDS/bulk_DGE.obj.rds",
     
@@ -115,6 +115,8 @@ safe_read_rds <- function(path) {
   readRDS(path)
 }
 
+common_tx_summary_rds <- "bulk_quantification_common_tx_summary.rds"
+
 # function to activate a specific long-read tool and load its associated DGE objects
 activate_longread_tool <- function(tool_registry, tool_name = "Oarfish") {
   if (!(tool_name %in% names(tool_registry))) {
@@ -152,7 +154,7 @@ is.sirv_or_ercc <- function(dge) {!is.human(dge) & !is.sequins(dge)} # thie is t
 is.sirv_E0 <- function(dge) {grepl("^SIRV\\d{3}$", rownames(dge))} 
 is.sirv_all <- function(dge) {grepl("^SIRV", rownames(dge))} # including all SIRV E0 and Long SIRV
 is.long_sirv <- function(dge) {grepl("^SIRV\\d{4}", rownames(dge))}
-is.ercc <- function(dge) {!is.human(dge) & !is.sequins(dge) & !is.sirv_all(dge)}
+is.ercc      <- function(dge) grepl("^(ERCC|DQ|EF)", rownames(dge))
 ```
 
 ```{r color code, include=FALSE}
@@ -402,6 +404,15 @@ if (active_longread_tool == "MiniQuant") {
     filterByExpr(drna_bulk.tx.dge, group = drna_bulk.tx.dge$samples$group, min.count = 5)
 }
 table(keep)
+
+common_tx_summary <- tibble(
+  active_longread_tool = active_longread_tool,
+  common_tx_before_filter = length(common_tx),
+  common_tx_after_filter = sum(keep),
+  common_tx_fraction = sum(keep) / length(common_tx)
+)
+
+saveRDS(common_tx_summary, common_tx_summary_rds)
 
 ill_bulk.tx.dge <- ill_bulk.tx.dge[keep, ]
 ont_bulk.tx.dge <- ont_bulk.tx.dge[keep, ]
@@ -1477,58 +1488,6 @@ ggplot(plot_df, aes(x = sample, y = nrmse, colour = sample)) +
   scale_color_manual(values = color_palette) +
   theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
   labs(x = "Samples", y = "nrmse")
-```
-
-# Cross-tool long-read quantification comparison
-
-The cross-tool comparison has been moved into a standalone report so that the main quantification document stays focused on within-tool analyses.
-
-See `Bulk_quantification_cross_tool_comparison.Rmd` for the dedicated comparison of Oarfish, IsoQuant, and MiniQuant across overlap, abundance concordance, and spike-in accuracy.
-# PLOT: Human transcript total counts (stratified by transcript length)
-```{r Huamn transcript discovery rate, fig.width=6, fig.height=4}
-dge_list <-   list(ont_bulk.tx.dge[is.human(ont_bulk.tx.dge),], 
-      drna_bulk.tx.dge[is.human(drna_bulk.tx.dge),],
-       ill_bulk.tx.dge[is.human(ill_bulk.tx.dge),], 
-       pb_bulk.tx.dge[is.human(pb_bulk.tx.dge),])
-
-dataset_list <- list("ONT BULK", "ONT dRNA", "Illumina BULK", "PacBio BULK")
-figure_name <- "Human transcript discovery rate"
-
-  plot_df <- tibble()
-  for (i in 1:length(dge_list)) {
-    dge <- dge_list[[i]]
-    dataset <- dataset_list[[i]]
-
-    tx_discov_df <- tibble(
-      `Total count` = dge$counts %>% rowSums(),
-      `TPM` = dge %>% get_tpm %>% rowMeans()
-    )
-
-    tx_discov_df <- tx_discov_df %>% mutate( `transcript length` = dge$gene$Length) 
-    # bin the transcript length every 500 and make everything above 10000 to be in the same bin
-    tx_discov_df$`transcript length` <- cut(
-                                          tx_discov_df$`transcript length`,
-                                          breaks = c(seq(0, 4000, 200), Inf),
-                                          labels = c(paste0(seq(0, 3.8, 0.2),"k-", seq(0.2, 4, 0.2),"k"), "4k+"),
-                                          include.lowest = TRUE)
-    # group by the transcript length and calculate the mean of the transcript discovered
-    tx_discov_df <- tx_discov_df %>%
-      group_by(`transcript length`) %>%
-      summarise(`Total count` = sum(`Total count`),
-                TPM = sum(TPM)) %>%
-      ungroup()
-    tx_discov_df$Dataset <- dataset
-    plot_df <- rbind(plot_df, tx_discov_df)
-  }
-  
-  
-  p <- ggplot(plot_df, aes(`transcript length`, y = TPM, color = Dataset, group = Dataset)) +
-    geom_line(position = position_dodge(width = 0.2), linewidth = 1) +
-    theme_minimal() +
-    theme(axis.text.x = element_text(angle = 45, hjust = 1)) + 
-    scale_color_manual(values = color_palette[c("Illumina", "ONT cDNA", "ONT dRNA", "PacBio")] %>% unname()) +
-    labs(title = "Human transcript quantification", x = "Transcript Length", y = "TPM")
-p
 ```
 
 # PLOT: Human transcript total counts (stratified by GC%)

@@ -30,6 +30,7 @@
 #    │                                          │                       │
 #    ├─ rmd_bulk_quantification_analysis        ├─ rmd_bulk_DE_analysis_continue
 #    ├─ rmd_bulk_quantification_analysis_isoquant                       │
+#    ├─ rmd_bulk_quantification_analysis_miniquant                      │
 #    ├─ rmd_bulk_quantification_cross_tool_comparison                   │
 #    ├─ rmd_bulk_DE_spikeins                    └─ rmd_bulk_DE_analysis_subsample_20M
 #    └─ rmd_bulk_DE_spikeins
@@ -117,7 +118,9 @@ rule rmd_intronic_gene_and_exon_count:
 rule rmd_QC_plots:
     input:
         rmd = join(rmd_dir, 'QC_plot.Rmd'),
-        knit_script = knit_script
+        knit_script = knit_script,
+        read_count_summary = rules.qc_read_count_summary.output,
+        read_length_quality_summary = rules.qc_read_length_quality_summary.output
     output:
         touch(join(flag_dir, 'rmd.rmd_QC_plots.done'))
     resources:
@@ -126,7 +129,7 @@ rule rmd_QC_plots:
     params:
         rmd_output_dir = rmd_output_dir
     shell:
-        "Rscript {input.knit_script} {input.rmd} {params.rmd_output_dir}"
+        "module load pandoc && Rscript {input.knit_script} {input.rmd} {params.rmd_output_dir}"
 
 
 rule rmd_mutation_analysis:
@@ -137,7 +140,7 @@ rule rmd_mutation_analysis:
         touch(join(flag_dir, 'rmd.mutation_analysis.done'))
     resources:
         cpus_per_task = 1,
-        mem_mb = 64000
+        mem_mb = 16000
     params:
         rmd_output_dir = rmd_output_dir
     shell:
@@ -157,7 +160,7 @@ rule rmd_mutation_analysis_downsample:
         touch(join(flag_dir, 'rmd.mutation_analysis_downsample.done'))
     resources:
         cpus_per_task = 1,
-        mem_mb = 64000
+        mem_mb = 32000
     params:
         rmd_output_dir = rmd_output_dir
     shell:
@@ -175,12 +178,12 @@ rule rmd_bulk_identification_analysis:
     output:
         rds = '/vast/projects/LongBench/analysis/workflow/rmarkdown/RDS/bulk_identification.rds'
     resources:
-        cpus_per_task = 8,
-        mem_mb = 32000
+        cpus_per_task = 1,
+        mem_mb = 8000
     params:
         rmd_output_dir = rmd_output_dir
     shell:
-        "Rscript {input.knit_script} {input.rmd} {params.rmd_output_dir}"
+        "module load pandoc && Rscript {input.knit_script} {input.rmd} {params.rmd_output_dir}"
 
 
 rule rmd_bulk_identification_analysis_IP_filtered:
@@ -192,9 +195,77 @@ rule rmd_bulk_identification_analysis_IP_filtered:
     output:
         rds = '/vast/projects/LongBench/analysis/workflow/rmarkdown/RDS/bulk_identification_IP_filtered.rds'
     resources:
-        cpus_per_task = 8,
-        mem_mb = 32000
-    retries: 3
+        cpus_per_task = 1,
+        mem_mb = 8000
+    params:
+        rmd_output_dir = rmd_output_dir
+    shell:
+        """
+        module load pandoc
+        Rscript {input.knit_script} {input.rmd} {params.rmd_output_dir}
+        """
+
+
+rule rmd_bulk_identification_analysis_IsoQuant:
+    input:
+        rmd = join(rmd_dir, 'Bulk_identification_IsoQuant.Rmd'),
+        knit_script = knit_script,
+        bulk_dge     = rules.r_get_bulk_DGE_objects.output.bulk_DGE_object,
+        intronic_rds = rules.rmd_intronic_gene_and_exon_count.output.rds,
+        isoquant_ont  = "/home/users/allstaff/you.yu/LongBench/analysis/lr_bulk/result/IsoQuant_output_no_novel/isoquant_bulk_dge.ont_bulk.rds",
+        isoquant_pb   = "/home/users/allstaff/you.yu/LongBench/analysis/lr_bulk/result/IsoQuant_output_no_novel/isoquant_bulk_dge.pb_bulk.rds",
+        isoquant_drna = "/home/users/allstaff/you.yu/LongBench/analysis/lr_bulk/result/IsoQuant_output_no_novel/isoquant_bulk_dge.dRNA_bulk.rds"
+    output:
+        rds = '/vast/projects/LongBench/analysis/workflow/rmarkdown/RDS/bulk_identification_IsoQuant.rds'
+    resources:
+        cpus_per_task = 1,
+        mem_mb = 8000
+    params:
+        rmd_output_dir = rmd_output_dir
+    shell:
+        """
+        module load pandoc
+        Rscript {input.knit_script} {input.rmd} {params.rmd_output_dir}
+        """
+
+
+rule rmd_bulk_identification_tool_comparison:
+    input:
+        rmd = join(rmd_dir, 'Bulk_identification_tool_comparison.Rmd'),
+        knit_script = knit_script,
+        bulk_dge = rules.r_get_bulk_DGE_objects.output.bulk_DGE_object,
+        ip_filtered_rds = rules.rmd_bulk_identification_analysis_IP_filtered.output.rds,
+        intronic_rds = rules.rmd_intronic_gene_and_exon_count.output.rds
+    output:
+        touch(join(flag_dir, 'rmd.bulk_identification_tool_comparison.done'))
+    resources:
+        cpus_per_task = 1,
+        mem_mb = 16000
+    params:
+        rmd_output_dir = rmd_output_dir
+    shell:
+        """
+        module load pandoc
+        Rscript {input.knit_script} {input.rmd} {params.rmd_output_dir}
+        """
+
+
+rule rmd_bulk_identification_3way_comparison:
+    input:
+        rmd = join(rmd_dir, 'Bulk_identification_3way_comparison.Rmd'),
+        knit_script = knit_script,
+        bulk_dge        = rules.r_get_bulk_DGE_objects.output.bulk_DGE_object,
+        ip_filtered_dge = rules.r_get_bulk_DGE_objects_IP_filtered.output.bulk_DGE_object,
+        ip_filtered_rds = rules.rmd_bulk_identification_analysis_IP_filtered.output.rds,
+        intronic_rds    = rules.rmd_intronic_gene_and_exon_count.output.rds,
+        isoquant_ont    = "/home/users/allstaff/you.yu/LongBench/analysis/lr_bulk/result/IsoQuant_output_no_novel/isoquant_bulk_dge.ont_bulk.rds",
+        isoquant_pb     = "/home/users/allstaff/you.yu/LongBench/analysis/lr_bulk/result/IsoQuant_output_no_novel/isoquant_bulk_dge.pb_bulk.rds",
+        isoquant_drna   = "/home/users/allstaff/you.yu/LongBench/analysis/lr_bulk/result/IsoQuant_output_no_novel/isoquant_bulk_dge.dRNA_bulk.rds"
+    output:
+        touch(join(flag_dir, 'rmd.bulk_identification_3way_comparison.done'))
+    resources:
+        cpus_per_task = 1,
+        mem_mb = 16000
     params:
         rmd_output_dir = rmd_output_dir
     shell:
@@ -214,14 +285,58 @@ rule rmd_bulk_DE_analysis:
     output:
         rds = '/vast/projects/LongBench/analysis/workflow/rmarkdown/RDS/bulk_DE.rds'
     resources:
-        cpus_per_task = 8,
-        mem_mb = 32000
-    retries: 3
+        cpus_per_task = 1,
+        mem_mb = 16000
     params:
         rmd_output_dir = rmd_output_dir
     shell:
         """
         module load curl
+        module load pandoc
+        Rscript {input.knit_script} {input.rmd} {params.rmd_output_dir}
+        """
+
+
+rule rmd_bulk_DE_analysis_isoquant:
+    input:
+        rmd = join(rmd_dir, 'Bulk_DE_IsoQuant.Rmd'),
+        knit_script = knit_script,
+        bulk_dge = rules.r_get_bulk_DGE_objects.output.bulk_DGE_object,
+        isoquant_ont  = "/home/users/allstaff/you.yu/LongBench/analysis/lr_bulk/result/IsoQuant_output_no_novel/isoquant_bulk_dge.ont_bulk.rds",
+        isoquant_pb   = "/home/users/allstaff/you.yu/LongBench/analysis/lr_bulk/result/IsoQuant_output_no_novel/isoquant_bulk_dge.pb_bulk.rds",
+        isoquant_drna = "/home/users/allstaff/you.yu/LongBench/analysis/lr_bulk/result/IsoQuant_output_no_novel/isoquant_bulk_dge.dRNA_bulk.rds"
+    output:
+        rds = '/vast/projects/LongBench/analysis/workflow/rmarkdown/RDS/bulk_DE_isoquant.rds'
+    resources:
+        cpus_per_task = 1,
+        mem_mb = 16000
+    params:
+        rmd_output_dir = rmd_output_dir
+    shell:
+        """
+        module load curl
+        module load pandoc
+        Rscript {input.knit_script} {input.rmd} {params.rmd_output_dir}
+        """
+
+
+rule rmd_bulk_DE_rarefaction:
+    input:
+        rmd = join(rmd_dir, 'Bulk_DE_rarefaction.Rmd'),
+        knit_script = knit_script,
+        bulk_de = rules.rmd_bulk_DE_analysis.output.rds,
+        checkpoint = '/vast/projects/LongBench/analysis/workflow/rmarkdown/RDS/bulk_DE_rarefaction.rds'
+    output:
+        touch(join(flag_dir, 'rmd.bulk_DE_rarefaction.done'))
+    resources:
+        cpus_per_task = 1,
+        mem_mb = 16000
+    params:
+        rmd_output_dir = rmd_output_dir
+    shell:
+        """
+        module load curl
+        module load pandoc
         Rscript {input.knit_script} {input.rmd} {params.rmd_output_dir}
         """
 
@@ -237,12 +352,12 @@ rule rmd_bulk_quantification_analysis:
     output:
         touch(join(flag_dir, 'rmd.Bulk_quantification_analysis.done'))
     resources:
-        cpus_per_task = 8,
-        mem_mb = 32000
+        cpus_per_task = 1,
+        mem_mb = 16000
     params:
         rmd_output_dir = rmd_output_dir
     shell:
-        "Rscript {input.knit_script} {input.rmd} {params.rmd_output_dir}"
+        "module load pandoc && Rscript {input.knit_script} {input.rmd} {params.rmd_output_dir}"
 
 
 rule rmd_bulk_quantification_analysis_isoquant:
@@ -254,8 +369,31 @@ rule rmd_bulk_quantification_analysis_isoquant:
     output:
         touch(join(flag_dir, 'rmd.Bulk_quantification_analysis_IsoQuant.done'))
     resources:
-        cpus_per_task = 8,
-        mem_mb = 32000
+        cpus_per_task = 1,
+        mem_mb = 16000
+    params:
+        rmd_output_dir = rmd_output_dir
+    shell:
+        """
+        module load pandoc
+        Rscript {input.knit_script} {input.rmd} {params.rmd_output_dir}
+        """
+
+
+rule rmd_bulk_quantification_analysis_miniquant:
+    input:
+        rmd = join(rmd_dir, 'Bulk_quantification_analysis_MiniQuant.Rmd'),
+        knit_script = knit_script,
+        bulk_dge = rules.r_get_bulk_DGE_objects.output.bulk_DGE_object,
+        tx2gene = rules.r_tx2gene_map.output.rds,
+        hybrid_ont  = "/vast/projects/LongBench/analysis/hybrid_bulk/result/miniquant_output/miniquant_bulk_dge.ont_bulk.rds",
+        hybrid_pb   = "/vast/projects/LongBench/analysis/hybrid_bulk/result/miniquant_output/miniquant_bulk_dge.pb_bulk.rds",
+        hybrid_drna = "/vast/projects/LongBench/analysis/hybrid_bulk/result/miniquant_output/miniquant_bulk_dge.dRNA_bulk.rds"
+    output:
+        touch(join(flag_dir, 'rmd.Bulk_quantification_analysis_MiniQuant.done'))
+    resources:
+        cpus_per_task = 1,
+        mem_mb = 16000
     params:
         rmd_output_dir = rmd_output_dir
     shell:
@@ -273,8 +411,8 @@ rule rmd_bulk_quantification_cross_tool_comparison:
     output:
         touch(join(flag_dir, 'rmd.Bulk_quantification_cross_tool_comparison.done'))
     resources:
-        cpus_per_task = 8,
-        mem_mb = 32000
+        cpus_per_task = 1,
+        mem_mb = 16000
     params:
         rmd_output_dir = rmd_output_dir
     shell:
@@ -292,14 +430,37 @@ rule rmd_bulk_DE_spikeins:
     output:
         touch(join(flag_dir, 'rmd.bulk_DE_spikeins.done'))
     resources:
-        cpus_per_task = 8,
-        mem_mb = 32000
-    retries: 3
+        cpus_per_task = 1,
+        mem_mb = 8000
     params:
         rmd_output_dir = rmd_output_dir
     shell:
         """
         module load curl
+        module load pandoc
+        Rscript {input.knit_script} {input.rmd} {params.rmd_output_dir}
+        """
+
+
+rule rmd_bulk_DE_spikeins_isoquant:
+    input:
+        rmd = join(rmd_dir, 'Bulk_DE.spikeins_IsoQuant.Rmd'),
+        knit_script = knit_script,
+        bulk_dge = rules.r_get_bulk_DGE_objects.output.bulk_DGE_object,
+        isoquant_ont  = "/home/users/allstaff/you.yu/LongBench/analysis/lr_bulk/result/IsoQuant_output_no_novel/isoquant_bulk_dge.ont_bulk.rds",
+        isoquant_pb   = "/home/users/allstaff/you.yu/LongBench/analysis/lr_bulk/result/IsoQuant_output_no_novel/isoquant_bulk_dge.pb_bulk.rds",
+        isoquant_drna = "/home/users/allstaff/you.yu/LongBench/analysis/lr_bulk/result/IsoQuant_output_no_novel/isoquant_bulk_dge.dRNA_bulk.rds"
+    output:
+        touch(join(flag_dir, 'rmd.bulk_DE_spikeins_isoquant.done'))
+    resources:
+        cpus_per_task = 1,
+        mem_mb = 8000
+    params:
+        rmd_output_dir = rmd_output_dir
+    shell:
+        """
+        module load curl
+        module load pandoc
         Rscript {input.knit_script} {input.rmd} {params.rmd_output_dir}
         """
 
@@ -314,12 +475,12 @@ rule rmd_bulk_identification_analysis_20M:
     output:
         touch(join(flag_dir, 'rmd.bulk_identification_20M.done'))
     resources:
-        cpus_per_task = 8,
-        mem_mb = 32000
+        cpus_per_task = 1,
+        mem_mb = 8000
     params:
         rmd_output_dir = rmd_output_dir
     shell:
-        "Rscript {input.knit_script} {input.rmd} {params.rmd_output_dir}"
+        "module load pandoc && Rscript {input.knit_script} {input.rmd} {params.rmd_output_dir}"
 
 
 rule rmd_bulk_GC_analysis_20M:
@@ -331,12 +492,12 @@ rule rmd_bulk_GC_analysis_20M:
     output:
         touch(join(flag_dir, 'rmd.Bulk_GC_analysis_20M.done'))
     resources:
-        cpus_per_task = 4,
-        mem_mb = 16000
+        cpus_per_task = 1,
+        mem_mb = 8000
     params:
         rmd_output_dir = rmd_output_dir
     shell:
-        "Rscript {input.knit_script} {input.rmd} {params.rmd_output_dir}"
+        "module load pandoc && Rscript {input.knit_script} {input.rmd} {params.rmd_output_dir}"
 
 
 # ─── Stage 3: Downstream bulk (require bulk_DE.rds) ──────────────────────────
@@ -349,8 +510,8 @@ rule rmd_bulk_DE_analysis_continue:
     output:
         touch(join(flag_dir, 'rmd.bulk_DE_analysis_continue.done'))
     resources:
-        cpus_per_task = 4,
-        mem_mb = 16000
+        cpus_per_task = 1,
+        mem_mb = 200000
     params:
         rmd_output_dir = rmd_output_dir
     shell:
@@ -368,14 +529,14 @@ rule rmd_bulk_DE_analysis_subsample_20M:
     output:
         touch(join(flag_dir, 'rmd.rmd_bulk_DE_analysis_20M.done'))
     resources:
-        cpus_per_task = 8,
-        mem_mb = 32000
-    retries: 3
+        cpus_per_task = 1,
+        mem_mb = 8000
     params:
         rmd_output_dir = rmd_output_dir
     shell:
         """
         module load curl
+        module load pandoc
         Rscript {input.knit_script} {input.rmd} {params.rmd_output_dir}
         """
 
@@ -390,11 +551,11 @@ rule rmd_sc_sn_umap:
         rds = '/vast/projects/LongBench/analysis/workflow/rmarkdown/RDS/sc_sn_filtered_so.rds'
     resources:
         cpus_per_task = 2,
-        mem_mb = 64000
+        mem_mb = 32000
     params:
         rmd_output_dir = rmd_output_dir
     shell:
-        "Rscript {input.knit_script} {input.rmd} {params.rmd_output_dir}"
+        "module load pandoc && Rscript {input.knit_script} {input.rmd} {params.rmd_output_dir}"
 
 
 rule rmd_sc_clustering_annotation:
@@ -409,7 +570,7 @@ rule rmd_sc_clustering_annotation:
     params:
         rmd_output_dir = rmd_output_dir
     shell:
-        "Rscript {input.knit_script} {input.rmd} {params.rmd_output_dir}"
+        "module load pandoc && Rscript {input.knit_script} {input.rmd} {params.rmd_output_dir}"
 
 
 rule rmd_sn_clustering_annotation:
@@ -448,7 +609,7 @@ rule rmd_sc_pseudo_bulk_analysis:
     params:
         rmd_output_dir = rmd_output_dir
     shell:
-        "Rscript {input.knit_script} {input.rmd} {params.rmd_output_dir}"
+        "module load pandoc && Rscript {input.knit_script} {input.rmd} {params.rmd_output_dir}"
 
 
 rule _rmd_sc_pseudo_bulk_analysis_subsample_single_run:
@@ -513,13 +674,13 @@ rule rmd_dRNA_run_comparison:
     output:
         touch(join(flag_dir, 'rmd.dRNA_run_comparison.done'))
     resources:
-        cpus_per_task=4,
+        cpus_per_task=1,
         mem_mb=16000
     params:
         rmd_output_dir = rmd_output_dir
     shell:
         """
-        export RSTUDIO_PANDOC=/stornext/System/data/software/rhel/9/base/tools/pandoc/3.2/bin
+        module load pandoc
         Rscript {input.knit_script} {input.rmd} {params.rmd_output_dir}
         """
 
@@ -535,8 +696,10 @@ rule knit_rmarkdown:
         rules.rmd_bulk_DE_analysis.output,
         rules.rmd_bulk_quantification_analysis.output,
         rules.rmd_bulk_quantification_analysis_isoquant.output,
+        rules.rmd_bulk_quantification_analysis_miniquant.output,
         rules.rmd_bulk_quantification_cross_tool_comparison.output,
         rules.rmd_bulk_DE_spikeins.output,
+        rules.rmd_bulk_DE_spikeins_isoquant.output,
         rules.rmd_bulk_identification_analysis_20M.output,
         rules.rmd_bulk_GC_analysis_20M.output,
         # Stage 3

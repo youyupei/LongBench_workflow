@@ -1,0 +1,2226 @@
+---
+title: "DE Benchmarking: Testing Power, Mean Overlap, and Transcript Inconsistency (IsoQuant)"
+author: "Yupei"
+date: '`r Sys.Date()`'
+version: 'v1.0'
+output:
+  html_document:
+    code_folding: hide
+    toc: yes
+    toc_float: yes
+    number_sections: yes
+    toc_depth: 4
+params:
+  random_seed: 2024
+  cache_dir: NULL
+  fig.path: NULL
+  sirv_ercc_gtf: '/vast/projects/LongBench/reference_files/SIRV_Set4_Norm_Sequences_20210507/SIRV_ERCC_longSIRV_multi-fasta_20210507.gtf'
+  sequins_gtf: '/vast/projects/LongBench/reference_files/Sequin_resources/v2.4/rnasequin_annotation_2.4.gtf'
+  sequins_tsv: '/vast/projects/LongBench/reference_files/Sequin_resources/v2.4/rnasequin_isoforms_2.4.tsv'
+  human_gtf: '/vast/projects/LongBench/reference_files/GRCh38/gencode.v44.annotation.gtf'
+  sirv_csv: '/vast/projects/LongBench/reference_files/SIRV_Set4_Norm_Sequences_20210507/SIRV_set4_concentration.csv'
+  bulk_dge_rds: "/vast/projects/LongBench/analysis/workflow/rmarkdown/RDS/bulk_DGE.obj.rds"
+  isoquant_ont_bulk_rds: "/home/users/allstaff/you.yu/LongBench/analysis/lr_bulk/result/IsoQuant_output_no_novel/isoquant_bulk_dge.ont_bulk.rds"
+  isoquant_pb_bulk_rds: "/home/users/allstaff/you.yu/LongBench/analysis/lr_bulk/result/IsoQuant_output_no_novel/isoquant_bulk_dge.pb_bulk.rds"
+  isoquant_drna_bulk_rds: "/home/users/allstaff/you.yu/LongBench/analysis/lr_bulk/result/IsoQuant_output_no_novel/isoquant_bulk_dge.dRNA_bulk.rds"
+  output_rds: "/vast/projects/LongBench/analysis/workflow/rmarkdown/RDS/Bulk_DE_benchmarking_IsoQuant.rds"
+  Tx2Gene.map.rds: "/vast/projects/LongBench/analysis/workflow/rmarkdown/RDS/Tx2Gene.map.rds"
+  log2FC_cutoff: 0
+---
+
+# Overview
+
+This report benchmarks differential expression (DE) analysis across four sequencing platforms
+(Illumina, PacBio, ONT cDNA, ONT dRNA) with four analysis modules:
+
+1. **Shared-feature DE** — Shared `filterByExpr` features across all platforms; upset plots for
+   gene-level (DGE) and transcript-level (DTE) DE.
+2. **Mean Overlap metric** — A single cross-platform consistency score for gene-level vs.
+   transcript-level DE.
+3. **Sources of transcript inconsistency** — Transcript length bias, isoform-count effects, and
+   per-platform DE rate by length category.
+4. **Platform-independent filtering** — Each platform runs `filterByExpr` on its own data;
+   Mean Overlap compared to the shared-feature result.
+
+---
+
+# Setup
+
+```{r setup, include=FALSE}
+if (interactive()) {
+  params <- list(
+    random_seed= 2024,
+    cache_dir= NULL,
+    fig.path= NULL,
+    sirv_ercc_gtf= '/vast/projects/LongBench/reference_files/SIRV_Set4_Norm_Sequences_20210507/SIRV_ERCC_longSIRV_multi-fasta_20210507.gtf',
+    sequins_gtf= '/vast/projects/LongBench/reference_files/Sequin_resources/v2.4/rnasequin_annotation_2.4.gtf',
+    sequins_tsv= '/vast/projects/LongBench/reference_files/Sequin_resources/v2.4/rnasequin_isoforms_2.4.tsv',
+    human_gtf= '/vast/projects/LongBench/reference_files/GRCh38/gencode.v44.annotation.gtf',
+    sirv_csv= '/vast/projects/LongBench/reference_files/SIRV_Set4_Norm_Sequences_20210507/SIRV_set4_concentration.csv',
+    bulk_dge_rds= "/vast/projects/LongBench/analysis/workflow/rmarkdown/RDS/bulk_DGE.obj.rds",
+    isoquant_ont_bulk_rds= "/home/users/allstaff/you.yu/LongBench/analysis/lr_bulk/result/IsoQuant_output_no_novel/isoquant_bulk_dge.ont_bulk.rds",
+    isoquant_pb_bulk_rds= "/home/users/allstaff/you.yu/LongBench/analysis/lr_bulk/result/IsoQuant_output_no_novel/isoquant_bulk_dge.pb_bulk.rds",
+    isoquant_drna_bulk_rds= "/home/users/allstaff/you.yu/LongBench/analysis/lr_bulk/result/IsoQuant_output_no_novel/isoquant_bulk_dge.dRNA_bulk.rds",
+    output_rds= "/vast/projects/LongBench/analysis/workflow/rmarkdown/RDS/Bulk_DE_benchmarking_IsoQuant.rds",
+    Tx2Gene.map.rds = "/vast/projects/LongBench/analysis/workflow/rmarkdown/RDS/Tx2Gene.map.rds",
+    log2FC_cutoff= 0
+  )
+}
+
+knitr::opts_chunk$set(
+  echo    = FALSE,
+  warning = FALSE,
+  message = FALSE,
+  fig.width  = 14,
+  fig.height = 9,
+  cache  = !is.null(params$cache_dir),
+  fig.path = params$fig.path,
+  dev = if (!is.null(params$fig.path)) c("png", "svg") else NULL
+)
+if (!is.null(params$cache_dir))
+  knitr::opts_chunk$set(cache.path = params$cache_dir)
+set.seed(params$random_seed)
+```
+
+```{r libraries, include=FALSE}
+library(limma)
+library(edgeR)
+library(tximport)
+library(tidyverse)
+library(RColorBrewer)
+library(ggplot2)
+library(ggrepel)
+library(glue)
+library(gridExtra)
+library(patchwork)
+library(viridis)
+library(knitr)
+library(kableExtra)
+library(rtracklayer)
+library(scales)
+library(UpSetR)
+library(ComplexUpset)
+source("/vast/projects/LongBench/analysis/workflow/scripts/Rfunctions.R")
+
+rename <- dplyr::rename
+select <- dplyr::select
+```
+
+```{r isoquant-helpers, include=FALSE}
+normalize_rownames <- function(dge) {
+  rownames(dge) <- sub("\\|.*", "", rownames(dge))
+  rownames(dge) <- sub("\\..*", "", rownames(dge))
+  dge
+}
+
+extract_and_normalize_ids <- function(dge) {
+  if (!"full_id" %in% colnames(dge$genes)) {
+    dge$genes$full_id <- rownames(dge)
+  }
+  rownames(dge) <- sub("\\|.*", "", rownames(dge))
+  rownames(dge) <- sub("\\..*", "", rownames(dge))
+  dge
+}
+```
+
+```{r color-codes, include=FALSE}
+color_palette <- c(
+  PacBio     = "#df1995",
+  "ONT cDNA" = "#04476c",
+  "ONT dRNA" = "#00789b",
+  Illumina   = "#e88b20"
+)
+```
+
+```{r is-helpers, include=FALSE}
+is.sequins      <- function(dge) grepl("^R",          rownames(dge))
+is.human        <- function(dge) grepl("^ENS",        rownames(dge))
+is.sirv_or_ercc <- function(dge) !is.human(dge) & !is.sequins(dge)
+is.sirv_E0      <- function(dge) grepl("^SIRV\\d{3}$",rownames(dge))
+is.sirv_all     <- function(dge) grepl("^SIRV",        rownames(dge))
+is.long_sirv    <- function(dge) grepl("^SIRV\\d{4}", rownames(dge))
+is.ercc         <- function(dge) !is.human(dge) & !is.sequins(dge) & !is.sirv_all(dge)
+```
+
+## GTF annotation maps
+
+```{r gtf-maps, message=FALSE, warning=FALSE, results='hide'}
+list2env(readRDS(params$Tx2Gene.map.rds), .GlobalEnv)
+```
+
+## Load transcript-level DGE objects
+
+```{r load-tx-dge, message=FALSE, warning=FALSE, results='hide'}
+bulk_obj          <- readRDS(params$bulk_dge_rds)
+isoquant_ont_obj  <- readRDS(params$isoquant_ont_bulk_rds)
+isoquant_pb_obj   <- readRDS(params$isoquant_pb_bulk_rds)
+isoquant_drna_obj <- readRDS(params$isoquant_drna_bulk_rds)
+
+# Illumina — from Salmon bundle (keep full_id for length/biotype lookups)
+ill_bulk.dge         <- extract_and_normalize_ids(bulk_obj[["ill_bulk.tx.dge"]])
+
+# LR — IsoQuant (no_novel); rownames normalised to clean ENST IDs
+ont_bulk.dge.oarfish <- normalize_rownames(isoquant_ont_obj[["ont_bulk.tx.dge"]])
+pb_bulk.dge.oarfish  <- normalize_rownames(isoquant_pb_obj[["pb_bulk.tx.dge"]])
+ont_drna.dge.oarfish <- normalize_rownames(isoquant_drna_obj[["dRNA_bulk.tx.dge"]])
+```
+
+## Aggregate to gene level (tximport)
+
+```{r txi-gene, message=FALSE, warning=FALSE, results='hide'}
+ill_bulk.gene.dge  <- extract_and_normalize_ids(bulk_obj[["ill_bulk.gene.dge"]])
+ont_bulk.gene.dge  <- normalize_rownames(isoquant_ont_obj[["ont_bulk.gene.dge"]])
+pb_bulk.gene.dge   <- normalize_rownames(isoquant_pb_obj[["pb_bulk.gene.dge"]])
+drna_bulk.gene.dge <- normalize_rownames(isoquant_drna_obj[["dRNA_bulk.gene.dge"]])
+```
+
+## Shared helper functions
+
+```{r helpers}
+# DE/DTE edgeR wrappers -------------------------------------------------------
+DGE.edgeR_human <- function(dge, norm.method = "TMM") {
+  if (!is.null(norm.method)) dge <- calcNormFactors(dge, method = norm.method)
+  design <- model.matrix(~0 + group, data = dge$samples)
+  dge    <- estimateDisp(dge, design)
+  qlfit  <- glmQLFit(dge, design)
+  contrasts <- makeContrasts(
+    AvsL = groupsclc_a - groupluad,
+    PvsL = groupsclc_p - groupluad,
+    AvsP = groupsclc_a - groupsclc_p,
+    levels = design
+  )
+  list(
+    AvsL.DE = glmQLFTest(qlfit, contrast = contrasts[,"AvsL"]),
+    PvsL.DE = glmQLFTest(qlfit, contrast = contrasts[,"PvsL"]),
+    AvsP.DE = glmQLFTest(qlfit, contrast = contrasts[,"AvsP"])
+  )
+}
+
+DTE.edgeR_human <- function(dge, norm.method = "TMM") {
+  if (!is.null(norm.method)) dge <- calcNormFactors(dge, method = norm.method)
+  design <- model.matrix(~0 + group, data = dge$samples)
+  dge    <- estimateDisp(dge, design)
+  qlfit  <- glmQLFit(dge, design)
+  contrasts <- makeContrasts(
+    AvsL = groupsclc_a - groupluad,
+    PvsL = groupsclc_p - groupluad,
+    AvsP = groupsclc_a - groupsclc_p,
+    levels = design
+  )
+  list(
+    AvsL.DE = glmQLFTest(qlfit, contrast = contrasts[,"AvsL"]),
+    PvsL.DE = glmQLFTest(qlfit, contrast = contrasts[,"PvsL"]),
+    AvsP.DE = glmQLFTest(qlfit, contrast = contrasts[,"AvsP"])
+  )
+}
+
+# Upset plot helper -----------------------------------------------------------
+complex_upset_plot <- function(lst) {
+  DEGs <- lapply(lst, function(x) {
+    x <- decideTests(x, lfc = params$log2FC_cutoff)
+    rownames(x)[x != 0]
+  })
+  long_df <- stack(DEGs)
+  binary_matrix <- long_df %>%
+    mutate(present = 1) %>%
+    pivot_wider(names_from = ind, values_from = present, values_fill = 0)
+  p <- ComplexUpset::upset(
+    binary_matrix %>% select(-values) %>% as.data.frame(),
+    intersect = names(lst),
+    base_annotations = list(
+      'Intersection size' = ComplexUpset::intersection_size(
+        counts = TRUE,
+        text   = list(element_text(size = 3, vjust = -0.2))
+      )
+    ),
+    wrap = TRUE
+  )
+  list(plot = p, matrix = binary_matrix %>% rename(Gene = values))
+}
+
+# Mean Overlap (the primary consistency metric) --------------------------------
+# For a given binary membership matrix, compute the proportion of each platform's
+# DE features that are also detected by >=2 of the 3 remaining platforms,
+# then average across all 4 platforms.
+calc_mean_overlap <- function(mat) {
+  platforms <- setdiff(names(mat), "Gene")
+  per_platform <- sapply(platforms, function(p) {
+    rows_detected <- mat[mat[[p]] == 1, , drop = FALSE]
+    if (nrow(rows_detected) == 0) return(NA_real_)
+    others <- setdiff(platforms, p)
+    n_also_in_2plus <- sum(rowSums(rows_detected[, others, drop = FALSE]) >= 2)
+    n_also_in_2plus / nrow(rows_detected)
+  })
+  mean(per_platform, na.rm = TRUE)
+}
+
+# Pairwise Jaccard similarity --------------------------------------------------
+mean_pairwise_jaccard <- function(mat) {
+  platforms <- setdiff(names(mat), "Gene")
+  pairs <- combn(platforms, 2, simplify = FALSE)
+  jac   <- sapply(pairs, function(p) {
+    a <- mat[[p[1]]]; b <- mat[[p[2]]]
+    sum(a & b) / sum(a | b)
+  })
+  names(jac) <- sapply(pairs, function(p) paste(p, collapse = " vs "))
+  jac
+}
+```
+
+---
+
+# Part 1: Shared-feature DE analysis {.tabset}
+
+Features are first restricted to those present in all four platforms
+(`Reduce(intersect, ...)`), then filtered with `filterByExpr` applied jointly
+(AND across platforms). This ensures every tested feature is potentially
+detectable by all platforms.
+
+## Gene level
+
+```{r shared-gene-filter, results='hide'}
+common_genes <- Reduce(intersect,
+  lapply(list(ill_bulk.gene.dge, ont_bulk.gene.dge,
+              pb_bulk.gene.dge, drna_bulk.gene.dge), rownames))
+
+ill_bulk.gene.dge  <- ill_bulk.gene.dge[common_genes, ]
+ont_bulk.gene.dge  <- ont_bulk.gene.dge[common_genes, ]
+pb_bulk.gene.dge   <- pb_bulk.gene.dge[common_genes, ]
+drna_bulk.gene.dge <- drna_bulk.gene.dge[common_genes, ]
+
+keep_gene <- filterByExpr(ill_bulk.gene.dge,  group = ill_bulk.gene.dge$samples$group) &
+             filterByExpr(ont_bulk.gene.dge,  group = ont_bulk.gene.dge$samples$group) &
+             filterByExpr(pb_bulk.gene.dge,   group = pb_bulk.gene.dge$samples$group) &
+             filterByExpr(drna_bulk.gene.dge, group = drna_bulk.gene.dge$samples$group)
+
+ill_bulk.gene.dge  <- ill_bulk.gene.dge[keep_gene, ]
+ont_bulk.gene.dge  <- ont_bulk.gene.dge[keep_gene, ]
+pb_bulk.gene.dge   <- pb_bulk.gene.dge[keep_gene, ]
+drna_bulk.gene.dge <- drna_bulk.gene.dge[keep_gene, ]
+
+ill_bulk.dge_human.list  <- DGE.edgeR_human(ill_bulk.gene.dge[is.human(ill_bulk.gene.dge),, keep.lib.sizes=FALSE])
+ont_bulk.dge_human.list  <- DGE.edgeR_human(ont_bulk.gene.dge[is.human(ont_bulk.gene.dge),, keep.lib.sizes=FALSE])
+pb_bulk.dge_human.list   <- DGE.edgeR_human(pb_bulk.gene.dge[is.human(pb_bulk.gene.dge),,  keep.lib.sizes=FALSE])
+drna_bulk.deg_human.list <- DGE.edgeR_human(drna_bulk.gene.dge[is.human(drna_bulk.gene.dge),, keep.lib.sizes=FALSE])
+
+cat(sprintf("Shared gene features tested: %d\n", sum(keep_gene)))
+```
+
+```{r shared-gene-upset, fig.height=10, fig.width=8}
+contrasts_dge <- c("AvsL","PvsL","AvsP")
+mat_list_dge  <- setNames(vector("list", 3), contrasts_dge)
+
+for (ct in contrasts_dge) {
+  lst <- list(
+    "Illumina" = ill_bulk.dge_human.list[[paste0(ct,".DE")]],
+    "ONT cDNA" = ont_bulk.dge_human.list[[paste0(ct,".DE")]],
+    "PacBio"   = pb_bulk.dge_human.list[[paste0(ct,".DE")]],
+    "ONT dRNA" = drna_bulk.deg_human.list[[paste0(ct,".DE")]]
+  )
+  res <- complex_upset_plot(lst)
+  mat_list_dge[[ct]] <- res$matrix
+  assign(paste0("mat.", ct, ".DEG"), res$matrix)
+}
+
+p_list <- lapply(contrasts_dge, function(ct) {
+  lst <- list(
+    "Illumina" = ill_bulk.dge_human.list[[paste0(ct,".DE")]],
+    "ONT cDNA" = ont_bulk.dge_human.list[[paste0(ct,".DE")]],
+    "PacBio"   = pb_bulk.dge_human.list[[paste0(ct,".DE")]],
+    "ONT dRNA" = drna_bulk.deg_human.list[[paste0(ct,".DE")]]
+  )
+  complex_upset_plot(lst)$plot + ggtitle(ct) + theme(plot.title = element_text(size = 10))
+})
+(p_list[[1]] / p_list[[2]] / p_list[[3]]) +
+  plot_annotation(title = "DGE Human — shared features",
+                  theme = theme(plot.title = element_text(size = 13)))
+```
+
+## Transcript level
+
+```{r shared-tx-filter, results='hide'}
+common_tx <- Reduce(intersect,
+  lapply(list(ill_bulk.dge, ont_bulk.dge.oarfish,
+              pb_bulk.dge.oarfish, ont_drna.dge.oarfish), rownames))
+
+ill_bulk.dge         <- ill_bulk.dge[common_tx, ]
+ont_bulk.dge.oarfish <- ont_bulk.dge.oarfish[common_tx, ]
+pb_bulk.dge.oarfish  <- pb_bulk.dge.oarfish[common_tx, ]
+ont_drna.dge.oarfish <- ont_drna.dge.oarfish[common_tx, ]
+
+keep_tx <- filterByExpr(ill_bulk.dge,         group = ill_bulk.dge$samples$group,         min.count = 5) &
+           filterByExpr(ont_bulk.dge.oarfish,  group = ont_bulk.dge.oarfish$samples$group, min.count = 5) &
+           filterByExpr(pb_bulk.dge.oarfish,   group = pb_bulk.dge.oarfish$samples$group,  min.count = 5) &
+           filterByExpr(ont_drna.dge.oarfish,  group = ont_drna.dge.oarfish$samples$group, min.count = 5)
+
+ill_bulk.dge         <- ill_bulk.dge[keep_tx, ,keep.lib.sizes=FALSE]
+ont_bulk.dge.oarfish <- ont_bulk.dge.oarfish[keep_tx, ,keep.lib.sizes=FALSE]
+pb_bulk.dge.oarfish  <- pb_bulk.dge.oarfish[keep_tx, ,keep.lib.sizes=FALSE]
+ont_drna.dge.oarfish <- ont_drna.dge.oarfish[keep_tx, ,keep.lib.sizes=FALSE]
+
+# Per-platform average logCPM / CPM / raw count (TMM-normalized CPM, raw counts)
+logcpm_lookup <- bind_rows(lapply(
+  list(Illumina   = ill_bulk.dge,
+       `ONT cDNA` = ont_bulk.dge.oarfish,
+       PacBio     = pb_bulk.dge.oarfish,
+       `ONT dRNA` = ont_drna.dge.oarfish),
+  function(dge) tibble(
+    tx_id      = rownames(dge),
+    avg_logCPM = rowMeans(cpm(dge, log = TRUE)),
+    avg_CPM    = rowMeans(cpm(dge, log = FALSE)),
+    avg_count  = rowMeans(dge$counts)
+  )
+), .id = "Platform")
+
+
+
+# Overdispersion scaling
+# Only Illumina (Salmon) has bootstrap overdispersion estimates.
+# IsoQuant LR platforms do not provide overdispersion — counts used as-is.
+ill_bulk.scale_dge  <- ill_bulk.dge
+ont_bulk.scale_dge  <- ont_bulk.dge.oarfish
+pb_bulk.scale_dge   <- pb_bulk.dge.oarfish
+ont_drna.scale_dge  <- ont_drna.dge.oarfish
+
+ill_bulk.scale_dge$counts  <- ill_bulk.scale_dge$counts / ill_bulk.scale_dge$genes$Overdispersion
+# ont_bulk.scale_dge, pb_bulk.scale_dge, ont_drna.scale_dge: no scaling (IsoQuant)
+
+ill_bulk.scl_dte_human.list  <- DTE.edgeR_human(ill_bulk.scale_dge[is.human(ill_bulk.scale_dge),, keep.lib.sizes=FALSE])
+ont_bulk.scl_dte_human.list  <- DTE.edgeR_human(ont_bulk.scale_dge[is.human(ont_bulk.scale_dge),, keep.lib.sizes=FALSE])
+pb_bulk.scl_dte_human.list   <- DTE.edgeR_human(pb_bulk.scale_dge[is.human(pb_bulk.scale_dge),,  keep.lib.sizes=FALSE])
+drna_bulk.scl_dte_human.list <- DTE.edgeR_human(ont_drna.scale_dge[is.human(ont_drna.scale_dge),, keep.lib.sizes=FALSE])
+
+cat(sprintf("Shared transcript features tested: %d\n", sum(keep_tx)))
+
+# Library sizes and logCPM summary (before overdispersion scaling, after TMM)
+lib_size_df <- bind_rows(lapply(
+  list(Illumina   = ill_bulk.dge,
+       `ONT cDNA` = ont_bulk.dge.oarfish,
+       PacBio     = pb_bulk.dge.oarfish,
+       `ONT dRNA` = ont_drna.dge.oarfish),
+  function(dge) {
+    tibble(
+      lib_size_total  = sum(dge$samples$lib.size),
+      lib_size_mean   = mean(dge$samples$lib.size),
+      lib_size_median = median(dge$samples$lib.size)
+    )
+  }
+), .id = "Platform")
+
+cat("Library size summary, before overdispersion scaling:\n")
+print(lib_size_df)
+```
+
+```{r tx-libsize-check, fig.height=4, fig.width=10}
+# Average logCPM per platform across all shared-filter tested transcripts
+logcpm_lookup %>%
+  group_by(Platform) %>%
+  summarise(
+    n_transcripts    = n(),
+    mean_CPM      = round(mean(avg_CPM,   na.rm = TRUE), 3),
+    median_CPM    = round(median(avg_CPM, na.rm = TRUE), 3),
+    total_equiv_cpm  = round(sum(avg_CPM,  na.rm = TRUE), 0),
+    .groups = "drop"
+  ) %>%
+  knitr::kable(caption = "CPM summary across shared-filter tested transcripts (TMM-normalised, before overdispersion scaling)",
+               row.names = FALSE)
+```
+
+```{r tx-lcpm-dist, fig.height=4, fig.width=10}
+logcpm_lookup %>%
+  mutate(Platform = factor(Platform, levels = names(color_palette))) %>%
+  ggplot(aes(x = avg_logCPM, colour = Platform)) +
+  geom_density(alpha = 0.3, linewidth = 0.7) +
+  scale_fill_manual(values = color_palette) +
+  scale_colour_manual(values = color_palette) +
+  labs(title = "logCPM distribution — shared-filter tested transcripts (all platforms)",
+       x = "Average logCPM", y = "Density") +
+  theme_minimal()
+```
+
+```{r tx-lcpm-cumulated desity, fig.height=4, fig.width=10}
+logcpm_lookup %>%
+  mutate(Platform = factor(Platform, levels = names(color_palette))) %>%
+  ggplot(aes(x = avg_logCPM, colour = Platform)) +
+  stat_ecdf(linewidth = 0.7) +
+  scale_colour_manual(values = color_palette) +
+  labs(
+    title = "Cumulative distribution of logCPM — shared-filter tested transcripts (all platforms)",
+    x = "Average logCPM",
+    y = "Cumulative density"
+  ) +
+  theme_minimal()
+```
+
+```{r shared-tx-upset, fig.height=10, fig.width=8}
+contrasts_dte <- c("AvsL","PvsL","AvsP")
+mat_list_dte  <- setNames(vector("list", 3), contrasts_dte)
+
+for (ct in contrasts_dte) {
+  lst <- list(
+    "Illumina" = ill_bulk.scl_dte_human.list[[paste0(ct,".DE")]],
+    "ONT cDNA" = ont_bulk.scl_dte_human.list[[paste0(ct,".DE")]],
+    "PacBio"   = pb_bulk.scl_dte_human.list[[paste0(ct,".DE")]],
+    "ONT dRNA" = drna_bulk.scl_dte_human.list[[paste0(ct,".DE")]]
+  )
+  res <- complex_upset_plot(lst)
+  mat_list_dte[[ct]] <- res$matrix
+  assign(paste0("mat.", ct, ".DTE"), res$matrix)
+}
+
+p_list <- lapply(contrasts_dte, function(ct) {
+  lst <- list(
+    "Illumina" = ill_bulk.scl_dte_human.list[[paste0(ct,".DE")]],
+    "ONT cDNA" = ont_bulk.scl_dte_human.list[[paste0(ct,".DE")]],
+    "PacBio"   = pb_bulk.scl_dte_human.list[[paste0(ct,".DE")]],
+    "ONT dRNA" = drna_bulk.scl_dte_human.list[[paste0(ct,".DE")]]
+  )
+  complex_upset_plot(lst)$plot + ggtitle(ct) + theme(plot.title = element_text(size = 10))
+})
+(p_list[[1]] / p_list[[2]] / p_list[[3]]) +
+  plot_annotation(title = "DTE Human — shared features (Illumina OD-scaled; IsoQuant LR unscaled)",
+                  theme = theme(plot.title = element_text(size = 13)))
+```
+
+
+
+# Part 2: Sources of transcript-level inconsistency
+
+We focus on the **AvsL** contrast (largest DE signal) unless noted, then confirm patterns across
+all contrasts.
+
+## 2a. Transcript annotation lookup
+
+```{r tx-lookup}
+# Illumina genes table stores the original pipe-separated ID in genes$full_id
+# (set by extract_and_normalize_ids); rownames are already clean ENST IDs.
+tx_length_lookup <- ill_bulk.scale_dge$genes %>%
+  rownames_to_column("tx_id") %>%
+  tibble() %>%
+  mutate(
+    full        = if ("full_id" %in% names(.)) full_id else tx_id,
+    biotype     = strsplit(full, "\\|") %>%
+                    sapply(function(x) if (length(x) >= 8) x[8] else NA_character_),
+    gene_id     = strsplit(full, "\\|") %>%
+                    sapply(function(x) if (length(x) >= 2) x[2] else x[1]),
+    gene_id     = sub("\\..*", "", gene_id),
+    tx_id_clean = tx_id   # rownames already clean (no pipe, no version)
+  ) %>%
+  select(tx_id, Length, biotype, gene_id, tx_id_clean)
+
+# Isoform count per gene (from GTF annotation)
+iso_count_lookup <- human.G.Tx.map %>%
+  select(tx_name, gene_id, tx_count) %>%
+  mutate(tx_name_clean = sub("\\..*", "", tx_name))
+
+# Expressed isoform count (shared-filter set): number of isoforms per gene that
+# pass the shared filterByExpr criterion and are actually tested here.
+expressed_iso_count_lookup <- tx_length_lookup %>%
+  filter(grepl("^ENS", tx_id)) %>%
+  group_by(gene_id) %>%
+  mutate(expr_iso_count = n()) %>%
+  ungroup() %>%
+  mutate(tx_name_clean = tx_id_clean) %>%
+  select(tx_name_clean, expr_iso_count) %>%
+  distinct()
+```
+
+## Length bias?
+```{r length-bias}
+# Get the total CPM distribution across all shared-filter tested transcripts
+## 1 define length bins (e.g. 10 bins with equal number of transcripts)
+length_bins <- quantile(tx_length_lookup$Length, probs = seq(0, 1, length.out = 11))
+
+
+## 2 get total CPM per length bin
+length_cpm_df <- logcpm_lookup %>%
+  left_join(tx_length_lookup, by = c("tx_id" = "tx_id")) %>%
+  mutate(length_bin = cut(Length, breaks = length_bins, include.lowest = TRUE)) %>%
+  group_by(Platform, length_bin) %>%
+  summarise(
+    mean_CPM    = mean(avg_CPM,    na.rm = TRUE),
+    mean_logCPM = mean(avg_logCPM, na.rm = TRUE),
+    median_CPM  = median(avg_CPM,  na.rm = TRUE),
+    mean_count  = mean(avg_count,  na.rm = TRUE),
+    .groups = "drop"
+  )
+
+## 3 plot boxplots of CPM per length bin per platform
+p.mean_cpm <- length_cpm_df %>%
+  ggplot(aes(x = length_bin, y = mean_CPM, fill = Platform)) +
+  geom_col(position = position_dodge(0.7), width = 0.6) +
+  scale_fill_manual(values = color_palette) +
+  labs(
+    title = "Mean CPM by transcript length bin (shared-filter tested transcripts)",
+    x = "Transcript length bin", y = "Mean CPM"
+  ) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+p.mean_logcpm <- length_cpm_df %>%
+  ggplot(aes(x = length_bin, y = mean_logCPM, fill = Platform)) +
+  geom_col(position = position_dodge(0.7), width = 0.6) +
+  scale_fill_manual(values = color_palette) +
+  labs(
+    title = "Mean logCPM by transcript length bin (shared-filter tested transcripts)",
+    x = "Transcript length bin", y = "Mean logCPM"
+  ) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+p.median_cpm <- length_cpm_df %>%
+  ggplot(aes(x = length_bin, y = median_CPM, fill = Platform)) +
+  geom_col(position = position_dodge(0.7), width = 0.6) +
+  scale_fill_manual(values = color_palette) +
+  labs(
+    title = "Median CPM by transcript length bin (shared-filter tested transcripts)",
+    x = "Transcript length bin", y = "Median CPM"
+  ) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+p.mean_count <- length_cpm_df %>%
+  ggplot(aes(x = length_bin, y = mean_count, fill = Platform)) +
+  geom_col(position = position_dodge(0.7), width = 0.6) +
+  scale_fill_manual(values = color_palette) +
+  labs(
+    title = "Mean raw count by transcript length bin (shared-filter tested transcripts)",
+    x = "Transcript length bin", y = "Mean raw count"
+  ) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+
+## 4 number of DE transcripts per length bin per platform
+
+DE_number_df <- mat_list_dte %>%
+  bind_rows(.id = "Contrast") %>%
+  left_join(tx_length_lookup, by = c("Gene" = "tx_id")) %>%
+  mutate(length_bin = cut(Length, breaks = length_bins, include.lowest = TRUE)) %>%
+  pivot_longer(cols = c(Illumina, `ONT cDNA`, PacBio, `ONT dRNA`), names_to = "Platform", values_to = "DE") %>%
+  group_by(Platform, length_bin, Contrast) %>%
+  summarise(n_tx = n(), n_DE = sum(DE), pct_DE = mean(DE), .groups = "drop")
+
+p.de <- DE_number_df %>%
+  ggplot(aes(x = length_bin, y = n_DE, fill = Platform, group = Platform)) +
+  geom_col(position = position_dodge(0.7), width = 0.6) +
+  scale_fill_manual(values = color_palette) +
+  labs(
+    title = "Number of DE transcripts by transcript length bin (shared-filter tested transcripts)",
+    x = "Transcript length bin", y = "Number of DE transcripts"
+  ) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+p.mean_cpm/p.mean_count/p.de
+
+# Get a version of Platform specific DE
+DE_number_df.sp <- mat_list_dte %>%
+  bind_rows(.id = "Contrast") %>%
+  left_join(tx_length_lookup, by = c("Gene" = "tx_id")) %>%
+  filter(Illumina + `ONT cDNA` + PacBio + `ONT dRNA` == 1) %>%
+  mutate(length_bin = cut(Length, breaks = length_bins, include.lowest = TRUE)) %>%
+  pivot_longer(cols = c(Illumina, `ONT cDNA`, PacBio, `ONT dRNA`), names_to = "Platform", values_to = "DE") %>%
+  group_by(Platform, length_bin, Contrast) %>%
+  summarise(n_tx = n(), n_DE = sum(DE), pct_DE = mean(DE), .groups = "drop")
+
+p.de.sp <- DE_number_df.sp %>%
+  ggplot(aes(x = length_bin, y = n_DE, fill = Platform, group = Platform)) +
+  geom_col(position = position_dodge(0.7), width = 0.6) +
+  scale_fill_manual(values = color_palette) +
+  labs(
+    title = "Number of Platform_Specific DE transcripts by transcript length bin (shared-filter tested transcripts)",
+    x = "Transcript length bin", y = "Number of DE transcripts"
+  ) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+p.de.sp
+```
+## Is platform-specific detection generally have higher CPM in the detecting platform than in the non-detecting platforms?
+```{r cpm-platform-specific}
+# AvsL contrast, transcript level
+mat_avsl <- mat_list_dte[["AvsL"]]
+## Get mean logCPM per platform for the AvsL contrast (mean over all A and L samples, before overdispersion scaling)
+logcpm_lookup_avsl <- bind_rows(lapply(
+  list(Illumina   = ill_bulk.dge,
+       `ONT cDNA` = ont_bulk.dge.oarfish,
+       PacBio     = pb_bulk.dge.oarfish,
+       `ONT dRNA` = ont_drna.dge.oarfish),
+  function(dge) tibble(
+    tx_id = rownames(dge), 
+    avg_logCPM = rowMeans(cpm(dge[,dge$samples$group %in% c('sclc_a', 'luad')], log = TRUE)),
+    avg_CPM = rowMeans(cpm(dge[,dge$samples$group %in% c('sclc_a', 'luad')], log = FALSE)),
+    median_CPM = apply(cpm(dge[,dge$samples$group %in% c('sclc_a', 'luad')], log = FALSE), 1, median, na.rm = TRUE)
+  )
+), .id = "Platform")
+
+## For each platform, compare the logFC / significance of transcripts detected as DE only by that platform vs the same transcripts in the non-detecting platforms
+# NOTE: avg logCPM (averaged across both groups) is a poor discriminator here because
+#   long-read platforms have lower per-feature coverage than Illumina, so their overall
+#   average CPM is lower regardless of DE signal. The relevant question is whether the
+#   detecting platform shows a *larger fold change* and *stronger significance* for those
+#   transcripts — which is captured by logFC and FDR from the DE test.
+#
+# NOTE: The logcpm_lookup_avsl object above used dge$sample$group (typo → NULL → 0-column DGE)
+#   and is therefore unreliable; we build what we need directly from the DE results instead.
+
+platforms_avsl <- c("Illumina", "ONT cDNA", "PacBio", "ONT dRNA")
+
+# Extract logFC and FDR for every transcript from each platform's AvsL DE result
+de_stats_avsl <- bind_rows(lapply(
+  list(
+    Illumina   = ill_bulk.scl_dte_human.list$AvsL.DE,
+    `ONT cDNA` = ont_bulk.scl_dte_human.list$AvsL.DE,
+    PacBio     = pb_bulk.scl_dte_human.list$AvsL.DE,
+    `ONT dRNA` = drna_bulk.scl_dte_human.list$AvsL.DE
+  ),
+  function(de) {
+    topTags(de, n = Inf, sort.by = "none")$table %>%
+      rownames_to_column("tx_id") %>%
+      select(tx_id, logFC, FDR)
+  }
+), .id = "Platform")
+
+# For each focal platform, identify its platform-specific DE transcripts, then
+# look up the logFC / FDR across ALL platforms for those transcripts
+platform_specific_de_df <- bind_rows(lapply(platforms_avsl, function(focal) {
+  others <- setdiff(platforms_avsl, focal)
+
+  specific_tx <- mat_avsl %>%
+    filter(.data[[focal]] == 1,
+           rowSums(select(., all_of(others))) == 0) %>%
+    pull(Gene)
+
+  if (length(specific_tx) == 0) return(NULL)
+
+  de_stats_avsl %>%
+    filter(tx_id %in% specific_tx) %>%
+    mutate(
+      focal_platform = focal,
+      DetectionLabel = if_else(Platform == focal,
+                               "Detecting platform",
+                               "Non-detecting platforms")
+    )
+}))
+
+# Sanity-check summary table
+platform_specific_de_df %>%
+  group_by(focal_platform, DetectionLabel) %>%
+  summarise(
+    n_tx         = n_distinct(tx_id),
+    median_absFC = round(median(abs(logFC), na.rm = TRUE), 3),
+    median_FDR   = round(median(FDR,        na.rm = TRUE), 4),
+    .groups = "drop"
+  ) %>%
+  knitr::kable(
+    caption = "Platform-specific DE transcripts: |logFC| and FDR in detecting vs non-detecting platforms (AvsL)"
+  )
+
+det_levels <- c("Detecting platform", "Non-detecting platforms")
+det_colours <- c("Detecting platform" = "#E64B35", "Non-detecting platforms" = "#4DBBD5")
+
+base_df <- platform_specific_de_df %>%
+  mutate(
+    DetectionLabel = factor(DetectionLabel, levels = det_levels),
+    focal_platform = factor(focal_platform, levels = platforms_avsl)
+  )
+
+# Plot 1: |logFC| — does the detecting platform show a larger fold change?
+p.logfc <- base_df %>%
+  ggplot(aes(x = DetectionLabel, y = abs(logFC), fill = DetectionLabel)) +
+  geom_boxplot(outlier.shape = NA, width = 0.5) +
+  geom_jitter(width = 0.15, alpha = 0.2, size = 0.5) +
+  facet_wrap(~focal_platform, nrow = 1) +
+  scale_fill_manual(values = det_colours) +
+  labs(
+    title    = "Platform-specific DE: |logFC| in detecting vs non-detecting platforms",
+    subtitle = "AvsL contrast — transcripts DE in exactly one platform",
+    x = NULL, y = "|log2 Fold Change|"
+  ) +
+  theme_minimal() +
+  theme(legend.position = "none", strip.text = element_text(face = "bold"))
+
+# Plot 2: -log10(FDR) — does the detecting platform show stronger significance?
+p.fdr <- base_df %>%
+  ggplot(aes(x = DetectionLabel, y = -log10(FDR + 1e-300), fill = DetectionLabel)) +
+  geom_boxplot(outlier.shape = NA, width = 0.5) +
+  geom_jitter(width = 0.15, alpha = 0.2, size = 0.5) +
+  facet_wrap(~focal_platform, nrow = 1) +
+  scale_fill_manual(values = det_colours) +
+  labs(
+    title    = "Platform-specific DE: significance in detecting vs non-detecting platforms",
+    subtitle = "AvsL contrast — transcripts DE in exactly one platform",
+    x = NULL, y = expression(-log[10](FDR))
+  ) +
+  theme_minimal() +
+  theme(legend.position = "none", strip.text = element_text(face = "bold"))
+
+p.logfc / p.fdr
+
+```
+
+
+
+## Analysis functions
+
+All analyses in sections 3b–3g are implemented as parametrised functions that accept a
+`mat_list` (named list of binary membership matrices per contrast) and `all_tx_universe`
+(data frame of tested transcripts with `tx_id`, `Length`, `length_bin`). The same functions
+are called in Part 4 on the platform-independent matrices, enabling a direct comparison.
+
+```{r dte-analysis-functions}
+# ---- Data builders ----
+
+# Annotate one binary matrix: add TotalDetected, OverlapCat, Length, iso_count
+annotate_mat <- function(mat, contrast_label) {
+  platforms <- setdiff(names(mat), "Gene")
+  mat %>%
+    mutate(
+      TotalDetected = rowSums(select(., all_of(platforms))),
+      OverlapCat = factor(case_when(
+        TotalDetected == 4 ~ "All 4",
+        TotalDetected == 3 ~ "3 platforms",
+        TotalDetected == 2 ~ "2 platforms",
+        TotalDetected == 1 ~ "Platform-specific",
+        TRUE               ~ "Not DE"),
+        levels = c("All 4","3 platforms","2 platforms","Platform-specific","Not DE")),
+      Contrast = contrast_label
+    ) %>%
+    left_join(tx_length_lookup, by = c("Gene" = "tx_id")) %>%
+    mutate(Gene_clean = sub("\\..*", "", sub("\\|.*", "", Gene))) %>%
+    left_join(
+      iso_count_lookup %>% select(tx_name_clean, tx_count) %>% rename(iso_count = tx_count),
+      by = c("Gene_clean" = "tx_name_clean")
+    ) %>%
+    left_join(expressed_iso_count_lookup, by = c("Gene_clean" = "tx_name_clean"))
+}
+
+# Build per-platform long df: for each platform, each DE transcript labelled
+# "Platform-specific", "Shared >=2", or "Any platform DE" (not detected by focal
+# but detected by at least one other platform)
+build_per_platform_df <- function(mat_list) {
+  bind_rows(lapply(names(mat_list), function(ct) {
+    platforms <- setdiff(names(mat_list[[ct]]), "Gene")
+    mat_ann   <- annotate_mat(mat_list[[ct]], ct)
+    bind_rows(lapply(platforms, function(p) {
+      others <- setdiff(platforms, p)
+      # Rows where focal platform detected DE
+      detected <- mat_ann %>%
+        filter(.data[[p]] == 1) %>%
+        mutate(
+          Platform = p,
+          DetectionLabel = if_else(TotalDetected == 1, "Platform-specific", "Shared ≥2")
+        )
+      # Rows where focal platform did NOT detect, but at least one other platform did
+      any_other_de <- mat_ann %>%
+        filter(.data[[p]] == 0, TotalDetected >= 1) %>%
+        mutate(Platform = p, DetectionLabel = "Any platform DE")
+      bind_rows(detected, any_other_de) %>%
+        left_join(logcpm_lookup %>% filter(Platform == p) %>% select(tx_id, avg_logCPM),
+                  by = c("Gene" = "tx_id"))
+    }))
+  })) %>%
+  mutate(
+    Platform = factor(Platform, levels = names(color_palette)),
+    DetectionLabel = factor(DetectionLabel,
+      levels = c("Platform-specific", "Shared ≥2", "Any platform DE"))
+  )
+}
+
+# Build per-platform long df with three detection categories:
+#   "Platform-specific absence"  — focal = 0, all 3 others = 1
+#   "Platform-specific detection"— focal = 1, all 3 others = 0
+#   "Detected ≥2 support"        — focal = 1, ≥2 of the 3 others = 1
+build_absence_detection_df <- function(mat_list) {
+  bind_rows(lapply(names(mat_list), function(ct) {
+    mat       <- mat_list[[ct]]
+    platforms <- setdiff(names(mat), "Gene")
+    bind_rows(lapply(platforms, function(p) {
+      others        <- setdiff(platforms, p)
+      n_others      <- rowSums(mat[, others, drop = FALSE])
+      absent_rows   <- mat[mat[[p]] == 0 & n_others == 3,  , drop = FALSE]
+      detected_only <- mat[mat[[p]] == 1 & n_others == 0,  , drop = FALSE]
+      detected_2p   <- mat[mat[[p]] == 1 & n_others >= 2,  , drop = FALSE]
+      bind_rows(
+        if (nrow(absent_rows)   > 0) tibble(Gene = absent_rows$Gene,   Platform = p,
+          Contrast = ct, Category = "Platform-specific absence"),
+        if (nrow(detected_only) > 0) tibble(Gene = detected_only$Gene, Platform = p,
+          Contrast = ct, Category = "Platform-specific detection"),
+        if (nrow(detected_2p)   > 0) tibble(Gene = detected_2p$Gene,   Platform = p,
+          Contrast = ct, Category = "Detected ≥2 support")
+      )
+    }))
+  })) %>%
+  left_join(tx_length_lookup, by = c("Gene" = "tx_id")) %>%
+  mutate(Gene_clean = sub("\\..*", "", sub("\\|.*", "", Gene))) %>%
+  left_join(
+    iso_count_lookup %>% select(tx_name_clean, tx_count) %>% rename(iso_count = tx_count),
+    by = c("Gene_clean" = "tx_name_clean")
+  ) %>%
+  left_join(expressed_iso_count_lookup, by = c("Gene_clean" = "tx_name_clean")) %>%
+  left_join(logcpm_lookup, by = c("Gene" = "tx_id", "Platform" = "Platform")) %>%
+  mutate(
+    Category = factor(Category,
+      levels = c("Platform-specific absence", "Platform-specific detection", "Detected ≥2 support")),
+    Platform = factor(Platform, levels = names(color_palette))
+  )
+}
+
+# Build PCR-group classified df (PCR-specific, Non-PCR-specific, All 4)
+build_pcr_group_df <- function(mat_list) {
+  bind_rows(lapply(names(mat_list), function(ct) {
+    mat_list[[ct]] %>%
+      mutate(
+        PCR_group = case_when(
+          PacBio == 1 & `ONT cDNA` == 1 & Illumina == 0 & `ONT dRNA` == 0 ~ "PCR-specific",
+          Illumina == 1 & `ONT dRNA` == 1 & PacBio == 0 & `ONT cDNA` == 0  ~ "Non-PCR-specific",
+          PacBio == 1 & `ONT cDNA` == 1 & Illumina == 1 & `ONT dRNA` == 1  ~ "All 4",
+          TRUE ~ NA_character_
+        ),
+        Contrast = ct
+      ) %>%
+      filter(!is.na(PCR_group))
+  })) %>%
+  left_join(tx_length_lookup, by = c("Gene" = "tx_id")) %>%
+  mutate(Gene_clean = sub("\\..*", "", sub("\\|.*", "", Gene))) %>%
+  left_join(
+    iso_count_lookup %>% select(tx_name_clean, tx_count) %>% rename(iso_count = tx_count),
+    by = c("Gene_clean" = "tx_name_clean")
+  ) %>%
+  left_join(expressed_iso_count_lookup, by = c("Gene_clean" = "tx_name_clean")) %>%
+  mutate(PCR_group = factor(PCR_group, levels = c("PCR-specific","Non-PCR-specific","All 4")))
+}
+
+# Assign quantile-based length bins (default 10 deciles) with readable kb range labels.
+make_length_decile_bins <- function(lengths, n = 10) {
+  probs <- seq(0, 1, length.out = n + 1)
+  brks  <- unique(quantile(lengths, probs = probs, na.rm = TRUE))
+  nb    <- length(brks) - 1
+  labs  <- sapply(seq_len(nb), function(i) {
+    lo <- round(brks[i]   / 1000, 1)
+    hi <- round(brks[i+1] / 1000, 1)
+    if (i == 1)       paste0("≤", hi, " kb")
+    else if (i == nb) paste0(">",  lo, " kb")
+    else              paste0(lo, "–", hi, " kb")
+  })
+  cut(lengths, breaks = brks, labels = labs, include.lowest = TRUE, right = TRUE)
+}
+
+# Build length-bin analysis df given mat_list and a tx universe (tx_id, length_bin)
+# Joins per-platform avg_logCPM so expression level can be checked alongside DE rate.
+build_length_bin_df <- function(mat_list, all_tx_universe) {
+  bind_rows(lapply(names(mat_list), function(ct) {
+    bind_rows(lapply(names(color_palette), function(p) {
+      de_ids <- mat_list[[ct]] %>% filter(.data[[p]] == 1) %>% pull(Gene)
+      all_tx_universe %>%
+        mutate(Platform = p, is_DE = tx_id %in% de_ids, Contrast = ct) %>%
+        left_join(logcpm_lookup %>% filter(Platform == p) %>% select(tx_id, avg_logCPM),
+                  by = "tx_id")
+    }))
+  }))
+}
+
+# ---- Plot functions ----
+
+plot_length_overlap <- function(cat_df_all, pp_df_all, title_prefix = "") {
+  p1 <- cat_df_all %>%
+    filter(OverlapCat != "Not DE", !is.na(Length)) %>%
+    ggplot(aes(x = OverlapCat, y = Length / 1000, fill = OverlapCat)) +
+    geom_violin(scale = "width", alpha = 0.7, trim = TRUE) +
+    geom_boxplot(width = 0.15, outlier.shape = NA, fill = "white", alpha = 0.8) +
+    facet_wrap(~ Contrast) +
+    scale_fill_brewer(palette = "Set2") +
+    scale_y_log10(labels = comma) +
+    labs(title = paste(title_prefix, "— transcript length by overlap category"),
+         y = "Transcript length (kb, log10)", x = NULL) +
+    theme_minimal() +
+    theme(legend.position = "none", axis.text.x = element_text(angle = 35, hjust = 1))
+
+  p2 <- pp_df_all %>%
+    filter(!is.na(Length)) %>%
+    ggplot(aes(x = DetectionLabel, y = Length / 1000, fill = Platform)) +
+    geom_violin(scale = "width", alpha = 0.7, trim = TRUE) +
+    geom_boxplot(width = 0.12, outlier.shape = NA, fill = "white", alpha = 0.8) +
+    facet_grid(Contrast ~ Platform) +
+    scale_fill_manual(values = color_palette) +
+    scale_y_log10(labels = comma) +
+    labs(title = paste(title_prefix, "— platform-specific vs shared per platform"),
+         y = "Transcript length (kb, log10)", x = NULL) +
+    theme_minimal() +
+    theme(legend.position = "none", axis.text.x = element_text(angle = 35, hjust = 1),
+          strip.text = element_text(size = 8))
+
+  list(by_overlap = p1, by_platform = p2)
+}
+
+plot_length_stats_table <- function(pp_df_all, filter_label = "") {
+  pp_df_all %>%
+    filter(Contrast == "AvsL", !is.na(Length)) %>%
+    group_by(Platform) %>%
+    summarise(
+      n_specific    = sum(DetectionLabel == "Platform-specific"),
+      n_shared      = sum(DetectionLabel == "Shared ≥2"),
+      n_any_de      = sum(DetectionLabel == "Any platform DE"),
+      med_specific_kb = round(median(Length[DetectionLabel == "Platform-specific"], na.rm = TRUE) / 1000, 2),
+      med_shared_kb   = round(median(Length[DetectionLabel == "Shared ≥2"],         na.rm = TRUE) / 1000, 2),
+      med_any_de_kb   = round(median(Length[DetectionLabel == "Any platform DE"],   na.rm = TRUE) / 1000, 2),
+      p_spe_vs_shared = {
+        g1 <- Length[DetectionLabel == "Platform-specific"]
+        g2 <- Length[DetectionLabel == "Shared ≥2"]
+        if (length(g1) < 3 || length(g2) < 3) NA_real_ else wilcox.test(g1, g2)$p.value
+      },
+      p_spe_vs_any = {
+        g1 <- Length[DetectionLabel == "Platform-specific"]
+        g2 <- Length[DetectionLabel == "Any platform DE"]
+        if (length(g1) < 3 || length(g2) < 3) NA_real_ else wilcox.test(g1, g2)$p.value
+      }, .groups = "drop"
+    ) %>%
+    mutate(p_spe_vs_shared_adj = p.adjust(p_spe_vs_shared, method = "BH"),
+           p_spe_vs_any_adj    = p.adjust(p_spe_vs_any,    method = "BH"),
+           across(starts_with("p_"), ~formatC(.x, digits = 3, format = "e"))) %>%
+    knitr::kable(caption = paste(filter_label,
+      "Wilcoxon: transcript length — platform-specific vs shared ≥2 vs any platform DE (AvsL)"),
+      row.names = FALSE)
+}
+
+plot_isoform_overlap <- function(cat_df_all, pp_df_all, title_prefix = "") {
+  make_iso_panel <- function(df_cat, df_pp, col, ylab) {
+    p1 <- df_cat %>%
+      filter(OverlapCat != "Not DE", !is.na(.data[[col]])) %>%
+      ggplot(aes(x = OverlapCat, y = .data[[col]], fill = OverlapCat)) +
+      geom_violin(scale = "width", alpha = 0.7, trim = TRUE) +
+      geom_boxplot(width = 0.15, outlier.shape = NA, fill = "white", alpha = 0.8) +
+      facet_wrap(~ Contrast) +
+      scale_fill_brewer(palette = "Set2") +
+      scale_y_log10() +
+      labs(title = paste(title_prefix, "—", ylab, "by overlap category"),
+           y = paste(ylab, "(log10)"), x = NULL) +
+      theme_minimal() +
+      theme(legend.position = "none", axis.text.x = element_text(angle = 35, hjust = 1))
+
+    p2 <- df_pp %>%
+      filter(!is.na(.data[[col]])) %>%
+      ggplot(aes(x = DetectionLabel, y = .data[[col]], fill = Platform)) +
+      geom_violin(scale = "width", alpha = 0.7, trim = TRUE) +
+      geom_boxplot(width = 0.12, outlier.shape = NA, fill = "white", alpha = 0.8) +
+      facet_grid(Contrast ~ Platform) +
+      scale_fill_manual(values = color_palette) +
+      scale_y_log10() +
+      labs(title = paste(title_prefix, "—", ylab, "per platform"),
+           y = paste(ylab, "(log10)"), x = NULL) +
+      theme_minimal() +
+      theme(legend.position = "none", axis.text.x = element_text(angle = 35, hjust = 1),
+            strip.text = element_text(size = 8))
+
+    list(by_overlap = p1, by_platform = p2)
+  }
+
+  anno  <- make_iso_panel(cat_df_all, pp_df_all, "iso_count",      "Annotation isoform count")
+  expr  <- make_iso_panel(cat_df_all, pp_df_all, "expr_iso_count", "Expressed isoform count")
+  list(anno_by_overlap  = anno$by_overlap,  anno_by_platform  = anno$by_platform,
+       expr_by_overlap  = expr$by_overlap,  expr_by_platform  = expr$by_platform)
+}
+
+plot_isoform_stats_table <- function(pp_df_all, filter_label = "") {
+  pp_df_all %>%
+    filter(Contrast == "AvsL") %>%
+    group_by(Platform) %>%
+    summarise(
+      n_specific           = sum(DetectionLabel == "Platform-specific"),
+      n_shared             = sum(DetectionLabel == "Shared ≥2"),
+      n_any_de             = sum(DetectionLabel == "Any platform DE"),
+      med_anno_specific    = round(median(iso_count[DetectionLabel == "Platform-specific"],      na.rm = TRUE), 1),
+      med_anno_shared      = round(median(iso_count[DetectionLabel == "Shared ≥2"],              na.rm = TRUE), 1),
+      med_anno_any_de      = round(median(iso_count[DetectionLabel == "Any platform DE"],        na.rm = TRUE), 1),
+      med_expr_specific    = round(median(expr_iso_count[DetectionLabel == "Platform-specific"], na.rm = TRUE), 1),
+      med_expr_shared      = round(median(expr_iso_count[DetectionLabel == "Shared ≥2"],         na.rm = TRUE), 1),
+      med_expr_any_de      = round(median(expr_iso_count[DetectionLabel == "Any platform DE"],   na.rm = TRUE), 1),
+      p_anno_spe_vs_shared = {
+        g1 <- iso_count[DetectionLabel == "Platform-specific"]
+        g2 <- iso_count[DetectionLabel == "Shared ≥2"]
+        if (length(g1) < 3 || length(g2) < 3) NA_real_ else wilcox.test(g1, g2)$p.value
+      },
+      p_anno_spe_vs_any = {
+        g1 <- iso_count[DetectionLabel == "Platform-specific"]
+        g2 <- iso_count[DetectionLabel == "Any platform DE"]
+        if (length(g1) < 3 || length(g2) < 3) NA_real_ else wilcox.test(g1, g2)$p.value
+      },
+      p_expr_spe_vs_shared = {
+        g1 <- expr_iso_count[DetectionLabel == "Platform-specific"]
+        g2 <- expr_iso_count[DetectionLabel == "Shared ≥2"]
+        if (length(g1) < 3 || length(g2) < 3) NA_real_ else wilcox.test(g1, g2)$p.value
+      },
+      p_expr_spe_vs_any = {
+        g1 <- expr_iso_count[DetectionLabel == "Platform-specific"]
+        g2 <- expr_iso_count[DetectionLabel == "Any platform DE"]
+        if (length(g1) < 3 || length(g2) < 3) NA_real_ else wilcox.test(g1, g2)$p.value
+      }, .groups = "drop"
+    ) %>%
+    mutate(p_anno_spe_vs_shared_adj = p.adjust(p_anno_spe_vs_shared, method = "BH"),
+           p_anno_spe_vs_any_adj    = p.adjust(p_anno_spe_vs_any,    method = "BH"),
+           p_expr_spe_vs_shared_adj = p.adjust(p_expr_spe_vs_shared, method = "BH"),
+           p_expr_spe_vs_any_adj    = p.adjust(p_expr_spe_vs_any,    method = "BH"),
+           across(starts_with("p_"), ~formatC(.x, digits = 3, format = "e"))) %>%
+    knitr::kable(caption = paste(filter_label,
+      "Wilcoxon: annotation & expressed isoform count — platform-specific vs shared ≥2 vs any platform DE (AvsL)"),
+      row.names = FALSE)
+}
+
+plot_length_bin_enrichment <- function(mat_list, all_tx_universe, title_prefix = "") {
+  bin_df <- build_length_bin_df(mat_list, all_tx_universe)
+
+  avsl_sum <- bin_df %>%
+    filter(!is.na(length_bin), Contrast == "AvsL") %>%
+    group_by(Platform, length_bin) %>%
+    summarise(n_DE = sum(is_DE), prop_DE = sum(is_DE) / n(), .groups = "drop")
+
+  all_sum <- bin_df %>%
+    filter(!is.na(length_bin)) %>%
+    group_by(Platform, length_bin, Contrast) %>%
+    summarise(n_DE = sum(is_DE), prop_DE = sum(is_DE) / n(), .groups = "drop")
+
+  p_prop_avsl <- ggplot(avsl_sum, aes(x = length_bin, y = prop_DE, fill = Platform)) +
+    geom_col(position = position_dodge(0.7), width = 0.65) +
+    geom_text(aes(label = sprintf("%.3f", prop_DE)),
+              position = position_dodge(0.7), vjust = -0.4, size = 2) +
+    scale_fill_manual(values = color_palette) +
+    scale_y_continuous(labels = percent_format()) +
+    labs(title = paste(title_prefix, "— DE rate by length bin (AvsL)"),
+         subtitle = "Proportion of all tested transcripts in each bin",
+         y = "Proportion called DE", x = "Transcript length category") +
+    theme_minimal() +
+    theme(axis.text.x = element_text(angle = 30, hjust = 1))
+
+  p_count_avsl <- ggplot(avsl_sum, aes(x = length_bin, y = n_DE, fill = Platform)) +
+    geom_col(position = position_dodge(0.7), width = 0.65) +
+    geom_text(aes(label = n_DE),
+              position = position_dodge(0.7), vjust = -0.4, size = 2) +
+    scale_fill_manual(values = color_palette) +
+    labs(title = paste(title_prefix, "— DE count by length bin (AvsL)"),
+         y = "Number of DE transcripts", x = "Transcript length category") +
+    theme_minimal() +
+    theme(axis.text.x = element_text(angle = 30, hjust = 1))
+
+  p_prop_all <- ggplot(all_sum, aes(x = length_bin, y = prop_DE, fill = Platform)) +
+    geom_col(position = position_dodge(0.7), width = 0.65) +
+    facet_wrap(~ Contrast) +
+    scale_fill_manual(values = color_palette) +
+    scale_y_continuous(labels = percent_format()) +
+    labs(title = paste(title_prefix, "— DE rate by length bin, all contrasts"),
+         y = "Proportion called DE", x = "Transcript length category") +
+    theme_minimal() +
+    theme(axis.text.x = element_text(angle = 30, hjust = 1))
+
+  p_count_all <- ggplot(all_sum, aes(x = length_bin, y = n_DE, fill = Platform)) +
+    geom_col(position = position_dodge(0.7), width = 0.65) +
+    facet_wrap(~ Contrast) +
+    scale_fill_manual(values = color_palette) +
+    labs(title = paste(title_prefix, "— DE count by length bin, all contrasts"),
+         y = "Number of DE transcripts", x = "Transcript length category") +
+    theme_minimal() +
+    theme(axis.text.x = element_text(angle = 30, hjust = 1))
+
+  # logCPM distribution by length bin (AvsL) — shows whether longer transcripts
+  # simply have higher expression, which would confound the DE-rate trend.
+  p_logcpm_bin <- bin_df %>%
+    filter(!is.na(length_bin), !is.na(avg_logCPM), Contrast == "AvsL") %>%
+    mutate(Platform = factor(Platform, levels = names(color_palette))) %>%
+    ggplot(aes(x = length_bin, y = avg_logCPM, fill = Platform)) +
+    geom_violin(scale = "width", alpha = 0.7, trim = TRUE) +
+    geom_boxplot(width = 0.12, outlier.shape = NA, fill = "white", alpha = 0.8) +
+    facet_wrap(~ Platform, nrow = 1) +
+    scale_fill_manual(values = color_palette) +
+    labs(title = paste(title_prefix, "— avg logCPM by length bin (AvsL)"),
+         subtitle = "Expression level per bin per platform — confound check for DE-rate trend",
+         y = "Average logCPM", x = "Transcript length category") +
+    theme_minimal() +
+    theme(legend.position = "none",
+          axis.text.x = element_text(angle = 30, hjust = 1))
+
+  list(avsl_prop = p_prop_avsl, avsl_count = p_count_avsl,
+       all_prop  = p_prop_all,  all_count  = p_count_all,
+       logcpm_bin = p_logcpm_bin)
+}
+
+plot_logcpm_analysis <- function(pp_df, absence_df, title_prefix = "") {
+  # 1. logCPM distribution: platform-specific vs shared ≥2, per platform (AvsL)
+  p_pp <- pp_df %>%
+    filter(!is.na(avg_logCPM), Contrast == "AvsL") %>%
+    ggplot(aes(x = DetectionLabel, y = avg_logCPM, fill = Platform)) +
+    geom_violin(scale = "width", alpha = 0.7, trim = TRUE) +
+    geom_boxplot(width = 0.12, outlier.shape = NA, fill = "white", alpha = 0.8) +
+    facet_grid(~ Platform) +
+    scale_fill_manual(values = color_palette) +
+    labs(title = paste(title_prefix, "— logCPM: platform-specific vs shared ≥2 (AvsL)"),
+         y = "Average logCPM", x = NULL) +
+    theme_minimal() +
+    theme(legend.position = "none", axis.text.x = element_text(angle = 35, hjust = 1))
+
+  # 2. logCPM stats table: medians + Wilcoxon per platform
+  stats_tbl <- pp_df %>%
+    filter(!is.na(avg_logCPM), Contrast == "AvsL") %>%
+    group_by(Platform) %>%
+    summarise(
+      n_specific          = sum(DetectionLabel == "Platform-specific"),
+      n_shared            = sum(DetectionLabel == "Shared ≥2"),
+      n_any_de            = sum(DetectionLabel == "Any platform DE"),
+      med_logCPM_specific = round(median(avg_logCPM[DetectionLabel == "Platform-specific"], na.rm=TRUE), 2),
+      med_logCPM_shared   = round(median(avg_logCPM[DetectionLabel == "Shared ≥2"],         na.rm=TRUE), 2),
+      med_logCPM_any_de   = round(median(avg_logCPM[DetectionLabel == "Any platform DE"],   na.rm=TRUE), 2),
+      p_spe_vs_shared = {
+        g1 <- avg_logCPM[DetectionLabel == "Platform-specific"]
+        g2 <- avg_logCPM[DetectionLabel == "Shared ≥2"]
+        if (length(g1)<3 || length(g2)<3) NA_real_ else wilcox.test(g1,g2)$p.value
+      },
+      p_spe_vs_any = {
+        g1 <- avg_logCPM[DetectionLabel == "Platform-specific"]
+        g2 <- avg_logCPM[DetectionLabel == "Any platform DE"]
+        if (length(g1)<3 || length(g2)<3) NA_real_ else wilcox.test(g1,g2)$p.value
+      }, .groups = "drop"
+    ) %>%
+    mutate(p_spe_vs_shared_adj = p.adjust(p_spe_vs_shared, method = "BH"),
+           p_spe_vs_any_adj    = p.adjust(p_spe_vs_any,    method = "BH"),
+           across(starts_with("p_"), ~formatC(.x, digits = 3, format = "e"))) %>%
+    knitr::kable(caption = paste(title_prefix,
+      "— logCPM Wilcoxon: platform-specific vs shared ≥2 vs any platform DE (AvsL)"), row.names = FALSE)
+
+  # 3. logCPM by absence category (AvsL)
+  cat_colours <- c(
+    "Platform-specific absence"   = "#E69F00",
+    "Platform-specific detection" = "#0072B2",
+    "Detected ≥2 support"         = "#009E73"
+  )
+  p_abs <- absence_df %>%
+    filter(!is.na(avg_logCPM), Contrast == "AvsL") %>%
+    ggplot(aes(x = Category, y = avg_logCPM, fill = Category)) +
+    geom_violin(scale = "width", alpha = 0.7, trim = TRUE) +
+    geom_boxplot(width = 0.12, outlier.shape = NA, fill = "white", alpha = 0.8) +
+    facet_wrap(~ Platform, nrow = 1) +
+    scale_fill_manual(values = cat_colours) +
+    labs(title = paste(title_prefix,
+           "— logCPM: absence / platform-specific detection / detected ≥2 support (AvsL)"),
+         y = "Average logCPM", x = NULL) +
+    theme_minimal() +
+    theme(legend.position = "bottom", axis.text.x = element_blank(),
+          axis.ticks.x = element_blank())
+
+  list(by_detection = p_pp, stats_table = stats_tbl, by_absence = p_abs)
+}
+
+plot_absence_analysis <- function(absence_detection_df, title_prefix = "") {
+  # Absence-count bar chart (one facet per contrast)
+  counts_p <- absence_detection_df %>%
+    filter(Category == "Platform-specific absence") %>%
+    count(Platform, Contrast, name = "n_absent") %>%
+    ggplot(aes(x = Platform, y = n_absent, fill = Platform)) +
+    geom_col(width = 0.65) +
+    geom_text(aes(label = n_absent), vjust = -0.4, size = 3) +
+    facet_wrap(~ Contrast) +
+    scale_fill_manual(values = color_palette) +
+    labs(title = paste(title_prefix, "— platform-specific absence counts"),
+         y = "Number of transcripts", x = NULL) +
+    theme_minimal() +
+    theme(legend.position = "none", axis.text.x = element_text(angle = 35, hjust = 1))
+
+  # Recode to 2-group comparison: absence vs any DE
+  cat_colours <- c(
+    "Platform-specific absence" = "#E69F00",
+    "Any platform DE"           = "#009E73"
+  )
+
+  plot_df <- absence_detection_df %>%
+    mutate(Category2 = case_when(
+      Category == "Platform-specific absence" ~ "Platform-specific absence",
+      TRUE                                    ~ "Any platform DE"
+    ),
+    Category2 = factor(Category2, levels = c("Platform-specific absence", "Any platform DE")))
+
+  # Violin + box: length, faceted by platform (AvsL)
+  p_len <- plot_df %>%
+    filter(!is.na(Length), Contrast == "AvsL") %>%
+    ggplot(aes(x = Category2, y = Length / 1000, fill = Category2)) +
+    geom_violin(scale = "width", alpha = 0.7, trim = TRUE) +
+    geom_boxplot(width = 0.12, outlier.shape = NA, fill = "white", alpha = 0.8) +
+    facet_wrap(~ Platform, nrow = 1) +
+    scale_fill_manual(values = cat_colours) +
+    scale_y_log10(labels = comma) +
+    labs(title = paste(title_prefix,
+           "— length: platform-specific absence vs any platform DE (AvsL)"),
+         y = "Transcript length (kb, log10)", x = NULL) +
+    theme_minimal() +
+    theme(legend.position = "bottom", axis.text.x = element_blank(),
+          axis.ticks.x = element_blank())
+
+  make_iso_violin <- function(df, col, ylab) {
+    df %>%
+      filter(!is.na(.data[[col]]), Contrast == "AvsL") %>%
+      ggplot(aes(x = Category2, y = .data[[col]], fill = Category2)) +
+      geom_violin(scale = "width", alpha = 0.7, trim = TRUE) +
+      geom_boxplot(width = 0.12, outlier.shape = NA, fill = "white", alpha = 0.8) +
+      facet_wrap(~ Platform, nrow = 1) +
+      scale_fill_manual(values = cat_colours) +
+      scale_y_log10() +
+      labs(title = paste(title_prefix, "—", ylab,
+             ": absence vs any platform DE (AvsL)"),
+           y = paste(ylab, "(log10)"), x = NULL) +
+      theme_minimal() +
+      theme(legend.position = "bottom", axis.text.x = element_blank(),
+            axis.ticks.x = element_blank())
+  }
+
+  p_iso      <- make_iso_violin(plot_df, "iso_count",      "Annotation isoform count")
+  p_expr_iso <- make_iso_violin(plot_df, "expr_iso_count", "Expressed isoform count")
+
+  # Wilcoxon: absence vs any DE (per platform, AvsL)
+  stats_tbl <- plot_df %>%
+    filter(Contrast == "AvsL", !is.na(Length)) %>%
+    group_by(Platform) %>%
+    summarise(
+      n_absent    = sum(Category2 == "Platform-specific absence"),
+      n_any_de    = sum(Category2 == "Any platform DE"),
+      med_len_absent_kb = round(median(Length[Category2 == "Platform-specific absence"], na.rm=TRUE)/1000, 2),
+      med_len_any_de_kb = round(median(Length[Category2 == "Any platform DE"],           na.rm=TRUE)/1000, 2),
+      med_anno_absent   = round(median(iso_count[Category2 == "Platform-specific absence"],   na.rm=TRUE), 1),
+      med_anno_any_de   = round(median(iso_count[Category2 == "Any platform DE"],             na.rm=TRUE), 1),
+      med_expr_absent   = round(median(expr_iso_count[Category2 == "Platform-specific absence"], na.rm=TRUE), 1),
+      med_expr_any_de   = round(median(expr_iso_count[Category2 == "Any platform DE"],           na.rm=TRUE), 1),
+      p_len = {
+        g1 <- Length[Category2 == "Platform-specific absence"]
+        g2 <- Length[Category2 == "Any platform DE"]
+        if (length(g1)<3 || length(g2)<3) NA_real_ else wilcox.test(g1,g2)$p.value
+      },
+      p_expr = {
+        g1 <- expr_iso_count[Category2 == "Platform-specific absence"]
+        g2 <- expr_iso_count[Category2 == "Any platform DE"]
+        if (length(g1)<3 || length(g2)<3) NA_real_ else wilcox.test(g1,g2)$p.value
+      }, .groups = "drop"
+    ) %>%
+    mutate(p_len_adj  = formatC(p.adjust(p_len,  method="BH"), digits=3, format="e"),
+           p_expr_adj = formatC(p.adjust(p_expr, method="BH"), digits=3, format="e"),
+           p_len      = formatC(p_len,  digits=3, format="e"),
+           p_expr     = formatC(p_expr, digits=3, format="e")) %>%
+    knitr::kable(caption = paste(title_prefix,
+      "— absence vs any platform DE: length & isoform counts (AvsL)"),
+      row.names = FALSE)
+
+  list(counts = counts_p, length_iso = p_len / p_iso / p_expr_iso, table = stats_tbl)
+}
+
+plot_pcr_group_analysis <- function(pcr_df, mat_list, all_tx_universe, title_prefix = "") {
+  counts_p <- pcr_df %>%
+    count(PCR_group, Contrast) %>%
+    ggplot(aes(x = PCR_group, y = n, fill = PCR_group)) +
+    geom_col(width = 0.65) +
+    geom_text(aes(label = n), vjust = -0.4, size = 3) +
+    facet_wrap(~ Contrast) +
+    scale_fill_brewer(palette = "Set1") +
+    labs(title = paste(title_prefix, "— PCR-group DE counts"),
+         y = "Number of transcripts", x = NULL) +
+    theme_minimal() +
+    theme(legend.position = "none", axis.text.x = element_text(angle = 25, hjust = 1))
+
+  p_len <- pcr_df %>%
+    filter(!is.na(Length)) %>%
+    ggplot(aes(x = PCR_group, y = Length / 1000, fill = PCR_group)) +
+    geom_violin(scale = "width", alpha = 0.7, trim = TRUE) +
+    geom_boxplot(width = 0.14, outlier.shape = NA, fill = "white", alpha = 0.8) +
+    facet_wrap(~ Contrast) +
+    scale_fill_brewer(palette = "Set1") +
+    scale_y_log10(labels = comma) +
+    labs(title = paste(title_prefix, "— length by PCR group"),
+         y = "Transcript length (kb, log10)", x = NULL) +
+    theme_minimal() +
+    theme(legend.position = "none", axis.text.x = element_text(angle = 25, hjust = 1))
+
+  make_pcr_iso_violin <- function(col, ylab) {
+    pcr_df %>%
+      filter(!is.na(.data[[col]])) %>%
+      ggplot(aes(x = PCR_group, y = .data[[col]], fill = PCR_group)) +
+      geom_violin(scale = "width", alpha = 0.7, trim = TRUE) +
+      geom_boxplot(width = 0.14, outlier.shape = NA, fill = "white", alpha = 0.8) +
+      facet_wrap(~ Contrast) +
+      scale_fill_brewer(palette = "Set1") +
+      scale_y_log10() +
+      labs(title = paste(title_prefix, "—", ylab, "by PCR group"),
+           y = paste(ylab, "(log10)"), x = NULL) +
+      theme_minimal() +
+      theme(legend.position = "none", axis.text.x = element_text(angle = 25, hjust = 1))
+  }
+
+  p_iso      <- make_pcr_iso_violin("iso_count",      "Annotation isoform count")
+  p_expr_iso <- make_pcr_iso_violin("expr_iso_count", "Expressed isoform count")
+
+  # Length-bin composition within PCR groups
+  pcr_bin_df <- build_length_bin_df(mat_list, all_tx_universe) %>%
+    left_join(pcr_df %>% select(Gene, Contrast, PCR_group), by = c("tx_id" = "Gene", "Contrast"))
+
+  p_bin <- bind_rows(lapply(names(mat_list), function(ct) {
+    mat <- mat_list[[ct]]
+    pcr_ids    <- mat %>% filter(PacBio==1, `ONT cDNA`==1, Illumina==0, `ONT dRNA`==0) %>% pull(Gene)
+    nonpcr_ids <- mat %>% filter(Illumina==1, `ONT dRNA`==1, PacBio==0, `ONT cDNA`==0) %>% pull(Gene)
+    all4_ids   <- mat %>% filter(PacBio==1, `ONT cDNA`==1, Illumina==1, `ONT dRNA`==1)  %>% pull(Gene)
+    all_tx_universe %>%
+      mutate(Contrast = ct,
+             PCR_group = case_when(
+               tx_id %in% pcr_ids    ~ "PCR-specific",
+               tx_id %in% nonpcr_ids ~ "Non-PCR-specific",
+               tx_id %in% all4_ids   ~ "All 4", TRUE ~ NA_character_)) %>%
+      filter(!is.na(PCR_group))
+  })) %>%
+    filter(!is.na(length_bin)) %>%
+    count(PCR_group, length_bin, Contrast) %>%
+    mutate(PCR_group = factor(PCR_group, levels = c("PCR-specific","Non-PCR-specific","All 4"))) %>%
+    ggplot(aes(x = length_bin, y = n, fill = PCR_group)) +
+    geom_col(position = position_fill(), width = 0.75) +
+    facet_wrap(~ Contrast) +
+    scale_fill_brewer(palette = "Set1") +
+    scale_y_continuous(labels = percent_format()) +
+    labs(title = paste(title_prefix, "— length-bin composition by PCR group"),
+         y = "Proportion", x = "Length category") +
+    theme_minimal() +
+    theme(axis.text.x = element_text(angle = 25, hjust = 1))
+
+  stats_tbl <- pcr_df %>%
+    filter(Contrast == "AvsL", PCR_group %in% c("PCR-specific","Non-PCR-specific")) %>%
+    group_by(PCR_group) %>%
+    summarise(n = n(),
+              median_length_kb      = round(median(Length,         na.rm = TRUE) / 1000, 2),
+              median_anno_iso_count = round(median(iso_count,      na.rm = TRUE), 1),
+              median_expr_iso_count = round(median(expr_iso_count, na.rm = TRUE), 1),
+              .groups = "drop") %>%
+    knitr::kable(caption = paste(title_prefix,
+      "— PCR-specific vs Non-PCR-specific summary (AvsL)"), row.names = FALSE)
+
+  list(counts = counts_p, length = p_len, isoform = p_iso, expr_isoform = p_expr_iso,
+       length_bin = p_bin, table = stats_tbl)
+}
+```
+
+## 3b–3e: Transcript length bias, isoform count, and length-bin enrichment {.tabset}
+
+Categories per transcript:
+- **All 4** — DE in all four platforms
+- **3 platforms** — DE in exactly three
+- **2 platforms** — DE in exactly two
+- **Platform-specific** — DE in exactly one
+- **Platform-specific absence** — NOT DE in the focal platform, but DE in all three others
+- **Not DE** — not DE in any platform
+
+```{r shared-dte-data}
+# Build annotation data frames for the shared-feature analysis
+shared_cat_df <- bind_rows(lapply(contrasts_dte, function(ct)
+  annotate_mat(mat_list_dte[[ct]], ct)))
+
+shared_pp_df  <- build_per_platform_df(mat_list_dte)
+
+# Transcript universe for length-bin analysis (shared filtering: tested in shared set)
+all_tx_tested <- tx_length_lookup %>%
+  filter(tx_id %in% rownames(ill_bulk.scale_dge), grepl("^ENS", tx_id)) %>%
+  mutate(length_bin = make_length_decile_bins(Length))
+
+shared_absence_df <- build_absence_detection_df(mat_list_dte)
+```
+
+### Platform-specific vs shared: length per platform
+
+```{r shared-length-by-platform, fig.height=8, fig.width=14}
+shared_len_plots <- plot_length_overlap(shared_cat_df, shared_pp_df, "Shared features")
+print(shared_len_plots$by_platform)
+```
+
+### Length statistics (AvsL)
+
+```{r shared-length-stats}
+print(plot_length_stats_table(shared_pp_df, "Shared features —"))
+```
+
+### Annotation isoform count per platform
+
+```{r shared-isoform-by-platform, fig.height=8, fig.width=14}
+shared_iso_plots <- plot_isoform_overlap(shared_cat_df, shared_pp_df, "Shared features")
+print(shared_iso_plots$anno_by_platform)
+```
+
+### Expressed isoform count per platform
+
+```{r shared-expr-iso-by-platform, fig.height=8, fig.width=14}
+print(shared_iso_plots$expr_by_platform)
+```
+
+### Isoform count statistics (AvsL)
+
+```{r shared-isoform-stats}
+print(plot_isoform_stats_table(shared_pp_df, "Shared features —"))
+```
+
+### DE rate by length bin (AvsL)
+
+```{r shared-length-bin-avsl, fig.height=5, fig.width=18}
+shared_bin_plots <- plot_length_bin_enrichment(mat_list_dte, all_tx_tested, "Shared features")
+print(shared_bin_plots$avsl_prop)
+```
+
+### DE count by length bin (AvsL)
+
+```{r shared-length-bin-count-avsl, fig.height=5, fig.width=18}
+print(shared_bin_plots$avsl_count)
+```
+
+### DE rate by length bin (all contrasts)
+
+```{r shared-length-bin-all, fig.height=9, fig.width=18}
+print(shared_bin_plots$all_prop)
+```
+
+### DE count by length bin (all contrasts)
+
+```{r shared-length-bin-count-all, fig.height=9, fig.width=18}
+print(shared_bin_plots$all_count)
+```
+
+### logCPM by length bin (AvsL)
+
+```{r shared-logcpm-bin, fig.height=6, fig.width=16}
+print(shared_bin_plots$logcpm_bin)
+```
+
+## 3f. Platform-specific absence {.tabset}
+
+A transcript is **platform-specifically absent** when it is called DE by all three other platforms
+but *not* by the focal platform.
+
+### Absence counts
+
+```{r shared-absence-counts, fig.height=4, fig.width=10}
+shared_abs_res <- plot_absence_analysis(shared_absence_df, "Shared features")
+print(shared_abs_res$counts)
+```
+
+### Length and isoform count (AvsL)
+
+```{r shared-absence-length-iso, fig.height=9, fig.width=14}
+print(shared_abs_res$length_iso)
+```
+
+### Summary table (AvsL)
+
+```{r shared-absence-table}
+print(shared_abs_res$table)
+```
+
+## 3g. Average logCPM {.tabset}
+
+Average log-CPM (computed from TMM-normalized counts before overdispersion scaling) quantifies
+transcript expression level. Platform-specific DE calls at low expression may reflect noise,
+while shared DE calls should be enriched for highly expressed transcripts.
+
+### logCPM: platform-specific vs shared
+
+```{r shared-logcpm-pp, fig.height=4, fig.width=12}
+shared_logcpm_res <- plot_logcpm_analysis(shared_pp_df, shared_absence_df, "Shared features")
+print(shared_logcpm_res$by_detection)
+```
+
+### logCPM statistics (AvsL)
+
+```{r shared-logcpm-stats}
+print(shared_logcpm_res$stats_table)
+```
+
+### logCPM: absence / detection / ≥2-supported
+
+```{r shared-logcpm-absence, fig.height=5, fig.width=14}
+print(shared_logcpm_res$by_absence)
+```
+
+
+# Part 4: Platform-independent feature selection
+
+Each platform independently applies `filterByExpr` on its own data, with no requirement that
+the feature be expressed in any other platform. DE is then run per-platform on its own feature
+set. Upset matrices are built on the union of all tested features, with a 0 assigned for any
+platform that did not test a given feature (i.e., it was filtered out and cannot be DE).
+
+```{r indep-gene-filter, results='hide'}
+# Reload raw gene-level DGE (unfiltered) from original RDS bundles — before any
+# shared filtering was applied in Part 1.
+ill_raw.gene  <- extract_and_normalize_ids(bulk_obj[["ill_bulk.gene.dge"]])
+ont_raw.gene  <- normalize_rownames(isoquant_ont_obj[["ont_bulk.gene.dge"]])
+pb_raw.gene   <- normalize_rownames(isoquant_pb_obj[["pb_bulk.gene.dge"]])
+drna_raw.gene <- normalize_rownames(isoquant_drna_obj[["dRNA_bulk.gene.dge"]])
+
+# Restrict to the union of features present in at least one platform
+# (we already trimmed to common_genes in Part 1; re-intersect to be safe)
+all_gene_ids <- Reduce(union, lapply(list(ill_raw.gene, ont_raw.gene,
+                                          pb_raw.gene, drna_raw.gene), rownames))
+
+# Independent filterByExpr per platform
+keep_ill_i  <- rownames(ill_raw.gene)  %in% all_gene_ids &
+  filterByExpr(ill_raw.gene[rownames(ill_raw.gene) %in% all_gene_ids, ],
+               group = ill_raw.gene$samples$group)
+keep_ont_i  <- rownames(ont_raw.gene)  %in% all_gene_ids &
+  filterByExpr(ont_raw.gene[rownames(ont_raw.gene) %in% all_gene_ids, ],
+               group = ont_raw.gene$samples$group)
+keep_pb_i   <- rownames(pb_raw.gene)   %in% all_gene_ids &
+  filterByExpr(pb_raw.gene[rownames(pb_raw.gene) %in% all_gene_ids, ],
+               group = pb_raw.gene$samples$group)
+keep_drna_i <- rownames(drna_raw.gene) %in% all_gene_ids &
+  filterByExpr(drna_raw.gene[rownames(drna_raw.gene) %in% all_gene_ids, ],
+               group = drna_raw.gene$samples$group)
+
+ill_indep.gene  <- ill_raw.gene[keep_ill_i,  , keep.lib.sizes = FALSE]
+ont_indep.gene  <- ont_raw.gene[keep_ont_i,  , keep.lib.sizes = FALSE]
+pb_indep.gene   <- pb_raw.gene[keep_pb_i,   , keep.lib.sizes = FALSE]
+drna_indep.gene <- drna_raw.gene[keep_drna_i,, keep.lib.sizes = FALSE]
+
+ill_dge_indep.list  <- DGE.edgeR_human(ill_indep.gene[is.human(ill_indep.gene),, keep.lib.sizes=FALSE])
+ont_dge_indep.list  <- DGE.edgeR_human(ont_indep.gene[is.human(ont_indep.gene),, keep.lib.sizes=FALSE])
+pb_dge_indep.list   <- DGE.edgeR_human(pb_indep.gene[is.human(pb_indep.gene),,  keep.lib.sizes=FALSE])
+drna_dge_indep.list <- DGE.edgeR_human(drna_indep.gene[is.human(drna_indep.gene),, keep.lib.sizes=FALSE])
+
+cat(sprintf("Independent filter — features per platform: Illumina=%d, ONT cDNA=%d, PacBio=%d, ONT dRNA=%d\n",
+    sum(is.human(ill_indep.gene)), sum(is.human(ont_indep.gene)),
+    sum(is.human(pb_indep.gene)),  sum(is.human(drna_indep.gene))))
+```
+
+```{r indep-gene-upset-build}
+# Build union upset matrices: fill 0 for features not tested in a platform
+build_union_mat <- function(de_lists, contrast) {
+  platforms <- names(de_lists)
+  de_features <- lapply(de_lists, function(dl) {
+    x <- decideTests(dl[[paste0(contrast, ".DE")]], lfc = params$log2FC_cutoff)
+    rownames(x)[x != 0]
+  })
+  all_features <- Reduce(union, de_features)
+  mat <- tibble(Gene = all_features)
+  for (p in platforms) {
+    mat[[p]] <- as.integer(mat$Gene %in% de_features[[p]])
+  }
+  mat
+}
+
+indep_dge_lists <- list(
+  "Illumina" = ill_dge_indep.list,
+  "ONT cDNA" = ont_dge_indep.list,
+  "PacBio"   = pb_dge_indep.list,
+  "ONT dRNA" = drna_dge_indep.list
+)
+
+mat_list_dge_indep <- setNames(
+  lapply(contrasts_dge, function(ct) build_union_mat(indep_dge_lists, ct)),
+  contrasts_dge
+)
+```
+
+```{r indep-tx-filter, results='hide'}
+# Reload raw transcript-level objects from original RDS bundles — before any
+# shared filtering was applied in Part 1.
+ill_raw.tx  <- extract_and_normalize_ids(bulk_obj[["ill_bulk.tx.dge"]])
+ont_raw.tx  <- normalize_rownames(isoquant_ont_obj[["ont_bulk.tx.dge"]])
+pb_raw.tx   <- normalize_rownames(isoquant_pb_obj[["pb_bulk.tx.dge"]])
+drna_raw.tx <- normalize_rownames(isoquant_drna_obj[["dRNA_bulk.tx.dge"]])
+
+# Independent filterByExpr per platform (min.count=5)
+keep_ill_tx  <- filterByExpr(ill_raw.tx,  group = ill_raw.tx$samples$group,  min.count = 5)
+keep_ont_tx  <- filterByExpr(ont_raw.tx,  group = ont_raw.tx$samples$group,  min.count = 5)
+keep_pb_tx   <- filterByExpr(pb_raw.tx,   group = pb_raw.tx$samples$group,   min.count = 5)
+keep_drna_tx <- filterByExpr(drna_raw.tx, group = drna_raw.tx$samples$group, min.count = 5)
+
+ill_indep.tx  <- ill_raw.tx[keep_ill_tx,  , keep.lib.sizes = FALSE]
+ont_indep.tx  <- ont_raw.tx[keep_ont_tx,  , keep.lib.sizes = FALSE]
+pb_indep.tx   <- pb_raw.tx[keep_pb_tx,   , keep.lib.sizes = FALSE]
+drna_indep.tx <- drna_raw.tx[keep_drna_tx,, keep.lib.sizes = FALSE]
+
+# TMM normalization (before overdispersion scaling, so logCPM reflects true expression)
+ill_indep.tx  <- calcNormFactors(ill_indep.tx,  method = "TMM")
+ont_indep.tx  <- calcNormFactors(ont_indep.tx,  method = "TMM")
+pb_indep.tx   <- calcNormFactors(pb_indep.tx,   method = "TMM")
+drna_indep.tx <- calcNormFactors(drna_indep.tx, method = "TMM")
+
+# Per-platform average logCPM for independent-filter set
+logcpm_lookup <- bind_rows(lapply(
+  list(Illumina   = ill_indep.tx,
+       `ONT cDNA` = ont_indep.tx,
+       PacBio     = pb_indep.tx,
+       `ONT dRNA` = drna_indep.tx),
+  function(dge) tibble(tx_id = rownames(dge), avg_logCPM = rowMeans(cpm(dge, log = TRUE)))
+), .id = "Platform")
+
+# Overdispersion scaling for DTE model — Illumina only (IsoQuant LR: no scaling)
+ill_indep.tx$counts  <- ill_indep.tx$counts / ill_indep.tx$genes$Overdispersion
+# ont_indep.tx, pb_indep.tx, drna_indep.tx: IsoQuant — counts used as-is
+
+ill_dte_indep.list  <- DTE.edgeR_human(ill_indep.tx[is.human(ill_indep.tx),,  keep.lib.sizes=FALSE])
+ont_dte_indep.list  <- DTE.edgeR_human(ont_indep.tx[is.human(ont_indep.tx),,  keep.lib.sizes=FALSE])
+pb_dte_indep.list   <- DTE.edgeR_human(pb_indep.tx[is.human(pb_indep.tx),,   keep.lib.sizes=FALSE])
+drna_dte_indep.list <- DTE.edgeR_human(drna_indep.tx[is.human(drna_indep.tx),, keep.lib.sizes=FALSE])
+
+cat(sprintf("Independent filter — transcripts per platform: Illumina=%d, ONT cDNA=%d, PacBio=%d, ONT dRNA=%d\n",
+    sum(is.human(ill_indep.tx)), sum(is.human(ont_indep.tx)),
+    sum(is.human(pb_indep.tx)),  sum(is.human(drna_indep.tx))))
+```
+
+```{r indep-tx-upset-build}
+indep_dte_lists <- list(
+  "Illumina" = ill_dte_indep.list,
+  "ONT cDNA" = ont_dte_indep.list,
+  "PacBio"   = pb_dte_indep.list,
+  "ONT dRNA" = drna_dte_indep.list
+)
+
+mat_list_dte_indep <- setNames(
+  lapply(contrasts_dte, function(ct) build_union_mat(indep_dte_lists, ct)),
+  contrasts_dte
+)
+```
+
+## Transcript-level inconsistency — platform-independent filtering {.tabset}
+
+The same analyses as Part 3 are repeated here on the platform-independent matrices.
+
+```{r indep-dte-data}
+# Transcript universe for independent filtering: union of all transcripts tested
+# in at least one platform
+indep_tx_ids <- Reduce(union, list(
+  rownames(ill_indep.tx),
+  rownames(ont_indep.tx),
+  rownames(pb_indep.tx),
+  rownames(drna_indep.tx)
+))
+# Re-use tx_length_lookup (covers full annotation; will NA for absent entries)
+all_tx_tested_indep <- tx_length_lookup %>%
+  filter(tx_id %in% indep_tx_ids, grepl("^ENS", tx_id)) %>%
+  mutate(length_bin = make_length_decile_bins(Length))
+
+# Expressed isoform count for independent filter: isoforms per gene in the
+# union of all four platforms' independent-filter test sets.
+expressed_iso_count_lookup <- tx_length_lookup %>%
+  filter(tx_id %in% indep_tx_ids, grepl("^ENS", tx_id)) %>%
+  group_by(gene_id) %>%
+  mutate(expr_iso_count = n()) %>%
+  ungroup() %>%
+  mutate(tx_name_clean = sub("\\..*", "", tx_id_clean)) %>%
+  select(tx_name_clean, expr_iso_count) %>%
+  distinct()
+
+indep_cat_df      <- bind_rows(lapply(contrasts_dte, function(ct)
+  annotate_mat(mat_list_dte_indep[[ct]], ct)))
+indep_pp_df       <- build_per_platform_df(mat_list_dte_indep)
+indep_absence_df  <- build_absence_detection_df(mat_list_dte_indep)
+```
+
+### Platform-specific vs shared: length per platform
+
+```{r indep-length-by-platform, fig.height=8, fig.width=14}
+indep_len_plots <- plot_length_overlap(indep_cat_df, indep_pp_df, "Independent filtering")
+print(indep_len_plots$by_platform)
+```
+
+### Length statistics (AvsL)
+
+```{r indep-length-stats}
+print(plot_length_stats_table(indep_pp_df, "Independent filtering —"))
+```
+
+### Annotation isoform count per platform
+
+```{r indep-isoform-by-platform, fig.height=8, fig.width=14}
+indep_iso_plots <- plot_isoform_overlap(indep_cat_df, indep_pp_df, "Independent filtering")
+print(indep_iso_plots$anno_by_platform)
+```
+
+### Expressed isoform count per platform
+
+```{r indep-expr-iso-by-platform, fig.height=8, fig.width=14}
+print(indep_iso_plots$expr_by_platform)
+```
+
+### Isoform count statistics (AvsL)
+
+```{r indep-isoform-stats}
+print(plot_isoform_stats_table(indep_pp_df, "Independent filtering —"))
+```
+
+### DE rate by length bin (AvsL)
+
+```{r indep-length-bin-avsl, fig.height=5, fig.width=18}
+indep_bin_plots <- plot_length_bin_enrichment(mat_list_dte_indep, all_tx_tested_indep,
+                                              "Independent filtering")
+print(indep_bin_plots$avsl_prop)
+```
+
+### DE count by length bin (AvsL)
+
+```{r indep-length-bin-count-avsl, fig.height=5, fig.width=18}
+print(indep_bin_plots$avsl_count)
+```
+
+### DE rate by length bin (all contrasts)
+
+```{r indep-length-bin-all, fig.height=9, fig.width=18}
+print(indep_bin_plots$all_prop)
+```
+
+### DE count by length bin (all contrasts)
+
+```{r indep-length-bin-count-all, fig.height=9, fig.width=18}
+print(indep_bin_plots$all_count)
+```
+
+### logCPM by length bin (AvsL)
+
+```{r indep-logcpm-bin, fig.height=6, fig.width=16}
+print(indep_bin_plots$logcpm_bin)
+```
+
+### Platform-specific absence counts
+
+```{r indep-absence-counts, fig.height=4, fig.width=10}
+indep_abs_res <- plot_absence_analysis(indep_absence_df, "Independent filtering")
+print(indep_abs_res$counts)
+```
+
+### Absence — length and isoform count (AvsL)
+
+```{r indep-absence-length-iso, fig.height=9, fig.width=14}
+print(indep_abs_res$length_iso)
+```
+
+### Absence — summary table (AvsL)
+
+```{r indep-absence-table}
+print(indep_abs_res$table)
+```
+
+### logCPM: platform-specific vs shared
+
+```{r indep-logcpm-pp, fig.height=4, fig.width=12}
+indep_logcpm_res <- plot_logcpm_analysis(indep_pp_df, indep_absence_df, "Independent filtering")
+print(indep_logcpm_res$by_detection)
+```
+
+### logCPM statistics (AvsL)
+
+```{r indep-logcpm-stats}
+print(indep_logcpm_res$stats_table)
+```
+
+### logCPM: absence / detection / ≥2-supported
+
+```{r indep-logcpm-absence, fig.height=5, fig.width=14}
+print(indep_logcpm_res$by_absence)
+```
+
+---
+
+## Summary comparison: shared vs independent filtering
+
+### Mean Overlap
+
+```{r mo-comparison}
+mo_gene_indep <- sapply(contrasts_dge, function(ct)
+  calc_mean_overlap(mat_list_dge_indep[[ct]]))
+mo_tx_indep   <- sapply(contrasts_dte, function(ct)
+  calc_mean_overlap(mat_list_dte_indep[[ct]]))
+
+mo_compare <- bind_rows(
+  tibble(Level="Gene",       Filter="Shared (AND)",
+         AvsL=round(mo_gene_per_contrast["AvsL"],3), PvsL=round(mo_gene_per_contrast["PvsL"],3),
+         AvsP=round(mo_gene_per_contrast["AvsP"],3), Overall=round(mean(mo_gene_per_contrast),3)),
+  tibble(Level="Gene",       Filter="Independent",
+         AvsL=round(mo_gene_indep["AvsL"],3), PvsL=round(mo_gene_indep["PvsL"],3),
+         AvsP=round(mo_gene_indep["AvsP"],3), Overall=round(mean(mo_gene_indep),3)),
+  tibble(Level="Transcript", Filter="Shared (AND)",
+         AvsL=round(mo_tx_per_contrast["AvsL"],3), PvsL=round(mo_tx_per_contrast["PvsL"],3),
+         AvsP=round(mo_tx_per_contrast["AvsP"],3), Overall=round(mean(mo_tx_per_contrast),3)),
+  tibble(Level="Transcript", Filter="Independent",
+         AvsL=round(mo_tx_indep["AvsL"],3), PvsL=round(mo_tx_indep["PvsL"],3),
+         AvsP=round(mo_tx_indep["AvsP"],3), Overall=round(mean(mo_tx_indep),3))
+)
+knitr::kable(mo_compare,
+  caption = "Mean Overlap: shared-feature vs platform-independent filtering",
+  row.names = FALSE)
+```
+
+```{r mo-comparison-plot, fig.height=4, fig.width=9}
+mo_compare %>%
+  pivot_longer(c(AvsL, PvsL, AvsP, Overall), names_to = "Contrast", values_to = "MeanOverlap") %>%
+  mutate(Contrast = factor(Contrast, levels = c("AvsL","PvsL","AvsP","Overall"))) %>%
+  ggplot(aes(x = Contrast, y = MeanOverlap, fill = Level, alpha = Filter)) +
+  geom_col(position = position_dodge(0.75), width = 0.7) +
+  scale_fill_manual(values = c(Gene = "#4e79a7", Transcript = "#f28e2b")) +
+  scale_alpha_manual(values = c("Shared (AND)" = 1.0, "Independent" = 0.55)) +
+  scale_y_continuous(limits = c(0, 1), labels = percent_format()) +
+  geom_text(aes(label = sprintf("%.3f", MeanOverlap)),
+            position = position_dodge(0.75), vjust = -0.4, size = 2.5) +
+  labs(title = "Mean Overlap: shared vs independent filterByExpr",
+       y = "Mean Overlap", x = "Contrast",
+       fill = "Feature level", alpha = "Filtering strategy") +
+  theme_minimal()
+```
+
+### Per-platform Mean Overlap — shared vs independent (transcript, AvsL)
+
+```{r mo-platform-comparison, fig.height=4, fig.width=10}
+bind_rows(
+  bind_rows(lapply(contrasts_dte, function(ct) per_platform_mo(mat_list_dte[[ct]], ct))) %>%
+    mutate(Filter = "Shared (AND)"),
+  bind_rows(lapply(contrasts_dte, function(ct) per_platform_mo(mat_list_dte_indep[[ct]], ct))) %>%
+    mutate(Filter = "Independent")
+) %>%
+  mutate(Platform = factor(Platform, levels = names(color_palette))) %>%
+  ggplot(aes(x = Platform, y = MeanOverlap, fill = Platform, alpha = Filter)) +
+  geom_col(position = position_dodge(0.7), width = 0.65) +
+  facet_wrap(~ Contrast) +
+  scale_fill_manual(values = color_palette) +
+  scale_alpha_manual(values = c("Shared (AND)" = 1.0, "Independent" = 0.55)) +
+  scale_y_continuous(limits = c(0, 1), labels = percent_format()) +
+  labs(title = "Per-platform Mean Overlap: shared vs independent filtering — DTE",
+       y = "Mean Overlap", x = NULL, alpha = "Filter") +
+  theme_minimal() +
+  theme(legend.position = "bottom", axis.text.x = element_text(angle = 35, hjust = 1))
+```
+
+### Length bias comparison: shared vs independent
+
+```{r compare-length-bin, fig.height=10, fig.width=14}
+compare_bin_df <- bind_rows(
+  build_length_bin_df(mat_list_dte, all_tx_tested) %>% mutate(Filter = "Shared (AND)"),
+  build_length_bin_df(mat_list_dte_indep, all_tx_tested_indep) %>% mutate(Filter = "Independent")
+) %>%
+  filter(!is.na(length_bin), Contrast == "AvsL") %>%
+  group_by(Platform, length_bin, Filter) %>%
+  summarise(n_DE = sum(is_DE), prop_DE = sum(is_DE) / n(), .groups = "drop") %>%
+  mutate(Platform = factor(Platform, levels = names(color_palette)))
+
+p_cmp_prop <- ggplot(compare_bin_df, aes(x = length_bin, y = prop_DE, fill = Platform, alpha = Filter)) +
+  geom_col(position = position_dodge(0.7), width = 0.65) +
+  facet_wrap(~ Platform, nrow = 1) +
+  scale_fill_manual(values = color_palette) +
+  scale_alpha_manual(values = c("Shared (AND)" = 1.0, "Independent" = 0.55)) +
+  scale_y_continuous(labels = percent_format()) +
+  labs(title = "DE rate by length bin: shared vs independent filtering (AvsL)",
+       y = "Proportion called DE", x = "Length category", alpha = "Filter") +
+  theme_minimal() +
+  theme(legend.position = "bottom", axis.text.x = element_text(angle = 30, hjust = 1))
+
+p_cmp_count <- ggplot(compare_bin_df, aes(x = length_bin, y = n_DE, fill = Platform, alpha = Filter)) +
+  geom_col(position = position_dodge(0.7), width = 0.65) +
+  facet_wrap(~ Platform, nrow = 1) +
+  scale_fill_manual(values = color_palette) +
+  scale_alpha_manual(values = c("Shared (AND)" = 1.0, "Independent" = 0.55)) +
+  labs(title = "DE count by length bin: shared vs independent filtering (AvsL)",
+       y = "Number of DE transcripts", x = "Length category", alpha = "Filter") +
+  theme_minimal() +
+  theme(legend.position = "bottom", axis.text.x = element_text(angle = 30, hjust = 1))
+
+p_cmp_prop / p_cmp_count
+
+# logCPM by length bin (shared filter, for reference — same transcripts in both filters)
+build_length_bin_df(mat_list_dte, all_tx_tested) %>%
+  filter(!is.na(length_bin), !is.na(avg_logCPM), Contrast == "AvsL") %>%
+  mutate(Platform = factor(Platform, levels = names(color_palette))) %>%
+  ggplot(aes(x = length_bin, y = avg_logCPM, fill = Platform)) +
+  geom_violin(scale = "width", alpha = 0.7, trim = TRUE, position = position_dodge(0.85)) +
+  geom_boxplot(width = 0.08, outlier.shape = NA, fill = "white", alpha = 0.8,
+               position = position_dodge(0.85)) +
+  scale_fill_manual(values = color_palette) +
+  labs(title = "Avg logCPM by length bin (AvsL) — expression confound check",
+       subtitle = "If logCPM rises with length, DE-rate trend may be expression-driven",
+       y = "Average logCPM", x = "Transcript length category") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 30, hjust = 1))
+```
+
+### Platform-specific absence: shared vs independent
+
+```{r compare-absence-counts, fig.height=5, fig.width=12}
+bind_rows(
+  shared_absence_df %>% filter(Category == "Platform-specific absence") %>%
+    mutate(Filter = "Shared (AND)"),
+  indep_absence_df  %>% filter(Category == "Platform-specific absence") %>%
+    mutate(Filter = "Independent")
+) %>%
+  count(Platform, Contrast, Filter) %>%
+  mutate(Platform = factor(Platform, levels = names(color_palette))) %>%
+  ggplot(aes(x = Platform, y = n, fill = Platform, alpha = Filter)) +
+  geom_col(position = position_dodge(0.7), width = 0.65) +
+  geom_text(aes(label = n), position = position_dodge(0.7), vjust = -0.4, size = 2.5) +
+  facet_wrap(~ Contrast) +
+  scale_fill_manual(values = color_palette) +
+  scale_alpha_manual(values = c("Shared (AND)" = 1.0, "Independent" = 0.55)) +
+  labs(title = "Platform-specific absence: shared vs independent filtering",
+       y = "Number of transcripts", x = NULL) +
+  theme_minimal() +
+  theme(legend.position = "none", axis.text.x = element_text(angle = 35, hjust = 1))
+```
+
+---
+
+# Part 5: Summary evidence
+
+The following figures directly support the key claims about cross-protocol DE consistency.
+
+---
+
+## 5.1 Gene vs transcript-level agreement
+
+Mean Overlap quantifies what proportion of each platform's DE calls are independently
+corroborated by ≥2 other platforms. Gene-level DE is substantially more reproducible than
+transcript-level DE across all three contrasts.
+
+```{r summary-mo, fig.height=4, fig.width=7}
+ggplot(mo_long, aes(x = Contrast, y = MeanOverlap, fill = Level)) +
+  geom_col(position = position_dodge(0.7), width = 0.6) +
+  geom_text(aes(label = sprintf("%.2f", MeanOverlap)),
+            position = position_dodge(0.7), vjust = -0.4, size = 3) +
+  scale_fill_manual(values = c(Gene = "#4e79a7", Transcript = "#f28e2b")) +
+  scale_y_continuous(limits = c(0, 1), labels = percent_format()) +
+  labs(title = "Mean Overlap: gene-level vs transcript-level DE",
+       y = "Mean Overlap", x = "Contrast", fill = "Feature level") +
+  theme_minimal()
+```
+
+---
+
+## 5.2 Direction consistency of platform-specific DE (shared filter) {.tabset}
+
+For DE features called significant by only one protocol, we extract the log2 fold change (logFC)
+from **all four** protocols. Even when a feature fails the significance threshold in three other
+protocols, its estimated effect should be in the same direction—confirming the biology is real
+but below the detection threshold of those protocols.
+
+```{r summary-logfc-fns}
+# Extract logFC table from a named list of per-platform DE result lists
+extract_logfc_df <- function(de_lists_named, contrast) {
+  bind_rows(lapply(names(de_lists_named), function(p) {
+    tbl <- de_lists_named[[p]][[paste0(contrast, ".DE")]]$table
+    tibble(feature_id = rownames(tbl), logFC = tbl$logFC, Platform = p)
+  })) %>%
+  mutate(Platform = factor(Platform, levels = names(color_palette)))
+}
+
+# For platform-specific DE features in `mat`, join logFC from all platforms
+build_specific_logfc_df <- function(mat, logfc_df, contrast_label) {
+  platforms <- setdiff(names(mat), "Gene")
+  mat_td    <- mat %>% mutate(TotalDetected = rowSums(select(., all_of(platforms))))
+  bind_rows(lapply(platforms, function(p) {
+    ids <- mat_td %>% filter(.data[[p]] == 1, TotalDetected == 1) %>% pull(Gene)
+    logfc_df %>%
+      filter(feature_id %in% ids) %>%
+      mutate(Calling_platform = p, Contrast = contrast_label)
+  })) %>%
+  mutate(
+    is_caller        = Platform == Calling_platform,
+    Calling_platform = factor(Calling_platform, levels = names(color_palette))
+  )
+}
+
+plot_direction_consistency <- function(df, title) {
+  ggplot(df, aes(x = Platform, y = logFC, fill = is_caller)) +
+    geom_hline(yintercept = 0, linetype = "dashed", color = "gray40", linewidth = 0.5) +
+    geom_violin(scale = "width", alpha = 0.65, trim = TRUE) +
+    geom_boxplot(width = 0.1, outlier.shape = NA, fill = "white", alpha = 0.9) +
+    facet_wrap(~ Calling_platform, nrow = 1) +
+    scale_fill_manual(values = c("TRUE" = "#E41A1C", "FALSE" = "#377EB8"),
+                      labels = c("TRUE" = "Calling protocol", "FALSE" = "Other protocols")) +
+    labs(title = title,
+         subtitle = "Each panel: features DE only in that protocol; violins show logFC in all four protocols",
+         y = "log2 Fold Change", x = NULL, fill = NULL) +
+    theme_minimal() +
+    theme(legend.position = "bottom", axis.text.x = element_text(angle = 35, hjust = 1))
+}
+```
+
+### Gene level (AvsL)
+
+```{r summary-logfc-gene, fig.height=5, fig.width=14}
+logfc_gene_avsl <- extract_logfc_df(list(
+  Illumina   = ill_bulk.dge_human.list,
+  `ONT cDNA` = ont_bulk.dge_human.list,
+  PacBio     = pb_bulk.dge_human.list,
+  `ONT dRNA` = drna_bulk.deg_human.list
+), "AvsL")
+
+specific_gene_avsl <- build_specific_logfc_df(mat_list_dge[["AvsL"]], logfc_gene_avsl, "AvsL")
+plot_direction_consistency(specific_gene_avsl,
+  "logFC of platform-specific DE genes across all protocols — shared filter (AvsL)")
+```
+
+### Transcript level (AvsL)
+
+```{r summary-logfc-tx, fig.height=5, fig.width=14}
+logfc_tx_avsl <- extract_logfc_df(list(
+  Illumina   = ill_bulk.scl_dte_human.list,
+  `ONT cDNA` = ont_bulk.scl_dte_human.list,
+  PacBio     = pb_bulk.scl_dte_human.list,
+  `ONT dRNA` = drna_bulk.scl_dte_human.list
+), "AvsL")
+
+specific_tx_avsl <- build_specific_logfc_df(mat_list_dte[["AvsL"]], logfc_tx_avsl, "AvsL")
+plot_direction_consistency(specific_tx_avsl,
+  "logFC of platform-specific DE transcripts across all protocols — shared filter (AvsL)")
+```
+
+### Direction consistency summary
+
+```{r summary-direction-table}
+direction_summary <- bind_rows(
+  specific_gene_avsl %>% mutate(Level = "Gene"),
+  specific_tx_avsl   %>% mutate(Level = "Transcript")
+) %>%
+  group_by(Level, Calling_platform, feature_id) %>%
+  summarise(
+    calling_sign   = sign(logFC[is_caller]),
+    all_consistent = all(sign(logFC) == calling_sign),
+    .groups = "drop"
+  ) %>%
+  group_by(Level, Calling_platform) %>%
+  summarise(
+    n_specific   = n(),
+    n_consistent = sum(all_consistent),
+    pct          = round(100 * mean(all_consistent), 1),
+    .groups = "drop"
+  )
+
+knitr::kable(direction_summary,
+  caption = "Direction consistency: % of platform-specific DE with same logFC sign in all other protocols (AvsL, shared filter)",
+  col.names = c("Level", "Calling protocol", "N platform-specific", "N all-consistent", "% consistent"),
+  row.names = FALSE)
+```
+
+---
+
+## 5.3 Transcript length capture bias (shared filter)
+
+DE rate increases with transcript length for PacBio and ONT cDNA (full-length long-read
+protocols), reflecting their superior capture of longer isoforms. This explains a substantial
+fraction of protocol-specific transcript-level DE calls.
+
+```{r summary-length-bin, fig.height=5, fig.width=18}
+print(shared_bin_plots$avsl_prop)
+```
+
+---
+
+## 5.4 Independent filtering: expression evidence in other protocols {.tabset}
+
+Under platform-independent filtering, each protocol tests its own expressed feature set.
+For features exclusively DE in one protocol, two scenarios are possible:
+
+1. The feature is **undetectable** (near-zero count) in other protocols — it cannot be DE there.
+2. The feature is **expressed but sub-threshold** in other protocols — the effect is real but weaker.
+
+The cross-platform logCPM plot below distinguishes these: if the calling protocol shows high
+logCPM while others show low/NA (not even tested), the feature is a genuine capture-bias effect.
+
+```{r summary-indep-setup}
+# logcpm_lookup in scope here is the INDEPENDENT-filter version (overwritten in indep-tx-filter)
+
+# For each platform-specific DE transcript in the independent filter,
+# pull its logCPM from ALL platforms (NA if not tested/expressed there)
+build_indep_specific_cpm_df <- function(mat) {
+  platforms <- setdiff(names(mat), "Gene")
+  mat_td    <- mat %>% mutate(TotalDetected = rowSums(select(., all_of(platforms))))
+  all_specific <- bind_rows(lapply(platforms, function(p) {
+    mat_td %>% filter(.data[[p]] == 1, TotalDetected == 1) %>%
+      select(Gene) %>% mutate(Calling_platform = p)
+  }))
+  # Left-join to logcpm_lookup: NA where not tested in a platform
+  all_platform_ids <- tidyr::expand_grid(
+    Gene     = all_specific$Gene,
+    Platform = factor(names(color_palette), levels = names(color_palette))
+  ) %>%
+  left_join(all_specific, by = "Gene") %>%
+  left_join(
+    logcpm_lookup %>% rename(Gene = tx_id),
+    by = c("Gene", "Platform")
+  ) %>%
+  mutate(
+    is_caller        = Platform == Calling_platform,
+    Calling_platform = factor(Calling_platform, levels = names(color_palette)),
+    Tested           = !is.na(avg_logCPM)
+  )
+}
+
+indep_specific_cpm_df <- build_indep_specific_cpm_df(mat_list_dte_indep[["AvsL"]])
+```
+
+### Cross-platform logCPM (AvsL)
+
+```{r summary-indep-cpm, fig.height=5, fig.width=14}
+ggplot(indep_specific_cpm_df, aes(x = Platform, y = avg_logCPM, fill = is_caller)) +
+  geom_violin(scale = "width", alpha = 0.65, trim = TRUE, na.rm = TRUE) +
+  geom_boxplot(width = 0.1, outlier.shape = NA, fill = "white", alpha = 0.9, na.rm = TRUE) +
+  facet_wrap(~ Calling_platform, nrow = 1) +
+  scale_fill_manual(values = c("TRUE" = "#E41A1C", "FALSE" = "#377EB8"),
+                    labels = c("TRUE" = "Calling protocol", "FALSE" = "Other protocols")) +
+  labs(title = "logCPM of platform-specific DE transcripts across all protocols — independent filter (AvsL)",
+       subtitle = "NA (not tested) means the transcript was filtered out in that protocol; only tested features shown",
+       y = "Average logCPM", x = NULL, fill = NULL) +
+  theme_minimal() +
+  theme(legend.position = "bottom", axis.text.x = element_text(angle = 35, hjust = 1))
+```
+
+### Testability summary (AvsL)
+
+What fraction of a protocol's platform-specific DE transcripts were even tested in each other protocol?
+
+```{r summary-indep-testability}
+indep_specific_cpm_df %>%
+  filter(!is_caller) %>%
+  group_by(Calling_platform, Platform) %>%
+  summarise(
+    n_features = n_distinct(Gene),
+    n_tested   = sum(Tested, na.rm = TRUE),
+    pct_tested = round(100 * mean(Tested, na.rm = TRUE), 1),
+    .groups = "drop"
+  ) %>%
+  knitr::kable(
+    caption = "% of platform-specific DE transcripts (independent filter, AvsL) that were testable in each other protocol",
+    col.names = c("Calling protocol", "Other protocol", "N features", "N tested in other", "% tested"),
+    row.names = FALSE)
+```
+
+### logFC direction where testable (AvsL)
+
+For the subset of features that WERE tested in other protocols, check direction consistency.
+
+```{r summary-indep-logfc, fig.height=5, fig.width=14}
+logfc_tx_indep_avsl <- extract_logfc_df(list(
+  Illumina   = ill_dte_indep.list,
+  `ONT cDNA` = ont_dte_indep.list,
+  PacBio     = pb_dte_indep.list,
+  `ONT dRNA` = drna_dte_indep.list
+), "AvsL")
+
+specific_tx_indep_avsl <- build_specific_logfc_df(
+  mat_list_dte_indep[["AvsL"]], logfc_tx_indep_avsl, "AvsL")
+
+plot_direction_consistency(specific_tx_indep_avsl,
+  "logFC of platform-specific DE transcripts across tested protocols — independent filter (AvsL)") +
+  labs(subtitle = "Only protocols that tested the feature are shown; NA = not in that protocol's tested set")
+```
+
+---
+
+# Session summary
+
+```{r save-rds}
+output_list <- list(
+  mo_summary          = mo_summary,
+  mo_compare          = mo_compare,
+  mat_list_dge        = mat_list_dge,
+  mat_list_dte        = mat_list_dte,
+  mat_list_dge_indep  = mat_list_dge_indep,
+  mat_list_dte_indep  = mat_list_dte_indep
+)
+dir.create(dirname(params$output_rds), recursive = TRUE, showWarnings = FALSE)
+saveRDS(output_list, params$output_rds)
+cat("RDS saved to:", params$output_rds, "\n")
+```
+
+```{r session-info}
+sessionInfo()
+```

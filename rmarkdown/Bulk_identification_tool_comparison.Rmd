@@ -3,7 +3,7 @@
 title: "Bulk gene/transcript identification: Oarfish vs IsoQuant (no_novel)"
 author: "Yupei"
 date: '`r Sys.Date()`'
-version: "v1.0"
+version: "v1.1"
 output:
   html_document:
     code_folding: hide
@@ -325,7 +325,7 @@ output_list[["gene_discovery"]] <- gene_discovery
 ## Gene detection plots
 
 ### Upset plot: Oarfish platforms
-```{r GENE: Upset Oarfish, fig.height=4, fig.width=8}
+```{r GENE: Upset Oarfish, fig.height=5, fig.width=10}
 ComplexUpset::upset(
   gene_discovery %>% mutate(biotype = case_when(biotype == "protein_coding" ~ "Protein-coding", TRUE ~ "Non-protein-coding")),
   intersect = c("Illumina", "ONT cDNA (Oarfish)", "PacBio (Oarfish)", "ONT dRNA (Oarfish)"),
@@ -339,7 +339,7 @@ ComplexUpset::upset(
     'Intersection size' = ComplexUpset::intersection_size(
       counts  = TRUE,
       mapping = aes(fill = biotype),
-      text    = list(element_text(size = 3, vjust = -0.2))
+      text    = list(element_text(size = 5, vjust = -0.2))
     ) + scale_fill_manual(values = c("Non-protein-coding" = "#BAC5CB", "Protein-coding" = '#B5C952'))
   ),
   set_sizes = (
@@ -353,7 +353,7 @@ ComplexUpset::upset(
 ```
 
 ### Upset plot: IsoQuant platforms
-```{r GENE: Upset IsoQuant, fig.height=4, fig.width=8}
+```{r GENE: Upset IsoQuant, fig.height=5, fig.width=10}
 ComplexUpset::upset(
   gene_discovery %>% mutate(biotype = case_when(biotype == "protein_coding" ~ "Protein-coding", TRUE ~ "Non-protein-coding")),
   intersect = c("Illumina", "ONT cDNA (IsoQuant)", "PacBio (IsoQuant)", "ONT dRNA (IsoQuant)"),
@@ -367,7 +367,7 @@ ComplexUpset::upset(
     'Intersection size' = ComplexUpset::intersection_size(
       counts  = TRUE,
       mapping = aes(fill = biotype),
-      text    = list(element_text(size = 3, vjust = -0.2))
+      text    = list(element_text(size = 5, vjust = -0.2))
     ) + scale_fill_manual(values = c("Non-protein-coding" = "#BAC5CB", "Protein-coding" = '#B5C952'))
   ),
   set_sizes = (
@@ -380,14 +380,33 @@ ComplexUpset::upset(
 ) + ggtitle("Gene detection — IsoQuant (no_novel)")
 ```
 
-### Upset plot: All six long-read tool/platform combinations
-```{r GENE: Upset combined, fig.height=4, fig.width=12}
+### Upset plot: All platforms and tools (including Illumina)
+```{r GENE: Upset combined, fig.height=6, fig.width=16}
 lr_cols <- c("ONT cDNA (Oarfish)", "PacBio (Oarfish)", "ONT dRNA (Oarfish)",
              "ONT cDNA (IsoQuant)", "PacBio (IsoQuant)", "ONT dRNA (IsoQuant)")
+all_cols_upset <- c("Illumina", lr_cols)
+
+# Genes detected by Illumina + all 3 Oarfish platforms
+oar_ill_mask <- gene_discovery$Illumina &
+                gene_discovery$`ONT cDNA (Oarfish)` &
+                gene_discovery$`PacBio (Oarfish)` &
+                gene_discovery$`ONT dRNA (Oarfish)`
+n_oar_ill    <- sum(oar_ill_mask)
+# Of those, also confirmed by all 3 IsoQuant platforms
+n_all7_gene  <- sum(oar_ill_mask &
+                    gene_discovery$`ONT cDNA (IsoQuant)` &
+                    gene_discovery$`PacBio (IsoQuant)` &
+                    gene_discovery$`ONT dRNA (IsoQuant)`)
+# Of those, no IsoQuant support at all
+n_no_iq_gene <- sum(oar_ill_mask &
+                    !gene_discovery$`ONT cDNA (IsoQuant)` &
+                    !gene_discovery$`PacBio (IsoQuant)` &
+                    !gene_discovery$`ONT dRNA (IsoQuant)`)
 
 ComplexUpset::upset(
   gene_discovery %>% mutate(biotype = case_when(biotype == "protein_coding" ~ "Protein-coding", TRUE ~ "Non-protein-coding")),
-  intersect = lr_cols,
+  intersect = all_cols_upset,
+  n_intersections = 30,
   annotations = list(
     "Gene length" = list(
       aes  = aes(x = intersection, y = `Gene length`),
@@ -398,7 +417,7 @@ ComplexUpset::upset(
     'Intersection size' = ComplexUpset::intersection_size(
       counts  = TRUE,
       mapping = aes(fill = biotype),
-      text    = list(element_text(size = 3, vjust = -0.2))
+      text    = list(element_text(size = 5, vjust = -0.2))
     ) + scale_fill_manual(values = c("Non-protein-coding" = "#BAC5CB", "Protein-coding" = '#B5C952'))
   ),
   set_sizes = (
@@ -408,7 +427,16 @@ ComplexUpset::upset(
       theme(legend.position = "none")
   ),
   guides = 'over', wrap = TRUE
-) + ggtitle("Gene detection — Oarfish vs IsoQuant (LR platforms only)")
+) +
+  ggtitle("Gene detection — Illumina + Oarfish + IsoQuant (all platforms)") +
+  patchwork::plot_annotation(
+    caption = glue::glue(
+      "Illumina ∩ all Oarfish: {scales::comma(n_oar_ill)} genes  |  ",
+      "Also in all IsoQuant: {scales::comma(n_all7_gene)} ({scales::percent(n_all7_gene / n_oar_ill, accuracy = 0.1)})  |  ",
+      "No IsoQuant support: {scales::comma(n_no_iq_gene)} ({scales::percent(n_no_iq_gene / n_oar_ill, accuracy = 0.1)})"
+    ),
+    theme = theme(plot.caption = element_text(size = 11, hjust = 0.5, face = "bold"))
+  )
 ```
 
 ### Tool comparison per platform
@@ -487,6 +515,29 @@ ggplot(tool_comparison_gene_biotype, aes(x = category, y = n, fill = biotype2)) 
   labs(title = "Biotype composition by tool-specific vs shared gene detection",
        y = "Proportion", x = NULL, fill = "Biotype") +
   theme(axis.text.x = element_text(angle = 30, hjust = 1))
+
+``` 
+
+### Tool overlap summary
+```{r GENE: Tool overlap summary, results='asis'}
+gene_overlap_summary <- tool_comparison_gene %>%
+  group_by(platform) %>%
+  summarise(
+    Oarfish_only = sum(n[category == "Oarfish only"], na.rm = TRUE),
+    Both         = sum(n[category == "Both"], na.rm = TRUE),
+    IsoQuant_only = sum(n[category == "IsoQuant only"], na.rm = TRUE),
+    Total_detected = sum(n, na.rm = TRUE),
+    `Shared fraction` = Both / Total_detected,
+    `Oarfish fraction` = (Oarfish_only + Both) / Total_detected,
+    `IsoQuant fraction` = (IsoQuant_only + Both) / Total_detected,
+    .groups = "drop"
+  )
+
+kable(
+  gene_overlap_summary,
+  digits = 3,
+  caption = "Gene detection overlap summary: Oarfish vs IsoQuant by platform"
+)
 ```
 
 ### Jaccard similarity (all 7 platform-tool combinations)
@@ -504,17 +555,17 @@ colnames(jaccard_matrix) <- rownames(jaccard_matrix) <- all_cols
 
 Heatmap(jaccard_matrix,
         name = "Jaccard\nSimilarity",
-        col  = colorRampPalette(c("grey", "#06317F"))(50),
+        col  = colorRampPalette(c("grey90", "#06317F"))(50),
         cell_fun = function(j, i, x, y, width, height, fill) {
           grid.text(round(jaccard_matrix[i, j], 2), x, y,
-                    gp = gpar(col = "white", fontsize = 9))
+                    gp = gpar(col = ifelse(jaccard_matrix[i, j] > 0.5, "white", "black"), fontsize = 9))
         },
-        row_names_gp  = gpar(fontsize = 9),
+        row_names_gp    = gpar(fontsize = 9),
         column_names_gp = gpar(fontsize = 9))
 ```
 
 ### Detected gene length distribution
-```{r GENE: Length distribution, fig.height=3, fig.width=10}
+```{r GENE: Length distribution, fig.height=4, fig.width=10}
 gene_discovery$length_bin <- cut(
   gene_discovery$`Gene length`,
   breaks = c(0, 500, 1000, 1500, 2000, 2500, Inf),
@@ -632,7 +683,7 @@ saveRDS(output_list, params$out.rds)
 ## Tx detection plots
 
 ### Upset plot: Oarfish platforms
-```{r TX: Upset Oarfish, fig.height=4, fig.width=8}
+```{r TX: Upset Oarfish, fig.height=5, fig.width=10}
 ComplexUpset::upset(
   tx_discovery %>% mutate(biotype = case_when(biotype == "protein_coding" ~ "Protein-coding", TRUE ~ "Non-protein-coding")),
   intersect = c("Illumina", "ONT cDNA (Oarfish)", "PacBio (Oarfish)", "ONT dRNA (Oarfish)"),
@@ -646,7 +697,7 @@ ComplexUpset::upset(
     'Intersection size' = ComplexUpset::intersection_size(
       counts  = TRUE,
       mapping = aes(fill = biotype),
-      text    = list(element_text(size = 3, vjust = -0.2))
+      text    = list(element_text(size = 5, vjust = -0.2))
     ) + scale_fill_manual(values = c("Non-protein-coding" = "#BAC5CB", "Protein-coding" = '#B5C952'))
   ),
   set_sizes = (
@@ -660,7 +711,7 @@ ComplexUpset::upset(
 ```
 
 ### Upset plot: IsoQuant platforms
-```{r TX: Upset IsoQuant, fig.height=4, fig.width=8}
+```{r TX: Upset IsoQuant, fig.height=5, fig.width=10}
 ComplexUpset::upset(
   tx_discovery %>% mutate(biotype = case_when(biotype == "protein_coding" ~ "Protein-coding", TRUE ~ "Non-protein-coding")),
   intersect = c("Illumina", "ONT cDNA (IsoQuant)", "PacBio (IsoQuant)", "ONT dRNA (IsoQuant)"),
@@ -674,7 +725,7 @@ ComplexUpset::upset(
     'Intersection size' = ComplexUpset::intersection_size(
       counts  = TRUE,
       mapping = aes(fill = biotype),
-      text    = list(element_text(size = 3, vjust = -0.2))
+      text    = list(element_text(size = 5, vjust = -0.2))
     ) + scale_fill_manual(values = c("Non-protein-coding" = "#BAC5CB", "Protein-coding" = '#B5C952'))
   ),
   set_sizes = (
@@ -687,11 +738,29 @@ ComplexUpset::upset(
 ) + ggtitle("Transcript detection — IsoQuant (no_novel)")
 ```
 
-### Upset plot: All six long-read tool/platform combinations
-```{r TX: Upset combined, fig.height=4, fig.width=12}
+### Upset plot: All platforms and tools (including Illumina)
+```{r TX: Upset combined, fig.height=6, fig.width=16}
+# Transcripts detected by Illumina + all 3 Oarfish platforms
+oar_ill_mask_tx <- tx_discovery$Illumina &
+                   tx_discovery$`ONT cDNA (Oarfish)` &
+                   tx_discovery$`PacBio (Oarfish)` &
+                   tx_discovery$`ONT dRNA (Oarfish)`
+n_oar_ill_tx    <- sum(oar_ill_mask_tx)
+# Of those, also confirmed by all 3 IsoQuant platforms
+n_all7_tx       <- sum(oar_ill_mask_tx &
+                       tx_discovery$`ONT cDNA (IsoQuant)` &
+                       tx_discovery$`PacBio (IsoQuant)` &
+                       tx_discovery$`ONT dRNA (IsoQuant)`)
+# Of those, no IsoQuant support at all
+n_no_iq_tx      <- sum(oar_ill_mask_tx &
+                       !tx_discovery$`ONT cDNA (IsoQuant)` &
+                       !tx_discovery$`PacBio (IsoQuant)` &
+                       !tx_discovery$`ONT dRNA (IsoQuant)`)
+
 ComplexUpset::upset(
   tx_discovery %>% mutate(biotype = case_when(biotype == "protein_coding" ~ "Protein-coding", TRUE ~ "Non-protein-coding")),
-  intersect = lr_cols,
+  intersect = all_cols_upset,
+  n_intersections = 30,
   annotations = list(
     "Transcript length" = list(
       aes  = aes(x = intersection, y = length),
@@ -702,7 +771,7 @@ ComplexUpset::upset(
     'Intersection size' = ComplexUpset::intersection_size(
       counts  = TRUE,
       mapping = aes(fill = biotype),
-      text    = list(element_text(size = 3, vjust = -0.2))
+      text    = list(element_text(size = 5, vjust = -0.2))
     ) + scale_fill_manual(values = c("Non-protein-coding" = "#BAC5CB", "Protein-coding" = '#B5C952'))
   ),
   set_sizes = (
@@ -712,7 +781,16 @@ ComplexUpset::upset(
       theme(legend.position = "none")
   ),
   guides = 'over', wrap = TRUE
-) + ggtitle("Transcript detection — Oarfish vs IsoQuant (LR platforms only)")
+) +
+  ggtitle("Transcript detection — Illumina + Oarfish + IsoQuant (all platforms)") +
+  patchwork::plot_annotation(
+    caption = glue::glue(
+      "Illumina ∩ all Oarfish: {scales::comma(n_oar_ill_tx)} transcripts  |  ",
+      "Also in all IsoQuant: {scales::comma(n_all7_tx)} ({scales::percent(n_all7_tx / n_oar_ill_tx, accuracy = 0.1)})  |  ",
+      "No IsoQuant support: {scales::comma(n_no_iq_tx)} ({scales::percent(n_no_iq_tx / n_oar_ill_tx, accuracy = 0.1)})"
+    ),
+    theme = theme(plot.caption = element_text(size = 11, hjust = 0.5, face = "bold"))
+  )
 ```
 
 ### Tool comparison per platform
@@ -784,6 +862,29 @@ ggplot(tool_comparison_tx_biotype, aes(x = category, y = n, fill = biotype2)) +
   labs(title = "Biotype composition by tool-specific vs shared transcript detection",
        y = "Proportion", x = NULL, fill = "Biotype") +
   theme(axis.text.x = element_text(angle = 30, hjust = 1))
+
+``` 
+
+### Tool overlap summary
+```{r TX: Tool overlap summary, results='asis'}
+tx_overlap_summary <- tool_comparison_tx %>%
+  group_by(platform) %>%
+  summarise(
+    Oarfish_only = sum(n[category == "Oarfish only"], na.rm = TRUE),
+    Both         = sum(n[category == "Both"], na.rm = TRUE),
+    IsoQuant_only = sum(n[category == "IsoQuant only"], na.rm = TRUE),
+    Total_detected = sum(n, na.rm = TRUE),
+    `Shared fraction` = Both / Total_detected,
+    `Oarfish fraction` = (Oarfish_only + Both) / Total_detected,
+    `IsoQuant fraction` = (IsoQuant_only + Both) / Total_detected,
+    .groups = "drop"
+  )
+
+kable(
+  tx_overlap_summary,
+  digits = 3,
+  caption = "Transcript detection overlap summary: Oarfish vs IsoQuant by platform"
+)
 ```
 
 ### Jaccard similarity
@@ -799,22 +900,27 @@ colnames(jaccard_matrix_tx) <- rownames(jaccard_matrix_tx) <- all_cols
 
 Heatmap(jaccard_matrix_tx,
         name = "Jaccard\nSimilarity",
-        col  = colorRampPalette(c("grey", "#06317F"))(50),
+        col  = colorRampPalette(c("grey90", "#06317F"))(50),
         cell_fun = function(j, i, x, y, width, height, fill) {
           grid.text(round(jaccard_matrix_tx[i, j], 2), x, y,
-                    gp = gpar(col = "white", fontsize = 9))
+                    gp = gpar(col = ifelse(jaccard_matrix_tx[i, j] > 0.5, "white", "black"), fontsize = 9))
         },
         row_names_gp    = gpar(fontsize = 9),
         column_names_gp = gpar(fontsize = 9))
 ```
 
 ### Discovered transcript length distribution
-```{r TX: Length distribution, fig.height=3, fig.width=10}
+```{r TX: Length distribution, fig.height=4, fig.width=10}
 tx_discovery$length_bin <- cut(
   tx_discovery$length,
   breaks = c(0, 500, 1000, 1500, 2000, 2500, Inf),
   labels = c("0-0.5k", "0.5-1k", "1-1.5k", "1.5-2k", "2-2.5k", "2.5k+")
 )
+
+bg_dist_tx <- tx_discovery %>%
+  filter(!is.na(length_bin)) %>%
+  count(length_bin) %>%
+  mutate(label = "All annotated transcripts")
 
 tx_discovery %>%
   pivot_longer(cols = all_of(lr_cols), names_to = "tool_platform", values_to = "keep") %>%
@@ -825,16 +931,23 @@ tx_discovery %>%
   ) %>%
   count(length_bin, tool, platform) %>%
   ggplot(aes(x = length_bin, y = n, color = tool, group = tool)) +
+  geom_line(data = bg_dist_tx, aes(x = length_bin, y = n, group = 1),
+            color = "grey60", linewidth = 1, linetype = "dashed", inherit.aes = FALSE) +
   geom_line(linewidth = 1) +
   geom_point(size = 2) +
   facet_wrap(~platform, ncol = 3) +
   scale_color_manual(values = tool_colors) +
   theme_minimal() +
   labs(title = "Detected transcripts by length bin",
-       x = "Transcript length", y = "# of transcripts", color = "Tool")
+       x = "Transcript length", y = "# of transcripts", color = "Tool",
+       caption = "Dashed grey line: all annotated transcripts")
 ```
 
-```{r TX: Length distribution protein-coding, fig.height=3, fig.width=10}
+```{r TX: Length distribution protein-coding, fig.height=4, fig.width=10}
+bg_dist_tx_pc <- tx_discovery %>%
+  filter(!is.na(length_bin), biotype == "protein_coding") %>%
+  count(length_bin)
+
 tx_discovery %>%
   filter(biotype == "protein_coding") %>%
   pivot_longer(cols = all_of(lr_cols), names_to = "tool_platform", values_to = "keep") %>%
@@ -845,11 +958,14 @@ tx_discovery %>%
   ) %>%
   count(length_bin, tool, platform) %>%
   ggplot(aes(x = length_bin, y = n, color = tool, group = tool)) +
+  geom_line(data = bg_dist_tx_pc, aes(x = length_bin, y = n, group = 1),
+            color = "grey60", linewidth = 1, linetype = "dashed", inherit.aes = FALSE) +
   geom_line(linewidth = 1) +
   geom_point(size = 2) +
   facet_wrap(~platform, ncol = 3) +
   scale_color_manual(values = tool_colors) +
   theme_minimal() +
   labs(title = "Detected protein-coding transcripts by length bin",
-       x = "Transcript length", y = "# of transcripts", color = "Tool")
+       x = "Transcript length", y = "# of transcripts", color = "Tool",
+       caption = "Dashed grey line: all annotated protein-coding transcripts")
 ```
