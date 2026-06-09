@@ -1,0 +1,279 @@
+---
+title: "2026-06-03_longbench_fusion_calling_main_figure_generation_script_v3"
+author: "jw"
+date: "2026-06-03"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(dplyr)
+library(readr)
+library(ggplot2)
+library(purrr)
+library(tidyr)
+library(stringr)
+library(biomaRt)
+```
+
+# import data
+```{r}
+# raw fusion data
+all_raw_data_list <- read.csv("/vast/projects/LongBench/sequencing_data/bulk_gb_downsample/longbench_fusion_analysis/comprehensive_raw_data_fusion_result.csv")
+
+# downsample fusion data
+all_downsampled_data_list <- read.csv("/vast/projects/LongBench/sequencing_data/bulk_gb_downsample/longbench_fusion_analysis/comprehensive_downsampled_data_fusion_result.csv")
+
+# ground truth from CCLE
+CCLE_translocations <- read.csv("/vast/projects/LongBench/sequencing_data/bulk_gb_downsample/longbench_fusion_analysis/CCLE_translocations_SvABA_20181221(CCLE_translocations_SvABA_20181).csv")
+```
+
+# generate boxplot using the raw fusion data - count only the unique fusion gene pairs within each cell line (CellLine + Platform + FusionPair = Unique Count) - setting spanning read threshold = 3
+```{r}
+# Set a spaning read threshold
+min_spanning_reads <- 3
+
+platform_colors <- c("Illumina"="#E88C1F", "ONT cDNA"="#01476C", "ONT dRNA"="#00789A", "PacBio"="#DF1A95")
+
+raw_fusion_data <- all_raw_data_list %>%
+  # filter spanning reads
+  filter(spanning.reads >= min_spanning_reads) %>% 
+  mutate(CellLine = factor(CellLine),
+         Platform = factor(Platform, levels = names(platform_colors)))
+
+# Count unique fusion gene pairs
+plot_counts <- raw_fusion_data %>%
+  group_by(CellLine, Platform) %>%
+  summarize(Count = n_distinct(fusion.genes), .groups = "drop")
+
+#-------------------------
+# VISUALIZATION
+#-------------------------
+ggplot(plot_counts, aes(x = Platform, y = Count, color = Platform)) +
+  geom_boxplot(outlier.shape = 16, outlier.size = 1.5, width = 0.35, lwd = 0.6) +
+  scale_y_continuous(
+    limits = c(0, NA),
+    expand = expansion(mult = c(0, 0.05))
+  ) +
+  scale_color_manual(values = platform_colors) +
+  theme_bw() +
+  labs(
+    x = "Sequencing protocols",
+    y = "Unique high-confidence\nfusion pairs"
+  ) +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1, size = 10),
+    axis.text.y = element_text(size = 10),
+    axis.title.x = element_text(size = 12, margin = margin(t = 10)),
+    axis.title.y = element_text(size = 12, margin = margin(r = 10)),
+    legend.position = "none", 
+    panel.grid.major.x = element_blank(),
+    panel.grid.major.y = element_line(color = "grey90", linewidth = 0.5)
+  )
+
+ggsave("raw_data_boxplot.png", width = 3.5, height = 4.2, dpi = 300)
+ggsave("raw_data_boxplot.pdf", width = 3.5, height = 4.2)
+```
+
+# Generate ROC-style curve using the downsampled data - illumina, ONT cDNA, ONT dRNA merged data, PacBio - solid dot at spanning read = 3
+```{r}
+cell_line_configs <- list(
+  "H1975"  = list(ccle = "NCIH1975_LUNG", sr = "H1975_S6", pb = "H1975_bulk_PB_subset_6.9M", ont = "H1975_bulk_ONT_subset_16.9M", drna = "H1975_dRNA_ONT_merged_subset_8.5M"),
+  "HCC827" = list(ccle = "HCC827_LUNG",  sr = "HCC827_S8", pb = "HCC827_bulk_PB_subset_6.9M", ont = "HCC827_bulk_ONT_subset_16.9M", drna = "HCC827_dRNA_ONT_merged_subset_8.5M"),
+  "H2228"  = list(ccle = "NCIH2228_LUNG", sr = "H2228_S7", pb = "H2228_bulk_PB_subset_6.9M", ont = "H2228_bulk_ONT_subset_16.9M", drna = "H2228_dRNA_ONT_merged_subset_8.5M"),
+  "H526"   = list(ccle = "NCIH526_LUNG",  sr = "H526_S3",  pb = "H526_bulk_PB_subset_6.9M", ont = "H526_bulk_ONT_subset_16.9M", drna = "H526_dRNA_ONT_merged_subset_8.5M"),
+  "H211"   = list(ccle = "NCIH211_LUNG",  sr = "H211_S4",  pb = "H211_bulk_PB_subset_6.9M", ont = "H211_bulk_ONT_subset_16.9M", drna = "H211_dRNA_ONT_merged_subset_8.5M"),
+  "SHP77"  = list(ccle = "SHP77_LUNG",   sr = "SHP77_S5", pb = "SHP77_bulk_PB_subset_6.9M", ont = "SHP77_bulk_ONT_subset_16.9M", drna = "SHP77_dRNA_ONT_merged_subset_8.5M"),
+  "H146"   = list(ccle = "NCIH146_LUNG",  sr = "H146_S1",  pb = "H146_bulk_PB_subset_6.9M", ont = "H146_bulk_ONT_subset_16.9M", drna = "H146_dRNA_ONT_merged_subset_8.5M"),
+  "H69"    = list(ccle = "NCIH69_LUNG",   sr = "H69_S2",   pb = "H69_bulk_PB_subset_6.9M", ont = "H69_bulk_ONT_subset_16.9M", drna = "H69_dRNA_ONT_merged_subset_8.5M")
+)
+
+#-------------------------
+# HELPERS
+#-------------------------
+pair_key_two <- function(g1, g2) paste(sort(c(as.character(g1), as.character(g2))), collapse = "--")
+
+make_ccle_trans_pairs <- function(df) {
+  if (is.null(df) || nrow(df) == 0) return(tibble(g1=character(), g2=character(), pair=character()))
+  g1_eff <- toupper(trimws(ifelse(!is.na(df$gene1) & df$gene1 != "", df$gene1, infer_gene_from_site(df$site1))))
+  g2_eff <- toupper(trimws(ifelse(!is.na(df$gene2) & df$gene2 != "", df$gene2, infer_gene_from_site(df$site2))))
+  
+  tibble(g1 = g1_eff, g2 = g2_eff) %>%
+    filter(!is.na(g1), !is.na(g2), g1 != "", g2 != "") %>%
+    mutate(pair = map2_chr(g1, g2, pair_key_two)) %>%
+    distinct(pair, .keep_all = TRUE)
+}
+
+infer_gene_from_site <- function(site) {
+  out <- rep(NA_character_, length(site))
+  s <- as.character(site)
+  m1 <- str_match(s, "Gene\\s+([^()\\s,]+)\\s*\\([+-]\\)")
+  out[!is.na(m1[,2])] <- toupper(m1[!is.na(m1[,2]), 2])
+  need <- is.na(out)
+  if (any(need)) {
+    m2 <- str_match(s[need], "(?i)(intron(?:ic)?|exon|promoter)\\s+(?:in|of)\\s+([^()\\s,]+)\\s*\\([+-]\\)")
+    idx <- which(need)[!is.na(m2[,3])]
+    out[idx] <- toupper(m2[!is.na(m2[,3]), 3])
+  }
+  need <- is.na(out)
+  if (any(need)) {
+    m3 <- str_match(s[need], "(?i)(?:of|near)\\s+([^()\\s,]+)")
+    idx <- which(need)[!is.na(m3[,2])]
+    out[idx] <- toupper(m3[!is.na(m3[,2]), 2])
+  }
+  out
+}
+
+# update CCLE gene name using biomaRt
+mart <- useEnsembl("ensembl", dataset = "hsapiens_gene_ensembl")
+
+all_truth_pairs <- lapply(names(cell_line_configs), function(cl_name) {
+  config <- cell_line_configs[[cl_name]]
+  
+  # Initial extraction from CCLE CSV
+  ccle_pairs_raw <- CCLE_translocations %>% 
+    filter(CCLE_name == config$ccle) %>% 
+    make_ccle_trans_pairs()
+  
+  if(nrow(ccle_pairs_raw) == 0) return(NULL)
+  
+  # update gene name in CCLE using biomaRt
+  genes <- unique(na.omit(c(ccle_pairs_raw$g1, ccle_pairs_raw$g2)))
+  mapping <- getBM(attributes = c("hgnc_symbol", "ensembl_gene_id"), 
+                   filters = "hgnc_symbol", values = genes, mart = mart)
+  
+  missing_genes <- setdiff(genes, mapping$hgnc_symbol)
+  alias_map <- data.frame()
+  if(length(missing_genes) > 0) {
+    alias_map <- getBM(attributes = c("external_synonym", "hgnc_symbol"), 
+                       filters = "external_synonym", values = missing_genes, mart = mart)
+  }
+  
+  final_map <- bind_rows(
+    mapping %>% dplyr::select(input_gene = hgnc_symbol, updated_symbol = hgnc_symbol),
+    alias_map %>% filter(hgnc_symbol != "") %>% 
+      dplyr::select(input_gene = external_synonym, updated_symbol = hgnc_symbol)
+  ) %>% distinct(input_gene, .keep_all = TRUE)
+  
+  ccle_pairs_updated <- ccle_pairs_raw %>%
+    left_join(final_map, by = c("g1" = "input_gene")) %>%
+    mutate(g1 = ifelse(!is.na(updated_symbol) & updated_symbol != "", updated_symbol, g1)) %>%
+    dplyr::select(-updated_symbol) %>%
+    left_join(final_map, by = c("g2" = "input_gene")) %>%
+    mutate(g2 = ifelse(!is.na(updated_symbol) & updated_symbol != "", updated_symbol, g2)) %>%
+    dplyr::select(-updated_symbol) %>%
+    rowwise() %>%
+    mutate(pair = paste(sort(c(g1, g2)), collapse = "--")) %>%
+    ungroup() %>%
+    distinct(pair)
+
+  return(tibble(CellLine = cl_name, pair = ccle_pairs_updated$pair))
+}) %>% bind_rows()
+
+#-------------------------
+# PROCESS all_downsampled_data_list
+#-------------------------
+all_roc_data <- all_downsampled_data_list %>%
+  # Standardize JAFFA names (alphabetical, uppercase, no spaces)
+  rowwise() %>%
+  mutate(pair = {
+    genes <- unlist(strsplit(as.character(fusion.genes), ":|\\|"))
+    genes <- genes[genes != "" & !is.na(genes)]
+    paste(sort(toupper(trimws(genes)))[1:2], collapse = "--")
+  }) %>%
+  ungroup() %>%
+  # Use unique fusion pair
+  distinct(CellLine, Platform, pair, .keep_all = TRUE) %>%
+  # Join with the generated Truth Set
+  left_join(all_truth_pairs %>% mutate(is_truth = TRUE), 
+            by = c("CellLine", "pair")) %>%
+  mutate(is_tp = ifelse(!is.na(is_truth), TRUE, FALSE)) %>%
+  
+  # Arrange descending by reads so ROC curves accumulate from highest to lowest support
+  arrange(CellLine, Platform, desc(spanning.reads)) %>%
+  
+  # Calculate cumulative metrics for ROC
+  group_by(CellLine, Platform) %>%
+  mutate(
+    Index = row_number(),
+    TP_cum = cumsum(is_tp),
+    FP_cum = cumsum(!is_tp)
+  ) %>%
+  ungroup()
+
+all_roc_data_ill <- all_roc_data %>% 
+  filter(Platform == "Illumina") %>% 
+  filter(spanning.reads >= 3)
+
+#-------------------------
+# VISUALIZATION CONFIGS
+#-------------------------
+# Putting Illumina last so it gets drawn on top of the other layers
+platform_order <- c("ONT cDNA", "ONT dRNA", "PacBio", "Illumina")
+
+platform_colors <- c(
+  "Illumina" = "#FF9F1C",
+  "PacBio"   = "#DF1A95",
+  "ONT dRNA" = "#00789A",
+  "ONT cDNA" = "#01476C"
+)
+
+platform_sizes <- c(
+  "Illumina" = 1.1,
+  "PacBio"   = 1.1,
+  "ONT dRNA" = 1.1,
+  "ONT cDNA" = 1.1
+)
+
+#-------------------------
+# Data Preparation for Plotting
+#-------------------------
+global_roc_smooth <- all_roc_data %>% 
+  group_by(Platform) %>% 
+  arrange(desc(spanning.reads), .by_group = TRUE) %>% 
+  mutate(TP_total = cumsum(is_tp), FP_total = cumsum(!is_tp)) %>% 
+  ungroup() %>% 
+  # Explicitly order the factor levels to dictate layer rendering order
+  mutate(Platform = factor(Platform, levels = platform_order))
+
+# Separate out the terminal dot data using the exact same factor ordering
+dot_data <- global_roc_smooth %>% 
+  filter(spanning.reads >= 3) %>% 
+  group_by(Platform) %>% 
+  dplyr::slice_tail(n = 1) %>% 
+  ungroup() %>% 
+  mutate(Platform = factor(Platform, levels = platform_order))
+
+#-------------------------
+# Visualization
+#-------------------------
+ggplot(global_roc_smooth, aes(x = FP_total, y = TP_total, color = Platform, group = Platform)) +
+  # assign line sizes based on the platform vector
+  geom_step(aes(linewidth = Platform)) +
+  # solid dot where spanning.reads >= 3
+  geom_point(
+    data = dot_data,
+    aes(fill = Platform), size = 3, shape = 21, stroke = 1
+  ) +
+  # scale configurations
+  scale_color_manual(values = platform_colors) +
+  scale_fill_manual(values = platform_colors) +
+  scale_linewidth_manual(values = platform_sizes) +
+  theme_bw() + 
+  theme(
+    aspect.ratio = 1,
+    legend.position = c(0.98, 0.02),      
+    legend.justification = c(1, 0)
+  ) +
+  labs(
+    # title = "Aggregated ROC-Style Curves (Dot at Spanning Read = 3)", 
+    x = "Total Other Reported Fusions", 
+    y = "CCLE-supported fusion calls",
+    color = "Sequencing protocols",
+    fill = "Sequencing protocols",
+    linewidth = "Sequencing protocols"
+  )
+
+ggsave("downsampled_data_roc_curve.png", width = 3.5, height = 4.2, dpi = 300)
+ggsave("downsampled_data_roc_curve.pdf", width = 3.5, height = 4.2)
+```
