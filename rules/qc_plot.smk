@@ -8,6 +8,96 @@ sr_sc_result_dir = sub_wf_config['sr_sc_sn']["output_path"]
 from os.path import join
 
 # Total number
+rule qc_read_count_summary:
+    input:
+        bulk_read_count = expand(
+            join(lr_bulk_result_dir, "qc/read_counts/{sample}_{cell_line}.count"),
+            sample = sub_wf_config['lr_bulk']["sample_id"],
+            cell_line = sub_wf_config['lr_bulk']["cell_lines"]
+        ),
+        sc_blaze_summary = expand(
+            join(lr_sc_sn_result_dir, "flames_out/{sample}/summary.txt"),
+            sample = sub_wf_config['lr_sc_sn']["sample_id"]
+        ),
+        sr_bulk_salmon = expand(
+            join(sr_bulk_result_dir, "salmon/salmon_quant/{cell_line}"),
+            cell_line = sub_wf_config['sr_bulk']["cell_lines"]
+        ),
+        sr_sc_out = expand(
+            os.path.join(sr_sc_result_dir, 'cellranger/{sample_name}'),
+            sample_name = sub_wf_config['sr_sc_sn']["sample_name"]
+        ),
+        lr_bulk_base_count = expand(
+            join(lr_bulk_result_dir, "qc/base_counts/{sample}_{cell_line}.total_bases"),
+            sample = sub_wf_config['lr_bulk']["sample_id"],
+            cell_line = sub_wf_config['lr_bulk']["cell_lines"]
+        ),
+        sr_bulk_base_count = expand(
+            join(sr_bulk_result_dir, "qc/base_counts/{sample}_{cell_line}.total_bases"),
+            sample = sub_wf_config['sr_bulk']["sample_id"],
+            cell_line = sub_wf_config['sr_bulk']["cell_lines"]
+        ),
+        lr_sc_sn_base_count = expand(
+            join(lr_sc_sn_result_dir, "qc/base_counts/{sample}.total_bases"),
+            sample = sub_wf_config['lr_sc_sn']["sample_id"]
+        ),
+        sr_sc_sn_base_count = expand(
+            join(sr_sc_result_dir, "qc/base_counts/{sample_name}.total_bases"),
+            sample_name = sub_wf_config['sr_sc_sn']["sample_name"]
+        )
+    output:
+        join(figures_output_path, "qc/read_count_summary.tsv")
+    params:
+        bulk_sample_name = expand("{sample}_{cell_line}",
+                            sample = sub_wf_config['lr_bulk']["sample_id"],
+                            cell_line = sub_wf_config['lr_bulk']["cell_lines"]),
+        lr_sc_sample_name = sub_wf_config['lr_sc_sn']["sample_id"],
+        sr_sc_sample_name = sub_wf_config['sr_sc_sn']["sample_name"],
+        sr_sample_name = expand("Illumina_{cell_line}",
+                            cell_line = sub_wf_config['sr_bulk']["cell_lines"])
+    resources:
+        cpus_per_task=1,
+        mem_mb=4000
+    script:
+        join(config['main_wf_dir'], "scripts/qc_read_count_summary.R")
+
+
+rule qc_read_length_quality_summary:
+    input:
+        expand(
+            join(lr_bulk_result_dir, "qc/NanoPlot/{sample}_{cell_line}/NanoPlot-data.tsv.gz"),
+            sample = sub_wf_config['lr_bulk']["sample_id"],
+            cell_line = sub_wf_config['lr_bulk']["cell_lines"]
+        ),
+        expand(
+            join(lr_sc_sn_result_dir, "qc/NanoPlot/{sample}/NanoPlot-data.tsv.gz"),
+            sample = sub_wf_config['lr_sc_sn']["sample_id"]
+        ),
+        expand(
+            join(sr_bulk_result_dir, "qc/NanoPlot/{cell_line}/NanoPlot-data.tsv.gz"),
+            cell_line = sub_wf_config['sr_bulk']["cell_lines"]
+        ),
+        expand(
+            join(sr_sc_result_dir, "qc/NanoPlot/{sample_name}/NanoPlot-data.tsv.gz"),
+            sample_name = sub_wf_config['sr_sc_sn']["sample_name"]
+        )
+    output:
+        join(figures_output_path, "qc/read_length_quality_summary.tsv")
+    params:
+        sample_id = expand("{sample}_{cell_line}",
+                            sample = sub_wf_config['lr_bulk']["sample_id"],
+                            cell_line = sub_wf_config['lr_bulk']["cell_lines"]) + \
+                         sub_wf_config['lr_sc_sn']["sample_id"] + \
+                         expand("ill_bulk_{cell_line}",
+                            cell_line = sub_wf_config['sr_bulk']["cell_lines"]) + \
+                         sub_wf_config['sr_sc_sn']["sample_name"]
+    resources:
+        cpus_per_task=1,
+        mem_mb=32000
+    script:
+        join(config['main_wf_dir'], "scripts/qc_read_length_quality_summary.R")
+
+
 rule read_number_plot:
     input:
         bulk_read_count = expand(
@@ -62,7 +152,7 @@ rule read_number_plot:
 
 rule lr_read_length_plot:
     # get the read length from the read length file and plot
-    input: 
+    input:
         expand(
             join(lr_bulk_result_dir, "qc/NanoPlot/{sample}_{cell_line}/NanoPlot-data.tsv.gz"),
             sample = sub_wf_config['lr_bulk']["sample_id"],
@@ -72,21 +162,26 @@ rule lr_read_length_plot:
             join(lr_sc_sn_result_dir, "qc/NanoPlot/{sample}/NanoPlot-data.tsv.gz"),
             sample = sub_wf_config['lr_sc_sn']["sample_id"]
         ),
-        # Not looking good when including the sr_bulk data
-        # expand(
-        #     join(sr_bulk_result_dir, "qc/NanoPlot/{cell_line}/NanoPlot-data.tsv.gz"),
-        #     sample = sub_wf_config['lr_bulk']["sample_id"],
-        #     cell_line = sub_wf_config['lr_bulk']["cell_lines"]
-        # )
+        expand(
+            join(sr_bulk_result_dir, "qc/NanoPlot/{cell_line}/NanoPlot-data.tsv.gz"),
+            cell_line = sub_wf_config['sr_bulk']["cell_lines"]
+        ),
+        expand(
+            join(sr_sc_result_dir, "qc/NanoPlot/{sample_name}/NanoPlot-data.tsv.gz"),
+            sample_name = sub_wf_config['sr_sc_sn']["sample_name"]
+        )
     output:
-        report(join(figures_output_path, "qc/read_length_and_quality_plot.svg"), 
+        report(join(figures_output_path, "qc/read_length_and_quality_plot.svg"),
                 category = "QC", subcategory = "Read length and quality"),
         join(figures_output_path, "qc/read_length_and_qual_table.txt")
     params:
-        sample_id = expand("{sample}_{cell_line}", 
+        sample_id = expand("{sample}_{cell_line}",
                             sample = sub_wf_config['lr_bulk']["sample_id"],
                             cell_line = sub_wf_config['lr_bulk']["cell_lines"]) + \
-                         sub_wf_config['lr_sc_sn']["sample_id"]
+                         sub_wf_config['lr_sc_sn']["sample_id"] + \
+                         expand("ill_bulk_{cell_line}",
+                            cell_line = sub_wf_config['sr_bulk']["cell_lines"]) + \
+                         sub_wf_config['sr_sc_sn']["sample_name"]
     resources:
         cpus_per_task=1,
         mem_mb=32000
@@ -94,33 +189,33 @@ rule lr_read_length_plot:
     script:
         join(config['main_wf_dir'], "scripts/read_length_and_quality_plot.R")
 
-rule RSeQC_gene_body_coverage_plot:
-    input:
-        lr_bulk = \
-            expand(
-                join(lr_bulk_result_dir, "qc/RSeQC/{sample}_{cell_line}.geneBodyCoverage.r"),
-                sample = sub_wf_config['lr_bulk']["sample_id"],
-                cell_line = sub_wf_config['lr_bulk']["cell_lines"]
-            ),
-        sr_bulk = \
-            expand(
-                join(sr_bulk_result_dir, "qc/RSeQC/{cell_line}.geneBodyCoverage.r"),
-                cell_line = sub_wf_config['lr_bulk']["cell_lines"]
-            )
-    output:
-        report(join(figures_output_path, "qc/gene_body_coverage_plot.svg"), 
-                category = "QC", subcategory = "Gene body coverage")
-    params:
-        lr_sample_name = expand("{sample}_{cell_line}", 
-                            sample = sub_wf_config['lr_bulk']["sample_id"],
-                            cell_line = sub_wf_config['lr_bulk']["cell_lines"]),
-        sr_sample_name = expand("Illumina_{cell_line}", 
-                            cell_line = sub_wf_config['lr_bulk']["cell_lines"])
-    resources:
-        cpus_per_task=1,
-        mem_mb=1000
-    script:
-        join(config['main_wf_dir'], "scripts/genebody_coverage_plot.R")
+# rule RSeQC_gene_body_coverage_plot:
+#     input:
+#         lr_bulk = \
+#             expand(
+#                 join(lr_bulk_result_dir, "qc/RSeQC/{sample}_{cell_line}.geneBodyCoverage.r"),
+#                 sample = sub_wf_config['lr_bulk']["sample_id"],
+#                 cell_line = sub_wf_config['lr_bulk']["cell_lines"]
+#             ),
+#         sr_bulk = \
+#             expand(
+#                 join(sr_bulk_result_dir, "qc/RSeQC/{cell_line}.geneBodyCoverage.r"),
+#                 cell_line = sub_wf_config['lr_bulk']["cell_lines"]
+#             )
+#     output:
+#         report(join(figures_output_path, "qc/gene_body_coverage_plot.svg"), 
+#                 category = "QC", subcategory = "Gene body coverage")
+#     params:
+#         lr_sample_name = expand("{sample}_{cell_line}", 
+#                             sample = sub_wf_config['lr_bulk']["sample_id"],
+#                             cell_line = sub_wf_config['lr_bulk']["cell_lines"]),
+#         sr_sample_name = expand("Illumina_{cell_line}", 
+#                             cell_line = sub_wf_config['lr_bulk']["cell_lines"])
+#     resources:
+#         cpus_per_task=1,
+#         mem_mb=1000
+#     script:
+#         join(config['main_wf_dir'], "scripts/genebody_coverage_plot.R")
 
 
 rule RSeQC_junction_saturation_plot_known:
@@ -155,33 +250,33 @@ rule RSeQC_junction_saturation_plot_known:
     script:
         join(config['main_wf_dir'], "scripts/junctionSaturation_plot_known.R")
 
-rule RSeQC_junction_saturation_plot_novel:
-    input:
-        lr_bulk = \
-            expand(
-                join(lr_bulk_result_dir, "qc/RSeQC/{sample}_{cell_line}.junctionSaturation_plot.r"),
-                sample = sub_wf_config['lr_bulk']["sample_id"],
-                cell_line = sub_wf_config['lr_bulk']["cell_lines"]
-            ),
-        sr_bulk = \
-            expand(
-                join(sr_bulk_result_dir, "qc/RSeQC/{cell_line}.junctionSaturation_plot.r"),
-                cell_line = sub_wf_config['sr_bulk']["cell_lines"]
-            )
-    output:
-        report(join(figures_output_path, "qc/NovelJunctionSaturation_plot.svg"), 
-                category = "QC", subcategory = "Gene body coverage")
-    params:
-        lr_sample_name = expand("{sample}_{cell_line}", 
-                            sample = sub_wf_config['lr_bulk']["sample_id"],
-                            cell_line = sub_wf_config['lr_bulk']["cell_lines"]),
-        sr_sample_name = expand("Illumina_{cell_line}", 
-                            cell_line = sub_wf_config['sr_bulk']["cell_lines"])
-    resources:
-        cpus_per_task=1,
-        mem_mb=1000
-    script:
-        join(config['main_wf_dir'], "scripts/junctionSaturation_plot_novel.R")
+# rule RSeQC_junction_saturation_plot_novel:
+#     input:
+#         lr_bulk = \
+#             expand(
+#                 join(lr_bulk_result_dir, "qc/RSeQC/{sample}_{cell_line}.junctionSaturation_plot.r"),
+#                 sample = sub_wf_config['lr_bulk']["sample_id"],
+#                 cell_line = sub_wf_config['lr_bulk']["cell_lines"]
+#             ),
+#         sr_bulk = \
+#             expand(
+#                 join(sr_bulk_result_dir, "qc/RSeQC/{cell_line}.junctionSaturation_plot.r"),
+#                 cell_line = sub_wf_config['sr_bulk']["cell_lines"]
+#             )
+#     output:
+#         report(join(figures_output_path, "qc/NovelJunctionSaturation_plot.svg"), 
+#                 category = "QC", subcategory = "Gene body coverage")
+#     params:
+#         lr_sample_name = expand("{sample}_{cell_line}", 
+#                             sample = sub_wf_config['lr_bulk']["sample_id"],
+#                             cell_line = sub_wf_config['lr_bulk']["cell_lines"]),
+#         sr_sample_name = expand("Illumina_{cell_line}", 
+#                             cell_line = sub_wf_config['sr_bulk']["cell_lines"])
+#     resources:
+#         cpus_per_task=1,
+#         mem_mb=1000
+#     script:
+#         join(config['main_wf_dir'], "scripts/junctionSaturation_plot_novel.R")
 # 
 # rule summarise_sqanti:
 #     input: 
@@ -210,8 +305,8 @@ rule main_qc_plot:
         rules.lr_read_length_plot.output,
         #rules.summarise_sqanti.output,
         rules.read_number_plot.output,
-        rules.RSeQC_gene_body_coverage_plot.output,
+        # rules.RSeQC_gene_body_coverage_plot.output,
         rules.RSeQC_junction_saturation_plot_known.output,
-        rules.RSeQC_junction_saturation_plot_novel.output
+        # rules.RSeQC_junction_saturation_plot_novel.output
     output:
         touch(join(figures_output_path, "qc/.flag.qc_plot.done"))
