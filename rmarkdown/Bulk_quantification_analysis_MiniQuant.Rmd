@@ -1,0 +1,625 @@
+---
+title: "LongBench Quantification analysis - MiniQuant vs Oarfish"
+author: "Yupei"
+version: "v2.0"
+output:
+  html_document:
+    code_folding: hide
+    toc: yes
+    toc_float: yes
+    number_sections: yes
+    toc_depth: 4
+params:
+  random_seed: 2024
+  cache_dir: NULL
+  fig.path: NULL
+
+  # Illumina + Oarfish bundle
+  input_DGEobject_rds: "/vast/projects/LongBench/analysis/workflow/rmarkdown/RDS/bulk_DGE.obj.rds"
+
+  # IsoQuant
+  isoquant_ont_bulk_rds:  "/home/users/allstaff/you.yu/LongBench/analysis/lr_bulk/result/IsoQuant_output_no_novel/isoquant_bulk_dge.ont_bulk.rds"
+  isoquant_pb_bulk_rds:   "/home/users/allstaff/you.yu/LongBench/analysis/lr_bulk/result/IsoQuant_output_no_novel/isoquant_bulk_dge.pb_bulk.rds"
+  isoquant_drna_bulk_rds: "/home/users/allstaff/you.yu/LongBench/analysis/lr_bulk/result/IsoQuant_output_no_novel/isoquant_bulk_dge.dRNA_bulk.rds"
+
+  # MiniQuant
+  hybrid_ont_bulk_rds:  "/vast/projects/LongBench/analysis/hybrid_bulk/result/miniquant_output/miniquant_bulk_dge.ont_bulk.rds"
+  hybrid_pb_bulk_rds:   "/vast/projects/LongBench/analysis/hybrid_bulk/result/miniquant_output/miniquant_bulk_dge.pb_bulk.rds"
+  hybrid_drna_bulk_rds: "/vast/projects/LongBench/analysis/hybrid_bulk/result/miniquant_output/miniquant_bulk_dge.dRNA_bulk.rds"
+
+  # Resources
+  Tx2Gene.map.rds: "/vast/projects/LongBench/analysis/workflow/rmarkdown/RDS/Tx2Gene.map.rds"
+  sequins_tsv: '/vast/projects/LongBench/reference_files/Sequin_resources/v2.4/rnasequin_isoforms_2.4.tsv'
+  sirv_csv: '/home/users/allstaff/you.yu/LongBench/reference_files/SIRV_Set4_Norm_Sequences_20210507/SIRV_set4_concentration.csv'
+---
+
+```{r setup, include=FALSE, message=FALSE, warning=FALSE}
+if (interactive()) {
+  params <- list(
+    input_DGEobject_rds    = "/vast/projects/LongBench/analysis/workflow/rmarkdown/RDS/bulk_DGE.obj.rds",
+    isoquant_ont_bulk_rds  = "/home/users/allstaff/you.yu/LongBench/analysis/lr_bulk/result/IsoQuant_output_no_novel/isoquant_bulk_dge.ont_bulk.rds",
+    isoquant_pb_bulk_rds   = "/home/users/allstaff/you.yu/LongBench/analysis/lr_bulk/result/IsoQuant_output_no_novel/isoquant_bulk_dge.pb_bulk.rds",
+    isoquant_drna_bulk_rds = "/home/users/allstaff/you.yu/LongBench/analysis/lr_bulk/result/IsoQuant_output_no_novel/isoquant_bulk_dge.dRNA_bulk.rds",
+    hybrid_ont_bulk_rds    = "/vast/projects/LongBench/analysis/hybrid_bulk/result/miniquant_output/miniquant_bulk_dge.ont_bulk.rds",
+    hybrid_pb_bulk_rds     = "/vast/projects/LongBench/analysis/hybrid_bulk/result/miniquant_output/miniquant_bulk_dge.pb_bulk.rds",
+    hybrid_drna_bulk_rds   = "/vast/projects/LongBench/analysis/hybrid_bulk/result/miniquant_output/miniquant_bulk_dge.dRNA_bulk.rds",
+    Tx2Gene.map.rds = "/vast/projects/LongBench/analysis/workflow/rmarkdown/RDS/Tx2Gene.map.rds",
+    sequins_tsv = '/vast/projects/LongBench/reference_files/Sequin_resources/v2.4/rnasequin_isoforms_2.4.tsv',
+    sirv_csv = '/home/users/allstaff/you.yu/LongBench/reference_files/SIRV_Set4_Norm_Sequences_20210507/SIRV_set4_concentration.csv'
+  )
+}
+
+knitr::opts_chunk$set(
+  cache = !is.null(params$cache_dir),
+  fig.width = 15, fig.height = 10,
+  echo = FALSE, message = FALSE, warning = FALSE,
+  fig.path = params$fig.path,
+  dev = if (!is.null(params$fig.path)) c("png", "svg") else NULL
+)
+if (!is.null(params$cache_dir))
+  knitr::opts_chunk$set(cache.path = params$cache_dir)
+```
+
+```{r libraries, include=FALSE}
+library(edgeR); library(limma)
+library(tidyverse); library(ggplot2); library(patchwork)
+library(ggExtra); library(gridExtra); library(scales)
+library(knitr); library(glue); library(ComplexHeatmap); library(circlize)
+rename <- dplyr::rename; select <- dplyr::select
+```
+
+```{r helpers}
+# --- Feature-type predicates ---
+is.sequins  <- function(dge) grepl("^R",           rownames(dge))
+is.human    <- function(dge) grepl("^ENS",          rownames(dge))
+is.sirv_all <- function(dge) grepl("^SIRV",         rownames(dge))
+is.sirv_E0  <- function(dge) grepl("^SIRV\\d{3}$",  rownames(dge))
+is.long_sirv<- function(dge) grepl("^SIRV\\d{4}",   rownames(dge))
+is.ercc      <- function(dge) grepl("^(ERCC|DQ|EF)", rownames(dge))
+
+# --- Normalisation helpers ---
+
+# Within-subset log-CPM: used for spike-in scatter observed values.
+# For Oarfish/IsoQuant (raw counts) and for MiniQuant (TPM), this re-normalises
+# to the subset totals so the scale matches the ground truth (which is also
+# normalised within the spike-in set).
+# NOTE: for MiniQuant, the input TPM was computed over the full library, so we
+# must re-normalise within the subset here — log2(TPM + 1) would be wrong.
+lcpm_within <- function(x) log2(x * 1e6 / sum(x) + 1)
+
+# Illumina: length-adjusted within-subset CPM
+ltcpm_within <- function(counts, eff_len) {
+  rpk <- counts / eff_len
+  log2(rpk * 1e6 / sum(rpk) + 1)
+}
+
+# Full-library log2(CPM+1) — for MDS / correlation
+log_cpm <- function(dge)
+  log2(t(t(dge$counts) / colSums(dge$counts)) * 1e6 + 1)
+
+# Full-library log2(TPM+1) for Illumina (length-adjusted)
+log_tpm_illumina <- function(dge) {
+  len <- dge$genes$EffectiveLength
+  tpm <- apply(dge$counts, 2, function(col) {
+    rpk <- col / len; rpk / sum(rpk) * 1e6
+  })
+  log2(tpm + 1)
+}
+```
+
+```{r colors, include=FALSE}
+tool_colors <- c(
+  Oarfish   = "#2166AC",
+  IsoQuant  = "#4DAC26",
+  MiniQuant = "#D6604D",
+  Illumina  = "#e88b20"
+)
+platform_colors <- c(
+  PacBio     = "#df1995",
+  "ONT dRNA" = "#00789b",
+  "ONT cDNA" = "#04476c",
+  Illumina   = "#e88b20"
+)
+```
+
+# Load data
+
+```{r load-data, echo=TRUE, results='hide'}
+safe_rds <- function(p) { if (!is.null(p) && file.exists(p)) readRDS(p) else NULL }
+
+# Illumina (Salmon) + Oarfish
+bundle       <- readRDS(params$input_DGEobject_rds)
+ill_tx.dge   <- bundle$ill_bulk.tx.dge
+ont_oar.dge  <- bundle$ont_bulk.tx.dge
+pb_oar.dge   <- bundle$pb_bulk.tx.dge
+drna_oar.dge <- bundle$drna_bulk.tx.dge
+
+# IsoQuant
+isq_ont  <- safe_rds(params$isoquant_ont_bulk_rds)
+isq_pb   <- safe_rds(params$isoquant_pb_bulk_rds)
+isq_drna <- safe_rds(params$isoquant_drna_bulk_rds)
+ont_isq.dge  <- isq_ont$ont_bulk.tx.dge
+pb_isq.dge   <- isq_pb$pb_bulk.tx.dge
+drna_isq.dge <- isq_drna$dRNA_bulk.tx.dge
+
+# MiniQuant — $counts holds full-library TPM; versioned transcript IDs
+mq_ont  <- safe_rds(params$hybrid_ont_bulk_rds)
+mq_pb   <- safe_rds(params$hybrid_pb_bulk_rds)
+mq_drna <- safe_rds(params$hybrid_drna_bulk_rds)
+
+strip_version <- function(dge) {
+  rownames(dge) <- sub("\\.\\d+$", "", rownames(dge))
+  dge
+}
+
+ill_tx.dge <- strip_version(ill_tx.dge)
+ont_oar.dge <- strip_version(ont_oar.dge)
+pb_oar.dge <- strip_version(pb_oar.dge)
+drna_oar.dge <- strip_version(drna_oar.dge)
+ont_isq.dge <- strip_version(ont_isq.dge)
+pb_isq.dge <- strip_version(pb_isq.dge)
+drna_isq.dge <- strip_version(drna_isq.dge)
+ont_mq.dge  <- strip_version(mq_ont$ont_bulk.TPM.tx.dge)
+pb_mq.dge   <- strip_version(mq_pb$pb_bulk.TPM.tx.dge)
+drna_mq.dge <- strip_version(mq_drna$dRNA_bulk.TPM.tx.dge)
+
+list2env(readRDS(params$Tx2Gene.map.rds), .GlobalEnv)
+```
+
+# Feature selection
+
+Expressed transcripts are defined by `filterByExpr` with a minimum count of 5 in at least one sample, applied to the subset of transcripts common to all tools. This ensures that downstream analyses (MDS, correlation) are based on a consistent set of expressed features across all datasets. The same filtering is applied to all DGEs to maintain comparability.
+
+```{r feature-selection, echo=TRUE}
+common_tx <- Reduce(intersect, lapply(
+  list(
+    ill_tx.dge,
+    ont_oar.dge,
+     pb_oar.dge, 
+     drna_oar.dge, 
+     ont_isq.dge, 
+     pb_isq.dge, 
+     drna_isq.dge, 
+     ont_mq.dge, 
+     pb_mq.dge, 
+     drna_mq.dge
+  ), rownames
+))
+
+ill_tx.dge <- ill_tx.dge[common_tx, ]
+ont_oar.dge <- ont_oar.dge[common_tx, ]
+pb_oar.dge <- pb_oar.dge[common_tx, ]
+drna_oar.dge <- drna_oar.dge[common_tx, ]
+ont_isq.dge <- ont_isq.dge[common_tx, ]
+pb_isq.dge <- pb_isq.dge[common_tx, ]
+drna_isq.dge <- drna_isq.dge[common_tx, ]
+ont_mq.dge <- ont_mq.dge[common_tx, ]
+pb_mq.dge <- pb_mq.dge[common_tx, ]
+drna_mq.dge <- drna_mq.dge[common_tx, ]
+
+
+
+keep <- #
+  filterByExpr(ill_tx.dge, group = ill_tx.dge$samples$group, min.count = 5) &
+    # filterByExpr(ont_oar.dge, group = ont_oar.dge$samples$group, min.count = 5) &
+    # filterByExpr(pb_oar.dge, group = pb_oar.dge$samples$group, min.count = 5) &
+    # filterByExpr(drna_oar.dge, group = drna_oar.dge$samples$group, min.count = 5) &
+    filterByExpr(ont_isq.dge, group = ont_isq.dge$samples$group, min.count = 5) &
+    filterByExpr(pb_isq.dge, group = pb_isq.dge$samples$group, min.count = 5) &
+    filterByExpr(drna_isq.dge, group = drna_isq.dge$samples$group, min.count = 5)
+  # Can't apply filterByExpr to MiniQuant TPM DGE in the same way — it expects raw counts and the scale is different, so we skip it here. 
+  # filterByExpr(ont_mq.dge, group = ont_mq.dge$samples$group, min.count = 5) &
+  # filterByExpr(pb_mq.dge, group = pb_mq.dge$samples$group, min.count = 5) &
+  # filterByExpr(drna_mq.dge, group = drna_mq.dge$samples$group, min.count = 5)
+
+table(keep)
+
+expressed_tx <- common_tx[keep]
+message(glue("Expressed transcripts: {length(expressed_tx)}"))
+
+ill_tx.dge   <- ill_tx.dge[keep, ]
+ont_oar.dge  <- ont_oar.dge[keep, ]
+pb_oar.dge   <- pb_oar.dge[keep, ]
+drna_oar.dge <- drna_oar.dge[keep, ]
+ont_isq.dge  <- ont_isq.dge[keep, ]
+pb_isq.dge <- pb_isq.dge[keep, ]
+drna_isq.dge <- drna_isq.dge[keep, ]
+ont_mq.dge <- ont_mq.dge[keep, ]
+pb_mq.dge <- pb_mq.dge[keep, ]
+drna_mq.dge <- drna_mq.dge[keep, ]
+
+```
+
+# Part 1: Spike-in quantification
+For MiniQuant: although `$counts` are full-library TPM, working on a spike-in subset
+requires re-normalising within that subset (same as for the other tools and consistent
+with the ground truth normalisation).
+
+```{r spikein-setup}
+# Length lookup from Oarfish reference (which carries full genes metadata)
+get_ref_length <- function(ids) {
+  ont_oar.dge$genes$Length[match(ids, rownames(ont_oar.dge))]
+}
+```
+
+## Sequins: expected vs observed
+```{r sequins-scatter, fig.width=25, fig.height=9}
+sequins.gt <- read_tsv(params$sequins_tsv, show_col_types = FALSE)
+# Normalise a subset DGE to within-subset log-CPM
+# is_illumina = TRUE: length-adjusted (EffectiveLength from genes slot)
+# is_illumina = FALSE: plain log-CPM within subset (works for both raw counts and TPM)
+norm_subset <- function(dge, filter_fn, is_illumina = FALSE) {
+  sub <- dge[filter_fn(dge), ]
+  if (nrow(sub) == 0) return(NULL)
+  if (is_illumina) {
+    eff <- sub$genes$EffectiveLength
+    apply(sub$counts, 2, function(col) ltcpm_within(col, eff))
+  } else {
+    apply(sub$counts, 2, lcpm_within)
+  }
+}
+
+make_sequins_scatter <- function(dge, label, is_illumina = FALSE) {
+  norm_mat <- norm_subset(dge, is.sequins, is_illumina)
+  if (is.null(norm_mat)) return(NULL)
+
+  get_lcpm <- function(x) log2(x * 1e6 / sum(x) + 1)
+  gt <- read_tsv(params$sequins_tsv, show_col_types = FALSE) %>%
+    mutate(across(starts_with("MIX"), get_lcpm)) %>%
+    select(NAME, MIX_A, MIX_B, LENGTH) %>%
+    mutate(N_tx_per_gene = as.numeric(gsub("^R.*_", "", NAME)))
+
+  sp <- dge[is.sequins(dge), ]$samples
+  norm_df <- norm_mat %>% as_tibble(rownames = "NAME")
+
+  combined <- bind_rows(
+    norm_df %>% select(-sp$sample[sp$sequins == "B"]) %>%
+      left_join(gt, by = "NAME") %>% mutate(GT = MIX_A) %>% select(-MIX_A, -MIX_B) %>%
+      pivot_longer(sp$sample[sp$sequins == "A"], names_to = "Sample", values_to = "Obs"),
+    norm_df %>% select(-sp$sample[sp$sequins == "A"]) %>%
+      left_join(gt, by = "NAME") %>% mutate(GT = MIX_B) %>% select(-MIX_A, -MIX_B) %>%
+      pivot_longer(sp$sample[sp$sequins == "B"], names_to = "Sample", values_to = "Obs")
+  ) %>% mutate(`Tx length` = cut(LENGTH,
+      breaks = quantile(LENGTH, probs = seq(0,1,.25)), include.lowest = TRUE,
+      labels = c("Q1","Q2","Q3","Q4")))
+
+  r   <- cor(combined$GT, combined$Obs, use = "complete")
+  mse <- mean((combined$GT - combined$Obs)^2, na.rm = TRUE)
+
+  ggplot(combined[sample(nrow(combined)), ], aes(x = Obs, y = GT, color = `Tx length`)) +
+    geom_point(size = 0.8, alpha = 0.7) + geom_abline(linetype = "dotted") +
+    theme_classic() +
+    labs(title = label, x = "Observed log2(TPM+1)", y = "Expected log2(TPM+1)") +
+    annotate("text", x = Inf, y = -Inf, hjust = 1.1, vjust = -0.5,
+             label = glue("r={round(r,2)}\nMSE={round(mse,2)}"), size = 3) +
+    scale_color_viridis_d() + xlim(0, 20) + ylim(0, 20)
+}
+
+plots <- Filter(Negate(is.null), list(
+  make_sequins_scatter(ill_tx.dge,      "Illumina",         is_illumina = TRUE),
+  patchwork::plot_spacer(),
+  # make_sequins_scatter(ont_oar.dge,  "ONT cDNA (Oarfish)"),
+  make_sequins_scatter(ont_isq.dge,  "ONT cDNA (IsoQuant)"),
+  make_sequins_scatter(ont_mq.dge,   "ONT cDNA (MiniQuant)"),
+  # make_sequins_scatter(drna_oar.dge,  "ONT dRNA (Oarfish)"),
+  make_sequins_scatter(drna_isq.dge,  "ONT dRNA (IsoQuant)"),
+  make_sequins_scatter(drna_mq.dge,   "ONT dRNA (MiniQuant)"),
+  # make_sequins_scatter(pb_oar.dge,   "PacBio (Oarfish)"),
+  make_sequins_scatter(pb_isq.dge,   "PacBio (IsoQuant)"),
+  make_sequins_scatter(pb_mq.dge,    "PacBio (MiniQuant)")
+
+))
+patchwork::wrap_plots(plots, ncol = 4, guides = "collect", byrow = FALSE)
+```
+
+```{r sequins-raw-data, echo=TRUE}
+get_sequins_data <- function(dge, label, is_illumina = FALSE) {
+  norm_mat <- norm_subset(dge, is.sequins, is_illumina)
+  if (is.null(norm_mat)) return(NULL)
+
+  get_lcpm <- function(x) log2(x * 1e6 / sum(x) + 1)
+  gt <- read_tsv(params$sequins_tsv, show_col_types = FALSE) %>%
+    mutate(across(starts_with("MIX"), get_lcpm)) %>%
+    select(NAME, MIX_A, MIX_B, LENGTH) %>%
+    mutate(N_tx_per_gene = as.numeric(gsub("^R.*_", "", NAME)))
+
+  sp <- dge[is.sequins(dge), ]$samples
+  norm_df <- norm_mat %>% as_tibble(rownames = "NAME")
+
+  bind_rows(
+    norm_df %>% select(-sp$sample[sp$sequins == "B"]) %>%
+      left_join(gt, by = "NAME") %>% mutate(GT = MIX_A) %>% select(-MIX_A, -MIX_B) %>%
+      pivot_longer(sp$sample[sp$sequins == "A"], names_to = "Sample", values_to = "Obs"),
+    norm_df %>% select(-sp$sample[sp$sequins == "A"]) %>%
+      left_join(gt, by = "NAME") %>% mutate(GT = MIX_B) %>% select(-MIX_A, -MIX_B) %>%
+      pivot_longer(sp$sample[sp$sequins == "B"], names_to = "Sample", values_to = "Obs")
+  ) %>% mutate(
+    label = label,
+    `Tx length` = cut(LENGTH, breaks = quantile(LENGTH, probs = seq(0, 1, .25)),
+                      include.lowest = TRUE, labels = c("Q1", "Q2", "Q3", "Q4"))
+  )
+}
+
+sequins_raw <- bind_rows(
+  get_sequins_data(ill_tx.dge,   "Illumina",              is_illumina = TRUE),
+  get_sequins_data(ont_isq.dge,  "ONT cDNA (IsoQuant)"),
+  get_sequins_data(ont_mq.dge,   "ONT cDNA (MiniQuant)"),
+  get_sequins_data(drna_isq.dge, "ONT dRNA (IsoQuant)"),
+  get_sequins_data(drna_mq.dge,  "ONT dRNA (MiniQuant)"),
+  get_sequins_data(pb_isq.dge,   "PacBio (IsoQuant)"),
+  get_sequins_data(pb_mq.dge,    "PacBio (MiniQuant)")
+)
+
+glimpse(sequins_raw)
+```
+
+## ERCC: expected vs observed
+```{r ercc-scatter, fig.width=25, fig.height=9}
+make_ercc_scatter <- function(dge, label, is_illumina = FALSE) {
+  norm_mat <- norm_subset(dge, is.ercc, is_illumina)
+  if (is.null(norm_mat)) return(NULL)
+
+  get_lcpm <- function(x) log2(x * 1e6 / sum(x) + 1)
+  ercc_gt <- read_csv(params$sirv_csv, show_col_types = FALSE) %>%
+    filter(grepl("ERCC", txid)) %>%
+    mutate(GT = get_lcpm(conc), NAME = GenBank,
+           Length = get_ref_length(GenBank)) %>%
+    select(NAME, GT, Length)
+
+  combined <- norm_mat %>% as_tibble(rownames = "NAME") %>%
+    left_join(ercc_gt, by = "NAME") %>%
+    pivot_longer(colnames(dge[is.ercc(dge), ]$counts),
+                 names_to = "Sample", values_to = "Obs") %>%
+    mutate(`Tx length` = cut(Length,
+      breaks = quantile(Length, probs = seq(0,1,.25), na.rm = TRUE),
+      include.lowest = TRUE, labels = c("Q1","Q2","Q3","Q4")))
+
+  r   <- cor(combined$GT, combined$Obs, use = "complete")
+  mse <- mean((combined$GT - combined$Obs)^2, na.rm = TRUE)
+  ggplot(combined[sample(nrow(combined)), ], aes(x = Obs, y = GT, color = `Tx length`)) +
+    geom_point(size = 0.8, alpha = 0.7) + geom_abline(linetype = "dotted") +
+    theme_classic() +
+    labs(title = label, x = "Observed log2(TPM+1)", y = "Expected log2(TPM+1)") +
+    annotate("text", x = Inf, y = -Inf, hjust = 1.1, vjust = -0.5,
+             label = glue("r={round(r,2)}\nMSE={round(mse,2)}"), size = 3) +
+    scale_color_viridis_d() + xlim(10, 20) + ylim(10, 20)
+}
+
+
+plots <- Filter(Negate(is.null), list(
+  make_ercc_scatter(ill_tx.dge,      "Illumina",         is_illumina = TRUE),
+  patchwork::plot_spacer(),
+  # make_ercc_scatter(ont_oar.dge,  "ONT cDNA (Oarfish)"),
+  make_ercc_scatter(ont_isq.dge,  "ONT cDNA (IsoQuant)"),
+  make_ercc_scatter(ont_mq.dge,   "ONT cDNA (MiniQuant)"),
+  # make_ercc_scatter(drna_oar.dge,  "ONT dRNA (Oarfish)"),
+  make_ercc_scatter(drna_isq.dge,  "ONT dRNA (IsoQuant)"),
+  make_ercc_scatter(drna_mq.dge,   "ONT dRNA (MiniQuant)"),
+  # make_ercc_scatter(pb_oar.dge,   "PacBio (Oarfish)"),
+  make_ercc_scatter(pb_isq.dge,   "PacBio (IsoQuant)"),
+  make_ercc_scatter(pb_mq.dge,    "PacBio (MiniQuant)")
+
+))
+patchwork::wrap_plots(plots, ncol =4, guides = "collect", byrow = FALSE)
+```
+
+```{r ercc-raw-data, echo=TRUE}
+get_ercc_data <- function(dge, label, is_illumina = FALSE) {
+  norm_mat <- norm_subset(dge, is.ercc, is_illumina)
+  if (is.null(norm_mat)) return(NULL)
+
+  get_lcpm <- function(x) log2(x * 1e6 / sum(x) + 1)
+  ercc_gt <- read_csv(params$sirv_csv, show_col_types = FALSE) %>%
+    filter(grepl("ERCC", txid)) %>%
+    mutate(GT = get_lcpm(conc), NAME = GenBank,
+           Length = get_ref_length(GenBank)) %>%
+    select(NAME, GT, Length)
+
+  norm_mat %>% as_tibble(rownames = "NAME") %>%
+    left_join(ercc_gt, by = "NAME") %>%
+    pivot_longer(colnames(dge[is.ercc(dge), ]$counts),
+                 names_to = "Sample", values_to = "Obs") %>%
+    mutate(
+      label = label,
+      `Tx length` = cut(Length, breaks = quantile(Length, probs = seq(0, 1, .25), na.rm = TRUE),
+                        include.lowest = TRUE, labels = c("Q1", "Q2", "Q3", "Q4"))
+    )
+}
+
+ercc_raw <- bind_rows(
+  get_ercc_data(ill_tx.dge,   "Illumina",              is_illumina = TRUE),
+  get_ercc_data(ont_isq.dge,  "ONT cDNA (IsoQuant)"),
+  get_ercc_data(ont_mq.dge,   "ONT cDNA (MiniQuant)"),
+  get_ercc_data(drna_isq.dge, "ONT dRNA (IsoQuant)"),
+  get_ercc_data(drna_mq.dge,  "ONT dRNA (MiniQuant)"),
+  get_ercc_data(pb_isq.dge,   "PacBio (IsoQuant)"),
+  get_ercc_data(pb_mq.dge,    "PacBio (MiniQuant)")
+)
+
+if !is.null(params$fig.path) {
+  write_csv(ercc_raw, file.path(params$fig.path, "ercc_raw_data.csv"))
+}
+```
+
+## SIRV: transcript length vs observed abundance
+```{r sirv-scatter, fig.width=25, fig.height=9}
+make_sirv_scatter <- function(dge, label, is_illumina = FALSE) {
+  norm_mat <- norm_subset(dge, is.sirv_all, is_illumina)
+  if (is.null(norm_mat)) return(NULL)
+
+  sub_sirv <- dge[is.sirv_all(dge), ]
+  get_lcpm <- function(x) log2(x * 1e6 / sum(x) + 1)
+  sirv_gt <- tibble(
+    NAME    = rownames(sub_sirv),
+    LENGTH  = get_ref_length(rownames(sub_sirv)),
+    is_long = is.long_sirv(sub_sirv),
+    GT      = get_lcpm(rep(1, nrow(sub_sirv)))
+  ) %>% mutate(N_tx = SIRV.G.Tx.map$tx_count[match(NAME, SIRV.G.Tx.map$tx_name)])
+
+  combined <- norm_mat %>% as_tibble(rownames = "NAME") %>%
+    left_join(sirv_gt, by = "NAME") %>%
+    pivot_longer(colnames(sub_sirv), names_to = "Sample", values_to = "Obs")
+
+  SD  <- sd(combined$Obs, na.rm = TRUE)
+  MAD <- mad(combined$Obs, na.rm = TRUE)
+  MSE <- mean((combined$GT - combined$Obs)^2, na.rm = TRUE)
+
+  p <- ggplot(combined[sample(nrow(combined)), ], aes(y = LENGTH, x = Obs, color = is_long)) +
+    geom_point(size = 0.8, alpha = 0.7) +
+    geom_vline(xintercept = combined$GT[1], linetype = "dashed", color = "red") +
+    theme_classic() +
+    labs(title = label, y = "Transcript length", x = "Observed log2(CPM+1)") +
+    annotate("text", x = 0, y = 12000, hjust = 0, vjust = 1, size = 3,
+             label = glue("SD={round(SD,2)}\nMAD={round(MAD,2)}\nMSE={round(MSE,2)}")) +
+    scale_color_viridis_d() + xlim(0, 20)
+  ggMarginal(p, type = "density", margins = "x", fill = NA, size = 2,
+             groupColour = TRUE, groupFill = TRUE)
+}
+
+plots <- Filter(Negate(is.null), list(
+  make_sirv_scatter(ill_tx.dge,      "Illumina",         is_illumina = TRUE),
+  patchwork::plot_spacer(),
+  # make_sirv_scatter(ont_oar.dge,  "ONT cDNA (Oarfish)"),
+  make_sirv_scatter(ont_isq.dge,  "ONT cDNA (IsoQuant)"),
+  make_sirv_scatter(ont_mq.dge,   "ONT cDNA (MiniQuant)"),
+  # make_sirv_scatter(drna_oar.dge,  "ONT dRNA (Oarfish)"),
+  make_sirv_scatter(drna_isq.dge,  "ONT dRNA (IsoQuant)"),
+  make_sirv_scatter(drna_mq.dge,   "ONT dRNA (MiniQuant)"),
+  # make_sirv_scatter(pb_oar.dge,   "PacBio (Oarfish)"),
+  make_sirv_scatter(pb_isq.dge,   "PacBio (IsoQuant)"),
+  make_sirv_scatter(pb_mq.dge,    "PacBio (MiniQuant)")
+))
+patchwork::wrap_plots(plots, ncol = 4, guides = "collect", byrow = FALSE)
+```
+
+```{r sirv-raw-data, echo=TRUE}
+get_sirv_data <- function(dge, label, is_illumina = FALSE) {
+  norm_mat <- norm_subset(dge, is.sirv_all, is_illumina)
+  if (is.null(norm_mat)) return(NULL)
+
+  sub_sirv <- dge[is.sirv_all(dge), ]
+  get_lcpm <- function(x) log2(x * 1e6 / sum(x) + 1)
+  sirv_gt <- tibble(
+    NAME    = rownames(sub_sirv),
+    LENGTH  = get_ref_length(rownames(sub_sirv)),
+    is_long = is.long_sirv(sub_sirv),
+    GT      = get_lcpm(rep(1, nrow(sub_sirv)))
+  ) %>% mutate(N_tx = SIRV.G.Tx.map$tx_count[match(NAME, SIRV.G.Tx.map$tx_name)])
+
+  norm_mat %>% as_tibble(rownames = "NAME") %>%
+    left_join(sirv_gt, by = "NAME") %>%
+    pivot_longer(colnames(sub_sirv), names_to = "Sample", values_to = "Obs") %>%
+    mutate(label = label)
+}
+
+sirv_raw <- bind_rows(
+  get_sirv_data(ill_tx.dge,   "Illumina",              is_illumina = TRUE),
+  get_sirv_data(ont_isq.dge,  "ONT cDNA (IsoQuant)"),
+  get_sirv_data(ont_mq.dge,   "ONT cDNA (MiniQuant)"),
+  get_sirv_data(drna_isq.dge, "ONT dRNA (IsoQuant)"),
+  get_sirv_data(drna_mq.dge,  "ONT dRNA (MiniQuant)"),
+  get_sirv_data(pb_isq.dge,   "PacBio (IsoQuant)"),
+  get_sirv_data(pb_mq.dge,    "PacBio (MiniQuant)")
+)
+
+if (!is.null(params$fig.path)) {
+  write_csv(sirv_raw, file.path(params$fig.path, "sirv_raw_data.csv"))
+}
+```
+
+### Per-sample correlation table
+```{r cor-table}
+get_cor_table <- function(oar_dge, mq_dge, platform) {
+  common <- intersect(rownames(oar_dge), rownames(mq_dge))
+  common <- common[grepl("^ENS", common)]
+  if (length(common) == 0) return(NULL)
+  oar_log <- log_cpm(oar_dge[common, ])
+  mq_log  <- log2(mq_dge[common, ]$counts + 1)
+  tibble(platform = platform,
+         sample = colnames(oar_log),
+         r = sapply(colnames(oar_log), function(s) cor(oar_log[, s], mq_log[, s])))
+}
+bind_rows(
+  get_cor_table(ont_oar.dge,  ont_mq.dge,  "ONT cDNA"),
+  get_cor_table(pb_oar.dge,   pb_mq.dge,   "PacBio"),
+  get_cor_table(drna_oar.dge, drna_mq.dge, "ONT dRNA")
+) %>% knitr::kable(digits = 3)
+```
+
+# Part 3: MDS — Illumina + Oarfish + MiniQuant
+
+MDS computed on human transcripts common to all tools. Illumina: log2(TPM+1);
+long-read tools: log2(CPM+1).
+
+```{r mds-prep}
+build_log_mat <- function(dge, is_illumina = FALSE, tool = "Oarfish", platform = "Unknown") {
+  mat <- if (is_illumina) log_tpm_illumina(dge) else log_cpm(dge)
+  colnames(mat) <- paste0(tool, "_", colnames(mat))
+  list(mat = mat, samples = dge$samples %>% mutate(tool = tool, platform = platform))
+}
+
+parts <- list(
+  build_log_mat(ill_tx.dge,    is_illumina = TRUE, tool = "Illumina", platform = "Illumina"),
+  build_log_mat(ont_oar.dge,   tool = "Oarfish", platform = "ONT cDNA"),
+  build_log_mat(ont_mq.dge,    tool = "MiniQuant", platform = "ONT cDNA"),
+  build_log_mat(pb_oar.dge,    tool = "Oarfish", platform = "PacBio"),
+  build_log_mat(pb_mq.dge,     tool = "MiniQuant", platform = "PacBio"),
+  build_log_mat(drna_oar.dge,  tool = "Oarfish", platform = "ONT dRNA"),
+  build_log_mat(drna_mq.dge,   tool = "MiniQuant", platform = "ONT dRNA")
+)
+
+log_mat_all <- do.call(cbind, lapply(parts, `[[`, "mat"))
+samples_all <- bind_rows(lapply(parts, `[[`, "samples"))
+```
+
+```{r mds-plot, fig.height=4, fig.width=10}
+mds <- plotMDS(log_mat_all, plot = FALSE)
+mds_df <- data.frame(
+  Dim1 = mds$x, 
+  Dim2 = mds$y,
+  group    = samples_all$group,
+  platform = samples_all$platform,
+  tool     = samples_all$tool,
+  sample   = samples_all$sample
+)
+
+p1 <- ggplot(mds_df, aes(Dim1, Dim2, color = tool, shape = platform)) +
+  geom_point(size = 3, alpha = 0.8) +
+  scale_color_manual(values = tool_colors) +
+  labs(title = "MDS: coloured by tool",
+       x = glue("Dim1 ({round(mds$var.explained[1]*100,1)}%)"),
+       y = glue("Dim2 ({round(mds$var.explained[2]*100,1)}%)")) +
+  theme_minimal()
+
+p2 <- ggplot(mds_df, aes(Dim1, Dim2, color = group, shape = tool)) +
+  geom_point(size = 3, alpha = 0.8) + scale_color_viridis_d() +
+  labs(title = "MDS: coloured by cell line",
+       x = glue("Dim1 ({round(mds$var.explained[1]*100,1)}%)"),
+       y = glue("Dim2 ({round(mds$var.explained[2]*100,1)}%)")) +
+  theme_minimal()
+
+p1 | p2
+```
+
+# Part 4: Sample-wise correlation heatmap
+```{r heatmap, fig.width=14, fig.height=5}
+cor_mat <- cor(log_mat_all, method = "pearson")
+col_fun <- colorRamp2(c(0.5, 0.75, 1), c("#2166AC", "white", "#B2182B"))
+
+ht_list <- lapply(unique(samples_all$sample), function(sid) {
+  cols <- which(samples_all$sample == sid)
+  mat  <- cor_mat[cols, cols]
+  lbls <- paste0(samples_all$tool[cols], "\n", samples_all$platform[cols])
+  rownames(mat) <- colnames(mat) <- lbls
+  Heatmap(mat, name = as.character(sid), col = col_fun,
+          cluster_rows = TRUE, cluster_columns = TRUE,
+          show_row_names = TRUE, show_column_names = TRUE,
+          row_dend_width = unit(4,"mm"), column_dend_height = unit(4,"mm"),
+          row_names_gp = gpar(fontsize = 7), column_names_gp = gpar(fontsize = 7))
+})
+
+ht_grobs <- lapply(ht_list, function(ht) grid.grabExpr(draw(ht, merge_legend = TRUE)))
+grid.arrange(grobs = ht_grobs, nrow = 2, ncol = 4,
+             top = grid::textGrob("Sample-wise Pearson correlation (log2 CPM/TPM+1)",
+                                   gp = grid::gpar(fontsize = 14, fontface = "bold")))
+```

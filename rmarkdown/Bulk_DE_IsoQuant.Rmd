@@ -1,0 +1,927 @@
+---
+title: "DE analysis (IsoQuant quantification)"
+author: "Yupei"
+date: '`r Sys.Date()`'
+version: 'v1.2'
+output:
+  html_document:
+    code_folding: hide
+    toc: yes
+    toc_float: yes
+    number_sections: yes
+    toc_depth: 4
+  pdf_document:
+    toc: yes
+    toc_depth: '4'
+params:
+  random_seed: 2024
+  cache_dir: NULL
+  fig.path: NULL
+  # Illumina DGE (from Salmon/oarfish bundle — used for ill_bulk objects only)
+  bulk_dge_rds: "/vast/projects/LongBench/analysis/workflow/rmarkdown/RDS/bulk_DGE.obj.rds"
+  # IsoQuant DGE bundles (no_novel set)
+  isoquant_ont_bulk_rds: "/home/users/allstaff/you.yu/LongBench/analysis/lr_bulk/result/IsoQuant_output_no_novel/isoquant_bulk_dge.ont_bulk.rds"
+  isoquant_pb_bulk_rds: "/home/users/allstaff/you.yu/LongBench/analysis/lr_bulk/result/IsoQuant_output_no_novel/isoquant_bulk_dge.pb_bulk.rds"
+  isoquant_drna_bulk_rds: "/home/users/allstaff/you.yu/LongBench/analysis/lr_bulk/result/IsoQuant_output_no_novel/isoquant_bulk_dge.dRNA_bulk.rds"
+  output_rds: "/vast/projects/LongBench/analysis/workflow/rmarkdown/RDS/bulk_DE_isoquant.rds"
+  expected_de_table: '/vast/projects/LongBench/reference_files/Expected_DE.csv'
+  log2FC_cutoff: 0
+---
+
+# Setup
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  fig.height = 5,
+  fig.width = 7,
+  warning = FALSE,
+  cache = FALSE
+)
+
+if (!exists("params")){
+  params <- list(
+    random_seed = 2024,
+    cache_dir = NULL,
+    fig.path = NULL,
+    bulk_dge_rds = "/vast/projects/LongBench/analysis/workflow/rmarkdown/RDS/bulk_DGE.obj.rds",
+    isoquant_ont_bulk_rds = "/home/users/allstaff/you.yu/LongBench/analysis/lr_bulk/result/IsoQuant_output_no_novel/isoquant_bulk_dge.ont_bulk.rds",
+    isoquant_pb_bulk_rds = "/home/users/allstaff/you.yu/LongBench/analysis/lr_bulk/result/IsoQuant_output_no_novel/isoquant_bulk_dge.pb_bulk.rds",
+    isoquant_drna_bulk_rds = "/home/users/allstaff/you.yu/LongBench/analysis/lr_bulk/result/IsoQuant_output_no_novel/isoquant_bulk_dge.dRNA_bulk.rds",
+    output_rds = "/vast/projects/LongBench/analysis/workflow/rmarkdown/RDS/bulk_DE_isoquant.rds",
+    expected_de_table = '/vast/projects/LongBench/reference_files/Expected_DE.csv',
+    log2FC_cutoff = 0
+  )
+}
+```
+
+```{r Libraries, include=FALSE}
+library(limma)
+library(edgeR)
+library(tidyverse)
+library(RColorBrewer)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(ggrepel)
+library(glue)
+library(gridExtra)
+library(ggExtra)
+library(knitr)
+library(kableExtra)
+library(scales)
+library(UpSetR)
+library(ggtree)
+library(aplot)
+library(patchwork)
+
+output_list <- list()
+
+rename <- dplyr::rename
+select <- dplyr::select
+
+knitr::opts_chunk$set(
+  cache = !is.null(params$cache_dir),
+  fig.width = 15,
+  fig.height = 10,
+  echo = FALSE,
+  message = FALSE,
+  warning = FALSE,
+  fig.path = params$fig.path,
+  dev = if (!is.null(params$fig.path)) c("png", "svg") else NULL
+)
+
+if (!is.null(params$cache_dir)) {
+  knitr::opts_chunk$set(cache.path = params$cache_dir)
+}
+```
+
+```{r color code, include=FALSE}
+color_palette <- c(
+  PacBio = "#df1995",
+  "ONT dRNA" = "#00789b",
+  "ONT cDNA" = "#04476c",
+  Illumina = "#e88b20"
+)
+```
+
+```{r helper functions}
+is.human <- function(dge) grepl("^ENS", rownames(dge))
+
+normalize_rownames <- function(dge) {
+  rownames(dge) <- sub("\\|.*", "", rownames(dge))
+  rownames(dge) <- sub("\\..*", "", rownames(dge))
+  dge
+}
+
+extract_and_normalize_ids <- function(dge) {
+  if (!"full_id" %in% colnames(dge$genes)) {
+    dge$genes$full_id <- rownames(dge)
+  }
+  rownames(dge) <- sub("\\|.*", "", rownames(dge))  # strip pipe-separated fields
+  rownames(dge) <- sub("\\..*", "", rownames(dge))  # strip version numbers
+  dge
+}
+```
+
+# Load count data
+
+LR platforms (ONT cDNA / PacBio / ONT dRNA) use IsoQuant-derived DGE objects.
+Illumina uses the same Salmon-derived bundle as the main DE analysis.
+
+```{r load-dge, echo=TRUE, message=FALSE, warning=FALSE, results='hide'}
+bulk_obj          <- readRDS(params$bulk_dge_rds)
+isoquant_ont_obj  <- readRDS(params$isoquant_ont_bulk_rds)
+isoquant_pb_obj   <- readRDS(params$isoquant_pb_bulk_rds)
+isoquant_drna_obj <- readRDS(params$isoquant_drna_bulk_rds)
+
+# Illumina — from Salmon bundle (keep full_id for length/biotype lookups later)
+ill_bulk.tx.dge   <- extract_and_normalize_ids(bulk_obj[["ill_bulk.tx.dge"]])
+ill_bulk.gene.dge <- extract_and_normalize_ids(bulk_obj[["ill_bulk.gene.dge"]])
+
+# LR — IsoQuant (no_novel)
+ont_bulk.tx.dge   <- normalize_rownames(isoquant_ont_obj[["ont_bulk.tx.dge"]])
+pb_bulk.tx.dge    <- normalize_rownames(isoquant_pb_obj[["pb_bulk.tx.dge"]])
+drna_bulk.tx.dge  <- normalize_rownames(isoquant_drna_obj[["dRNA_bulk.tx.dge"]])
+
+ont_bulk.gene.dge   <- normalize_rownames(isoquant_ont_obj[["ont_bulk.gene.dge"]])
+pb_bulk.gene.dge    <- normalize_rownames(isoquant_pb_obj[["pb_bulk.gene.dge"]])
+drna_bulk.gene.dge  <- normalize_rownames(isoquant_drna_obj[["dRNA_bulk.gene.dge"]])
+```
+
+## Library size
+
+```{r total count plot, fig.height=3, fig.width=3}
+lib_sizes <- bind_rows(
+  data.frame(Sample = colnames(ill_bulk.tx.dge),  LibSize = colSums(ill_bulk.tx.dge$counts),  Dataset = "Illumina"),
+  data.frame(Sample = colnames(drna_bulk.tx.dge), LibSize = colSums(drna_bulk.tx.dge$counts), Dataset = "ONT dRNA"),
+  data.frame(Sample = colnames(pb_bulk.tx.dge),   LibSize = colSums(pb_bulk.tx.dge$counts),   Dataset = "PacBio"),
+  data.frame(Sample = colnames(ont_bulk.tx.dge),  LibSize = colSums(ont_bulk.tx.dge$counts),  Dataset = "ONT cDNA")
+)
+
+ggplot(lib_sizes, aes(x = Dataset, y = LibSize, fill = Dataset)) +
+  geom_boxplot(outlier.shape = NA, alpha = 0.9) +
+  geom_jitter(width = 0.2, alpha = 0.6, size = 1) +
+  scale_fill_manual(values = color_palette) +
+  scale_y_continuous(labels = scales::comma) +
+  labs(title = "Library Size per Sample", y = "Total Counts", x = "Sequencing protocol") +
+  theme_minimal() +
+  theme(legend.position = "none", axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+## Filter lowly expressed features (`filterByExpr`)
+
+```{r filtering, echo=TRUE, message=FALSE, warning=FALSE, results='hide'}
+# Gene level — intersect then filter
+common_genes <- Reduce(intersect, lapply(
+  list(ill_bulk.gene.dge, ont_bulk.gene.dge, pb_bulk.gene.dge, drna_bulk.gene.dge), rownames))
+
+ill_bulk.gene.dge  <- ill_bulk.gene.dge[common_genes, ]
+ont_bulk.gene.dge  <- ont_bulk.gene.dge[common_genes, ]
+pb_bulk.gene.dge   <- pb_bulk.gene.dge[common_genes, ]
+drna_bulk.gene.dge <- drna_bulk.gene.dge[common_genes, ]
+
+keep_gene <- filterByExpr(ill_bulk.gene.dge,  group = ill_bulk.gene.dge$samples$group)  &
+             filterByExpr(ont_bulk.gene.dge,  group = ont_bulk.gene.dge$samples$group)  &
+             filterByExpr(pb_bulk.gene.dge,   group = pb_bulk.gene.dge$samples$group)   &
+             filterByExpr(drna_bulk.gene.dge, group = drna_bulk.gene.dge$samples$group)
+
+ill_bulk.gene.dge  <- ill_bulk.gene.dge[keep_gene, ]
+ont_bulk.gene.dge  <- ont_bulk.gene.dge[keep_gene, ]
+pb_bulk.gene.dge   <- pb_bulk.gene.dge[keep_gene, ]
+drna_bulk.gene.dge <- drna_bulk.gene.dge[keep_gene, ]
+
+# Transcript level
+common_tx <- Reduce(intersect, lapply(
+  list(ill_bulk.tx.dge, ont_bulk.tx.dge, pb_bulk.tx.dge, drna_bulk.tx.dge), rownames))
+
+ill_bulk.tx.dge  <- ill_bulk.tx.dge[common_tx, ]
+ont_bulk.tx.dge  <- ont_bulk.tx.dge[common_tx, ]
+pb_bulk.tx.dge   <- pb_bulk.tx.dge[common_tx, ]
+drna_bulk.tx.dge <- drna_bulk.tx.dge[common_tx, ]
+
+keep_tx <- filterByExpr(ill_bulk.tx.dge,  group = ill_bulk.tx.dge$samples$group,  min.count = 5) &
+           filterByExpr(ont_bulk.tx.dge,  group = ont_bulk.tx.dge$samples$group,  min.count = 5) &
+           filterByExpr(pb_bulk.tx.dge,   group = pb_bulk.tx.dge$samples$group,   min.count = 5) &
+           filterByExpr(drna_bulk.tx.dge, group = drna_bulk.tx.dge$samples$group, min.count = 5)
+
+ill_bulk.tx.dge  <- ill_bulk.tx.dge[keep_tx, ]
+ont_bulk.tx.dge  <- ont_bulk.tx.dge[keep_tx, ]
+pb_bulk.tx.dge   <- pb_bulk.tx.dge[keep_tx, ]
+drna_bulk.tx.dge <- drna_bulk.tx.dge[keep_tx, ]
+```
+
+Number of genes after filtering: `r sum(keep_gene)` / `r length(keep_gene)`.
+Number of transcripts after filtering: `r sum(keep_tx)` / `r length(keep_tx)`.
+
+---
+
+# Differential gene expression
+
+Model: `~0 + group` with contrasts SCLC_A vs LUAD (AvsL), SCLC_P vs LUAD (PvsL), SCLC_A vs SCLC_P (AvsP). Normalization: TMM.
+
+```{r dge-function, echo=TRUE, message=FALSE, warning=FALSE, results='hide'}
+DGE.edgeR_human <- function(dge, norm.method = "TMM") {
+  if (!is.null(norm.method)) dge <- calcNormFactors(dge, method = norm.method)
+  design <- model.matrix(~0 + group, data = dge$samples)
+  dge <- estimateDisp(dge, design)
+  qlfit <- glmQLFit(dge, design)
+  contrasts <- makeContrasts(
+    AvsL = groupsclc_a - groupluad,
+    PvsL = groupsclc_p - groupluad,
+    AvsP = groupsclc_a - groupsclc_p,
+    levels = design
+  )
+  list(
+    AvsL.DE = glmQLFTest(qlfit, contrast = contrasts[, "AvsL"]),
+    PvsL.DE = glmQLFTest(qlfit, contrast = contrasts[, "PvsL"]),
+    AvsP.DE = glmQLFTest(qlfit, contrast = contrasts[, "AvsP"])
+  )
+}
+
+ill_bulk.dge_human.list   <- DGE.edgeR_human(ill_bulk.gene.dge[is.human(ill_bulk.gene.dge), , keep.lib.sizes = FALSE])
+ont_bulk.dge_human.list   <- DGE.edgeR_human(ont_bulk.gene.dge[is.human(ont_bulk.gene.dge), , keep.lib.sizes = FALSE])
+drna_bulk.deg_human.list  <- DGE.edgeR_human(drna_bulk.gene.dge[is.human(drna_bulk.gene.dge), , keep.lib.sizes = FALSE])
+pb_bulk.dge_human.list    <- DGE.edgeR_human(pb_bulk.gene.dge[is.human(pb_bulk.gene.dge), , keep.lib.sizes = FALSE])
+```
+
+## MA plots
+
+Highlighted markers: HMGA2, POU2F3, ASCL1.
+
+```{r MA-plots, fig.height=13, fig.width=13}
+expected_DE <- read_csv(params$expected_de_table)
+
+plot.my.ma <- function(dge) {
+  res <- dge$table %>%
+    tibble::rownames_to_column("Gene") %>%
+    mutate(Gene = sub("\\..*", "", Gene))
+
+  highlighted <- expected_DE %>%
+    filter(Symbol %in% c("HMGA2", "POU2F3", "ASCL1")) %>%
+    select(Gene, Symbol) %>%
+    inner_join(res, by = "Gene")
+
+  dges <- decideTests(dge)
+  res$DE <- as.factor(dges[, 1])
+  res_nonDE <- res %>% filter(DE == 0)
+  res_DE    <- res %>% filter(DE != 0)
+
+  ggplot() +
+    geom_point(data = res_nonDE, aes(x = logCPM, y = logFC), color = "gray", alpha = 1, size = 0.5) +
+    geom_point(data = res_DE,    aes(x = logCPM, y = logFC, color = DE), alpha = 1, size = 0.5) +
+    scale_color_manual(values = c("-1" = "#80b1d3", "1" = "#fb8072")) +
+    geom_point(data = highlighted, aes(x = logCPM, y = logFC),
+               color = "yellow", shape = 21, fill = NA, size = 1, stroke = 1) +
+    geom_text_repel(data = highlighted, aes(x = logCPM, y = logFC, label = Symbol),
+                    size = 3, max.overlaps = 100) +
+    geom_hline(yintercept = 0, linetype = "dashed", color = "gray") +
+    labs(x = "Average log CPM", y = "log₂ Fold Change", color = "DE Status") +
+    theme_minimal()
+}
+
+plot_with_titles <- function(dge_list, platform) {
+  imap(dge_list, ~ plot.my.ma(.x) + labs(title = paste(.y, "-", platform))) %>%
+    wrap_plots(ncol = 3, guides = "collect")
+}
+
+p1 <- plot_with_titles(ill_bulk.dge_human.list,  "Illumina")
+p2 <- plot_with_titles(ont_bulk.dge_human.list,  "ONT cDNA")
+p3 <- plot_with_titles(drna_bulk.deg_human.list, "ONT dRNA")
+p4 <- plot_with_titles(pb_bulk.dge_human.list,   "PacBio")
+
+(p1 / p2 / p3 / p4) + plot_layout(guides = "collect") + plot_annotation(title = "Bulk MA Plots (IsoQuant)")
+```
+
+## Total number of DEGs
+
+```{r total-deg, fig.height=3, fig.width=4}
+build_plot_d <- function(contrast_name) {
+  lst <- list(
+    "Illumina" = ill_bulk.dge_human.list[[paste0(contrast_name, ".DE")]],
+    "ONT cDNA" = ont_bulk.dge_human.list[[paste0(contrast_name, ".DE")]],
+    "PacBio"   = pb_bulk.dge_human.list[[paste0(contrast_name, ".DE")]],
+    "ONT dRNA" = drna_bulk.deg_human.list[[paste0(contrast_name, ".DE")]]
+  )
+  DEGs <- lapply(lst, function(x) rownames(x)[decideTests(x, lfc = params$log2FC_cutoff) != 0])
+  stack(DEGs) %>% mutate(contrast = contrast_name)
+}
+
+plot_d <- bind_rows(build_plot_d("AvsL"), build_plot_d("PvsL"), build_plot_d("AvsP"))
+
+ggplot(plot_d %>% mutate(contrast = factor(contrast, levels = c("AvsL", "PvsL", "AvsP"))),
+       aes(x = ind, fill = ind)) +
+  geom_bar() +
+  scale_fill_manual(values = color_palette) +
+  labs(x = "Sequencing protocol", y = "Number of DEGs", title = "DEG count per platform (IsoQuant)") +
+  facet_wrap(~contrast) +
+  theme_minimal() +
+  theme(legend.position = "none", axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+## Cross-platform comparison — upset plots
+
+```{r upset-function, include=FALSE}
+complex_upset_plot <- function(lst) {
+  DEGs <- lapply(lst, function(x) rownames(x)[decideTests(x, lfc = params$log2FC_cutoff) != 0])
+  long_df <- stack(DEGs)
+  binary_matrix <- long_df %>%
+    mutate(present = 1) %>%
+    pivot_wider(names_from = ind, values_from = present, values_fill = 0)
+
+  p <- ComplexUpset::upset(
+    binary_matrix %>% select(-values) %>% as.data.frame(),
+    intersect = names(lst),
+    base_annotations = list(
+      'Intersection size' = ComplexUpset::intersection_size(
+        counts = TRUE,
+        text = list(element_text(size = 3, vjust = -0.2))
+      )
+    ),
+    wrap = TRUE
+  )
+  list(plot = p, matrix = binary_matrix %>% rename(Gene = values))
+}
+
+mean_pairwise_jaccard <- function(mat) {
+  platforms <- setdiff(names(mat), "Gene")
+  pairs     <- combn(platforms, 2, simplify = FALSE)
+  jac <- sapply(pairs, function(p) {
+    a <- mat[[p[1]]]; b <- mat[[p[2]]]
+    sum(a & b) / sum(a | b)
+  })
+  names(jac) <- sapply(pairs, function(p) paste(p, collapse = " vs "))
+  jac
+}
+
+platform_overlap_pct <- function(mat) {
+  platforms <- setdiff(names(mat), "Gene")
+  mat2 <- mat[, platforms, drop = FALSE]
+  mat2$TotalDetected <- rowSums(mat2)
+  do.call(rbind, lapply(platforms, function(p) {
+    detected <- mat2[mat2[[p]] == 1, , drop = FALSE]
+    n <- nrow(detected)
+    data.frame(
+      Platform         = p,
+      N                = n,
+      `>=1 other (%)`  = if (n > 0) round(100 * sum(detected$TotalDetected >= 2) / n, 1) else NA_real_,
+      `>=2 others (%)` = if (n > 0) round(100 * sum(detected$TotalDetected >= 3) / n, 1) else NA_real_,
+      `=3 others (%)`  = if (n > 0) round(100 * sum(detected$TotalDetected == 4) / n, 1) else NA_real_,
+      check.names = FALSE
+    )
+  }))
+}
+
+feature_platform_coverage <- function(mat) {
+  platforms <- setdiff(names(mat), "Gene")
+  total <- rowSums(mat[, platforms, drop = FALSE])
+  n <- nrow(mat)
+  data.frame(
+    `Total unique features` = n,
+    `>=2 platforms (%)`     = round(100 * sum(total >= 2) / n, 1),
+    `>=3 platforms (%)`     = round(100 * sum(total >= 3) / n, 1),
+    `=4 platforms (%)`      = round(100 * sum(total == 4) / n, 1),
+    check.names = FALSE
+  )
+}
+```
+
+```{r upset-dge, echo=FALSE, fig.height=9, fig.width=8}
+make_lst <- function(contrast_name) list(
+  "Illumina" = ill_bulk.dge_human.list[[paste0(contrast_name, ".DE")]],
+  "ONT cDNA" = ont_bulk.dge_human.list[[paste0(contrast_name, ".DE")]],
+  "PacBio"   = pb_bulk.dge_human.list[[paste0(contrast_name, ".DE")]],
+  "ONT dRNA" = drna_bulk.deg_human.list[[paste0(contrast_name, ".DE")]]
+)
+
+res_AvsL <- complex_upset_plot(make_lst("AvsL"))
+res_PvsL <- complex_upset_plot(make_lst("PvsL"))
+res_AvsP <- complex_upset_plot(make_lst("AvsP"))
+
+mat.AvsL.DE <- res_AvsL$matrix
+mat.PvsL.DE <- res_PvsL$matrix
+mat.AvsP.DE <- res_AvsP$matrix
+
+p1 <- res_AvsL$plot + ggtitle("SCLC_A vs LUAD")   + theme(plot.title = element_text(size = 10))
+p2 <- res_PvsL$plot + ggtitle("SCLC_P vs LUAD")   + theme(plot.title = element_text(size = 10))
+p3 <- res_AvsP$plot + ggtitle("SCLC_A vs SCLC_P") + theme(plot.title = element_text(size = 10))
+
+(p1 / p2 / p3) + patchwork::plot_annotation(title = "DGE Human (IsoQuant)")
+```
+
+```{r jaccard-dge, echo=FALSE}
+jac_rows <- lapply(
+  list(AvsL = mat.AvsL.DE, PvsL = mat.PvsL.DE, AvsP = mat.AvsP.DE),
+  mean_pairwise_jaccard
+)
+jac_tbl <- do.call(rbind, lapply(names(jac_rows), function(contrast) {
+  v <- jac_rows[[contrast]]
+  c(Contrast = contrast, round(v, 3), Mean = round(mean(v), 3))
+})) |> as.data.frame()
+print(knitr::kable(jac_tbl, caption = "Mean pairwise Jaccard similarity — DGE"))
+
+ovlp_tbl <- do.call(rbind, lapply(
+  c("AvsL", "PvsL", "AvsP"),
+  function(contrast) {
+    mat <- get(paste0("mat.", contrast, ".DE"))
+    cbind(Contrast = contrast, platform_overlap_pct(mat))
+  }
+))
+knitr::kable(ovlp_tbl, caption = "Platform overlap with other platforms — DGE (%)",
+             row.names = FALSE)
+
+cov_tbl <- do.call(rbind, lapply(
+  c("AvsL", "PvsL", "AvsP"),
+  function(contrast) {
+    mat <- get(paste0("mat.", contrast, ".DE"))
+    cbind(Contrast = contrast, feature_platform_coverage(mat))
+  }
+))
+knitr::kable(cov_tbl,
+             caption = "% of unique DE features detected by N platforms — DGE",
+             row.names = FALSE)
+
+if (!is.null(params$fig.path)) {
+  for (contrast in c("AvsL", "PvsL", "AvsP")) {
+    mat <- get(paste0("mat.", contrast, ".DE"))
+    write.table(mat, file.path(params$fig.path, paste0("upset_dge_", contrast, ".tsv")),
+                sep = "\t", quote = FALSE, row.names = FALSE)
+  }
+  write.table(jac_tbl,  file.path(params$fig.path, "jaccard_dge.tsv"),
+              sep = "\t", quote = FALSE, row.names = FALSE)
+  write.table(ovlp_tbl, file.path(params$fig.path, "platform_overlap_dge.tsv"),
+              sep = "\t", quote = FALSE, row.names = FALSE)
+  write.table(cov_tbl,  file.path(params$fig.path, "feature_coverage_dge.tsv"),
+              sep = "\t", quote = FALSE, row.names = FALSE)
+}
+```
+
+```{r platform-detection-summary-gene, fig.height=2, fig.width=13}
+platform_specific_gene_summary <- function(df) {
+  df_long <- df %>%
+    pivot_longer(-Gene, names_to = "Platform", values_to = "Detected") %>%
+    group_by(Gene) %>%
+    mutate(TotalDetected = sum(Detected)) %>%
+    ungroup() %>%
+    mutate(Category = case_when(
+      Detected == 1 & TotalDetected == 1 ~ "Platform-Specific Detection",
+      Detected == 0 & TotalDetected == 3 ~ "Platform-Specific Absence",
+      Detected == 1 & TotalDetected > 1  ~ "Common Detection (also detected in >0 other platform)",
+      Detected == 0 & TotalDetected < 3  ~ "Common Absence (also absent in >0 other platform)"
+    )) %>%
+    count(Platform, Category)
+
+  df_long$Category <- factor(df_long$Category, levels = c(
+    "Platform-Specific Absence",
+    "Common Absence (also absent in >0 other platform)",
+    "Platform-Specific Detection",
+    "Common Detection (also detected in >0 other platform)"
+  ))
+
+  df_long %>%
+    mutate(n = case_when(
+      Category %in% c("Platform-Specific Absence", "Common Absence (also absent in >0 other platform)") ~ -n,
+      TRUE ~ n
+    )) %>%
+    filter(!Category == "Common Absence (also absent in >0 other platform)") %>%
+    ggplot(aes(x = Platform, y = n, fill = Category)) +
+    geom_bar(stat = "identity") +
+    labs(y = "Number of Genes", x = "Platform", fill = "Category") +
+    theme_minimal() +
+    scale_fill_manual(values = c(
+      "Platform-Specific Detection" = "#0072B2",
+      "Platform-Specific Absence"   = "#E69F00",
+      "Common Detection (also detected in >0 other platform)" = "#009E73",
+      "Common Absence (also absent in >0 other platform)"     = "#999999"
+    )) +
+    coord_flip()
+}
+
+map(list(mat.AvsL.DE, mat.PvsL.DE, mat.AvsP.DE), platform_specific_gene_summary) %>%
+  do.call(patchwork::wrap_plots, .) +
+  patchwork::plot_layout(guides = 'collect')
+```
+
+```{r save-dge-lists}
+output_list[["AvsP.DEG.all"]] <- mat.AvsP.DE %>% filter(rowSums(select(., where(is.numeric))) == 4) %>% pull(Gene)
+output_list[["AvsP.DEG.any"]] <- mat.AvsP.DE %>% filter(rowSums(select(., where(is.numeric))) > 0) %>% pull(Gene)
+output_list[["AvsL.DEG.all"]] <- mat.AvsL.DE %>% filter(rowSums(select(., where(is.numeric))) == 4) %>% pull(Gene)
+output_list[["AvsL.DEG.any"]] <- mat.AvsL.DE %>% filter(rowSums(select(., where(is.numeric))) > 0) %>% pull(Gene)
+output_list[["PvsL.DEG.all"]] <- mat.PvsL.DE %>% filter(rowSums(select(., where(is.numeric))) == 4) %>% pull(Gene)
+output_list[["PvsL.DEG.any"]] <- mat.PvsL.DE %>% filter(rowSums(select(., where(is.numeric))) > 0) %>% pull(Gene)
+```
+
+## Biotype and gene length
+
+Gene lengths derived from Illumina Salmon reference metadata; biotypes via biomaRt.
+
+```{r dge-biotype-length, echo=TRUE, fig.height=9, fig.width=15}
+library(biomaRt)
+options(timeout = 600)
+ensembl <- useEnsembl(biomart = "genes", dataset = "hsapiens_gene_ensembl")
+gene_info <- getBM(attributes = c("ensembl_gene_id", "hgnc_symbol", "chromosome_name"), mart = ensembl)
+
+# Gene length lookup from Illumina genes table (full_id has pipe-separated info)
+gene_length_lookup <- ill_bulk.tx.dge$genes %>%
+  rownames_to_column("tx_id") %>%
+  mutate(
+    full = if ("full_id" %in% names(.)) full_id else tx_id,
+    gene_id = strsplit(full, "\\|") %>% sapply(function(x) if (length(x) >= 2) x[2] else x[1]),
+    gene_id = sub("\\..*", "", gene_id),
+    Length  = if ("Length" %in% names(.)) Length else NA_real_
+  ) %>%
+  group_by(gene_id) %>%
+  summarise(mean_length = mean(Length, na.rm = TRUE), .groups = "drop")
+
+my_complexUpset_gene <- function(data, gene_length_lookup, ensembl, title) {
+  plot_d <- data %>%
+    left_join(gene_length_lookup, by = c("Gene" = "gene_id")) %>%
+    rename(`Gene length` = mean_length) %>%
+    mutate(Gene = sub("\\..*", "", Gene))
+
+  biotypes <- getBM(
+    attributes = c("ensembl_gene_id", "gene_biotype"),
+    filters    = "ensembl_gene_id",
+    values     = plot_d$Gene,
+    mart       = ensembl
+  )
+
+  plot_d <- plot_d %>%
+    left_join(biotypes, by = c("Gene" = "ensembl_gene_id")) %>%
+    rename(biotype = gene_biotype) %>%
+    mutate(
+      biotype = ifelse(biotype %in% names(sort(table(biotype), decreasing = TRUE)[1:3]),
+                       biotype, "Others"),
+      biotype = factor(biotype, levels = c(sort(unique(biotype)) %>% setdiff("Others"), "Others"))
+    ) %>%
+    mutate(biotype = case_when(
+      biotype == "protein_coding" ~ "Protein-coding",
+      TRUE ~ "Non-protein-coding"
+    ))
+
+  ComplexUpset::upset(
+    plot_d,
+    intersect = c('Illumina', "ONT cDNA", "PacBio", "ONT dRNA"),
+    annotations = list(
+      "Gene length" = list(
+        aes  = aes(x = intersection, y = `Gene length`),
+        geom = geom_boxplot(na.rm = TRUE, outliers = FALSE)
+      )
+    ),
+    base_annotations = list(
+      'Intersection size' = ComplexUpset::intersection_size(
+        counts  = TRUE,
+        mapping = aes(fill = biotype),
+        text    = list(element_text(size = 3, vjust = -0.2))
+      ) + scale_fill_manual(values = c("Non-protein-coding" = "#BAC5CB", "Protein-coding" = '#B5C952'))
+    ),
+    set_sizes = (
+      ComplexUpset::upset_set_size(
+        geom = geom_bar(aes(fill = biotype), width = 0.8), position = 'right'
+      ) + scale_fill_manual(values = c("Non-protein-coding" = "#BAC5CB", "Protein-coding" = '#B5C952')) +
+        theme(legend.position = "none")
+    ),
+    guides = 'over', wrap = TRUE
+  )
+}
+
+plot1 <- my_complexUpset_gene(mat.AvsL.DE, gene_length_lookup, ensembl, "SCLC_A vs LUAD")
+plot2 <- my_complexUpset_gene(mat.PvsL.DE, gene_length_lookup, ensembl, "SCLC_P vs LUAD")
+plot3 <- my_complexUpset_gene(mat.AvsP.DE, gene_length_lookup, ensembl, "SCLC_A vs SCLC_P")
+
+(plot1 + plot2) / (plot3 + plot_spacer()) + plot_layout(nrow = 2)
+```
+
+## High-confidence and platform-specific DEGs
+
+```{r high-conf-dge, echo=TRUE, message=FALSE, warning=FALSE, results='hide'}
+get_DEGs <- function(DE_matrix) {
+  common_DEGs <- DE_matrix %>%
+    filter(Illumina == 1 & `ONT cDNA` == 1 & PacBio == 1 & `ONT dRNA` == 1) %>%
+    pull(Gene)
+
+  platform_DEGs <- list(
+    Illumina_only = DE_matrix %>% filter(Illumina == 1 & `ONT cDNA` == 0 & PacBio == 0 & `ONT dRNA` == 0) %>% pull(Gene),
+    ONT_cDNA_only = DE_matrix %>% filter(Illumina == 0 & `ONT cDNA` == 1 & PacBio == 0 & `ONT dRNA` == 0) %>% pull(Gene),
+    PacBio_only   = DE_matrix %>% filter(Illumina == 0 & `ONT cDNA` == 0 & PacBio == 1 & `ONT dRNA` == 0) %>% pull(Gene),
+    ONT_dRNA_only = DE_matrix %>% filter(Illumina == 0 & `ONT cDNA` == 0 & PacBio == 0 & `ONT dRNA` == 1) %>% pull(Gene)
+  )
+  list(common_DEGs = common_DEGs, platform_DEGs = platform_DEGs)
+}
+
+DEG_results_AvsL <- get_DEGs(mat.AvsL.DE)
+DEG_results_PvsL <- get_DEGs(mat.PvsL.DE)
+DEG_results_AvsP <- get_DEGs(mat.AvsP.DE)
+```
+
+```{r dge-tables, echo=TRUE, message=FALSE, warning=FALSE}
+color_palette_2 <- c(
+  PacBio   = "rgba(223, 25, 149, 0.3)",
+  ONT_cDNA = "rgba(4, 71, 108, 0.3)",
+  ONT_dRNA = "rgba(36, 205, 205, 0.3)",
+  Illumina = "rgba(232, 139, 32, 0.3)"
+)
+
+platforms <- list(
+  Illumina = ill_bulk.dge_human.list,
+  ONT_cDNA = ont_bulk.dge_human.list,
+  PacBio   = pb_bulk.dge_human.list,
+  ONT_dRNA = drna_bulk.deg_human.list
+)
+
+filter_and_rename_columns <- function(DEG_table, common_DEGs, platform_name) {
+  DEG_filtered <- DEG_table[rownames(DEG_table) %in% common_DEGs, ]
+  colnames(DEG_filtered)[1:4] <- paste0(platform_name, "_", colnames(DEG_filtered)[1:4])
+  DEG_filtered
+}
+
+get_color <- function(column_name) {
+  if (grepl("Gene|ensembl_gene_id|hgnc_symbol|chromosome_name", column_name)) return("white")
+  if (grepl("ONT_dRNA", column_name, ignore.case = TRUE)) return(color_palette_2["ONT_dRNA"])
+  if (grepl("ONT",      column_name, ignore.case = TRUE)) return(color_palette_2["ONT_cDNA"])
+  if (grepl("Illumina", column_name, ignore.case = TRUE)) return(color_palette_2["Illumina"])
+  if (grepl("PacBio",   column_name, ignore.case = TRUE)) return(color_palette_2["PacBio"])
+  "white"
+}
+
+make_common_deg_table <- function(comparison_name, common_DEGs) {
+  lapply(names(platforms), function(pl) {
+    filter_and_rename_columns(platforms[[pl]][[paste0(comparison_name, ".DE")]]$table, common_DEGs, pl)
+  }) %>%
+    do.call(cbind, .) %>%
+    rownames_to_column("gene") %>%
+    mutate(ensembl_gene_id = sub("\\..*", "", gene)) %>%
+    left_join(gene_info, by = "ensembl_gene_id") %>%
+    relocate(ensembl_gene_id, hgnc_symbol, chromosome_name, .after = gene)
+}
+
+combined_deg_tables <- list(
+  AvsL = make_common_deg_table("AvsL", DEG_results_AvsL$common_DEGs),
+  PvsL = make_common_deg_table("PvsL", DEG_results_PvsL$common_DEGs),
+  AvsP = make_common_deg_table("AvsP", DEG_results_AvsP$common_DEGs)
+)
+
+create_html_table <- function(combined_deg_table, caption) {
+  column_colors <- sapply(colnames(combined_deg_table), get_color)
+  column_colors[1:4] <- "white"
+  combined_deg_table %>%
+    kable(format = "html", caption = caption) %>%
+    kable_styling(bootstrap_options = c("striped", "hover")) %>%
+    column_spec(1, bold = TRUE, background = "white") %>%
+    purrr::reduce(1:ncol(combined_deg_table),
+                  function(k, i) k %>% column_spec(i, background = column_colors[i]), .init = .) %>%
+    scroll_box(width = "100%", height = "500px")
+}
+
+create_html_table(combined_deg_tables$AvsL, "High-confidence DGE — SCLC_A vs LUAD")
+create_html_table(combined_deg_tables$PvsL, "High-confidence DGE — SCLC_P vs LUAD")
+create_html_table(combined_deg_tables$AvsP, "High-confidence DGE — SCLC_A vs SCLC_P")
+```
+
+---
+
+# Differential transcript expression
+
+> **Note:** Illumina counts are scaled by overdispersion estimates from Salmon bootstrap samples (same as the main DE analysis). IsoQuant LR platforms (ONT cDNA, PacBio, ONT dRNA) do not provide bootstrap overdispersion, so their counts are used unscaled.
+
+```{r dte-function, echo=TRUE, message=FALSE, warning=FALSE, results='hide'}
+DTE.edgeR_human <- function(dge, norm.method = "TMM") {
+  if (!is.null(norm.method)) dge <- calcNormFactors(dge, method = norm.method)
+  design <- model.matrix(~0 + group, data = dge$samples)
+  dge <- estimateDisp(dge, design)
+  qlfit <- glmQLFit(dge, design)
+  contrasts <- makeContrasts(
+    AvsL = groupsclc_a - groupluad,
+    PvsL = groupsclc_p - groupluad,
+    AvsP = groupsclc_a - groupsclc_p,
+    levels = design
+  )
+  list(
+    AvsL.DE = glmQLFTest(qlfit, contrast = contrasts[, "AvsL"]),
+    PvsL.DE = glmQLFTest(qlfit, contrast = contrasts[, "PvsL"]),
+    AvsP.DE = glmQLFTest(qlfit, contrast = contrasts[, "AvsP"])
+  )
+}
+
+# Illumina: scale by overdispersion (from Salmon bootstraps)
+ill_bulk.scale_dge <- ill_bulk.tx.dge
+ill_bulk.scale_dge$counts <- ill_bulk.scale_dge$counts / ill_bulk.scale_dge$genes$Overdispersion
+
+# IsoQuant LR: no overdispersion available — use counts as-is
+ill_bulk.dte_human.list   <- DTE.edgeR_human(ill_bulk.scale_dge[is.human(ill_bulk.scale_dge), , keep.lib.sizes = FALSE])
+ont_bulk.dte_human.list   <- DTE.edgeR_human(ont_bulk.tx.dge[is.human(ont_bulk.tx.dge), , keep.lib.sizes = FALSE])
+pb_bulk.dte_human.list    <- DTE.edgeR_human(pb_bulk.tx.dge[is.human(pb_bulk.tx.dge), , keep.lib.sizes = FALSE])
+drna_bulk.dte_human.list  <- DTE.edgeR_human(drna_bulk.tx.dge[is.human(drna_bulk.tx.dge), , keep.lib.sizes = FALSE])
+```
+
+## Total number of DETs
+
+```{r total-dte, fig.height=3, fig.width=4}
+build_dte_plot_d <- function(contrast_name) {
+  lst <- list(
+    "Illumina" = ill_bulk.dte_human.list[[paste0(contrast_name, ".DE")]],
+    "ONT cDNA" = ont_bulk.dte_human.list[[paste0(contrast_name, ".DE")]],
+    "PacBio"   = pb_bulk.dte_human.list[[paste0(contrast_name, ".DE")]],
+    "ONT dRNA" = drna_bulk.dte_human.list[[paste0(contrast_name, ".DE")]]
+  )
+  DETs <- lapply(lst, function(x) rownames(x)[decideTests(x, lfc = params$log2FC_cutoff) != 0])
+  stack(DETs) %>% mutate(contrast = contrast_name)
+}
+
+plot_d_dte <- bind_rows(build_dte_plot_d("AvsL"), build_dte_plot_d("PvsL"), build_dte_plot_d("AvsP"))
+
+ggplot(plot_d_dte %>% mutate(contrast = factor(contrast, levels = c("AvsL", "PvsL", "AvsP"))),
+       aes(x = ind, fill = ind)) +
+  geom_bar() +
+  scale_fill_manual(values = color_palette) +
+  labs(x = "Sequencing protocol", y = "Number of DETs", title = "DE transcripts per platform (IsoQuant)") +
+  facet_wrap(~contrast) +
+  theme_minimal() +
+  theme(legend.position = "none", axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+## Cross-platform comparison — upset plots
+
+```{r upset-dte, echo=FALSE, fig.height=10, fig.width=8}
+make_dte_lst <- function(contrast_name) list(
+  "Illumina" = ill_bulk.dte_human.list[[paste0(contrast_name, ".DE")]],
+  "ONT cDNA" = ont_bulk.dte_human.list[[paste0(contrast_name, ".DE")]],
+  "PacBio"   = pb_bulk.dte_human.list[[paste0(contrast_name, ".DE")]],
+  "ONT dRNA" = drna_bulk.dte_human.list[[paste0(contrast_name, ".DE")]]
+)
+
+res_dte_AvsL <- complex_upset_plot(make_dte_lst("AvsL"))
+res_dte_PvsL <- complex_upset_plot(make_dte_lst("PvsL"))
+res_dte_AvsP <- complex_upset_plot(make_dte_lst("AvsP"))
+
+mat.AvsL.DTE <- res_dte_AvsL$matrix
+mat.PvsL.DTE <- res_dte_PvsL$matrix
+mat.AvsP.DTE <- res_dte_AvsP$matrix
+
+p1 <- res_dte_AvsL$plot + ggtitle("SCLC_A vs LUAD")   + theme(plot.title = element_text(size = 20))
+p2 <- res_dte_PvsL$plot + ggtitle("SCLC_P vs LUAD")   + theme(plot.title = element_text(size = 20))
+p3 <- res_dte_AvsP$plot + ggtitle("SCLC_A vs SCLC_P") + theme(plot.title = element_text(size = 20))
+
+p1 / p2 / p3 + patchwork::plot_annotation(title = "DTE Human (IsoQuant, no scaling)")
+```
+
+```{r jaccard-dte, echo=FALSE}
+jac_rows <- lapply(
+  list(AvsL = mat.AvsL.DTE, PvsL = mat.PvsL.DTE, AvsP = mat.AvsP.DTE),
+  mean_pairwise_jaccard
+)
+jac_tbl <- do.call(rbind, lapply(names(jac_rows), function(contrast) {
+  v <- jac_rows[[contrast]]
+  c(Contrast = contrast, round(v, 3), Mean = round(mean(v), 3))
+})) |> as.data.frame()
+print(knitr::kable(jac_tbl, caption = "Mean pairwise Jaccard similarity — DTE"))
+
+ovlp_tbl <- do.call(rbind, lapply(
+  c("AvsL", "PvsL", "AvsP"),
+  function(contrast) {
+    mat <- get(paste0("mat.", contrast, ".DTE"))
+    cbind(Contrast = contrast, platform_overlap_pct(mat))
+  }
+))
+knitr::kable(ovlp_tbl, caption = "Platform overlap with other platforms — DTE (%)",
+             row.names = FALSE)
+
+cov_tbl <- do.call(rbind, lapply(
+  c("AvsL", "PvsL", "AvsP"),
+  function(contrast) {
+    mat <- get(paste0("mat.", contrast, ".DTE"))
+    cbind(Contrast = contrast, feature_platform_coverage(mat))
+  }
+))
+knitr::kable(cov_tbl,
+             caption = "% of unique DE features detected by N platforms — DTE",
+             row.names = FALSE)
+
+if (!is.null(params$fig.path)) {
+  for (contrast in c("AvsL", "PvsL", "AvsP")) {
+    mat <- get(paste0("mat.", contrast, ".DTE"))
+    write.table(mat, file.path(params$fig.path, paste0("upset_dte_", contrast, ".tsv")),
+                sep = "\t", quote = FALSE, row.names = FALSE)
+  }
+  write.table(jac_tbl,  file.path(params$fig.path, "jaccard_dte.tsv"),
+              sep = "\t", quote = FALSE, row.names = FALSE)
+  write.table(ovlp_tbl, file.path(params$fig.path, "platform_overlap_dte.tsv"),
+              sep = "\t", quote = FALSE, row.names = FALSE)
+  write.table(cov_tbl,  file.path(params$fig.path, "feature_coverage_dte.tsv"),
+              sep = "\t", quote = FALSE, row.names = FALSE)
+}
+```
+
+## Transcript biotype and length
+
+Transcript lengths from Illumina Salmon reference; biotypes from pipe-separated metadata.
+
+```{r dte-biotype-length, echo=TRUE, fig.height=9, fig.width=15}
+# Build tx length/biotype lookup from Illumina genes table (still has pipe-separated full_id)
+tx_length_lookup <- ill_bulk.tx.dge$genes %>%
+  rownames_to_column("tx_id_norm") %>%
+  mutate(
+    full = if ("full_id" %in% names(.)) full_id else tx_id_norm,
+    biotype = strsplit(full, "\\|") %>% sapply(function(x) if (length(x) >= 8) x[8] else NA_character_),
+    Length  = if ("Length" %in% names(.)) Length else NA_real_
+  ) %>%
+  select(tx_id = tx_id_norm, Length, biotype)
+
+my_complexUpset_tx <- function(data, tx_length_lookup) {
+  plot_d <- data %>%
+    left_join(tx_length_lookup, by = c("Gene" = "tx_id")) %>%
+    rename(`Tx length` = Length) %>%
+    mutate(
+      Gene    = sub("\\..*", "", Gene),
+      biotype = case_when(biotype == "protein_coding" ~ "Protein-coding", TRUE ~ "Non-protein-coding")
+    )
+
+  ComplexUpset::upset(
+    plot_d,
+    intersect = c('Illumina', "ONT cDNA", "PacBio", "ONT dRNA"),
+    annotations = list(
+      "Tx length" = list(
+        aes  = aes(x = intersection, y = `Tx length`),
+        geom = geom_boxplot(na.rm = TRUE, outliers = FALSE)
+      )
+    ),
+    base_annotations = list(
+      'Intersection size' = ComplexUpset::intersection_size(
+        counts  = TRUE,
+        mapping = aes(fill = biotype),
+        text    = list(element_text(size = 3, vjust = -0.2))
+      ) + scale_fill_manual(values = c("Non-protein-coding" = "#BAC5CB", "Protein-coding" = '#B5C952'))
+    ),
+    set_sizes = (
+      ComplexUpset::upset_set_size(
+        geom = geom_bar(aes(fill = biotype), width = 0.8), position = 'right'
+      ) + scale_fill_manual(values = c("Non-protein-coding" = "#BAC5CB", "Protein-coding" = '#B5C952')) +
+        theme(legend.position = "none")
+    ),
+    guides = 'over', wrap = TRUE
+  )
+}
+
+plot1 <- my_complexUpset_tx(mat.AvsL.DTE, tx_length_lookup)
+plot2 <- my_complexUpset_tx(mat.PvsL.DTE, tx_length_lookup)
+plot3 <- my_complexUpset_tx(mat.AvsP.DTE, tx_length_lookup)
+
+(plot1 + plot2) / (plot3 + plot_spacer()) + plot_layout(nrow = 2)
+```
+
+```{r platform-detection-summary-tx, fig.height=2, fig.width=13}
+map(list(mat.AvsL.DTE, mat.PvsL.DTE, mat.AvsP.DTE), platform_specific_gene_summary) %>%
+  do.call(patchwork::wrap_plots, .) +
+  patchwork::plot_layout(guides = 'collect')
+```
+
+```{r save-dte-lists, cache=FALSE}
+output_list[["AvsP.DTE.all"]] <- mat.AvsP.DTE %>% filter(rowSums(select(., where(is.numeric))) == 4) %>% pull(Gene)
+output_list[["AvsP.DTE.any"]] <- mat.AvsP.DTE %>% filter(rowSums(select(., where(is.numeric))) > 0) %>% pull(Gene)
+output_list[["AvsL.DTE.all"]] <- mat.AvsL.DTE %>% filter(rowSums(select(., where(is.numeric))) == 4) %>% pull(Gene)
+output_list[["AvsL.DTE.any"]] <- mat.AvsL.DTE %>% filter(rowSums(select(., where(is.numeric))) > 0) %>% pull(Gene)
+output_list[["PvsL.DTE.all"]] <- mat.PvsL.DTE %>% filter(rowSums(select(., where(is.numeric))) == 4) %>% pull(Gene)
+output_list[["PvsL.DTE.any"]] <- mat.PvsL.DTE %>% filter(rowSums(select(., where(is.numeric))) > 0) %>% pull(Gene)
+
+output_list[["dge_lists"]] <- list(ill = ill_bulk.dge_human.list, ont = ont_bulk.dge_human.list,
+                                   pb = pb_bulk.dge_human.list,   drna = drna_bulk.deg_human.list)
+output_list[["dte_lists"]] <- list(ill = ill_bulk.dte_human.list, ont = ont_bulk.dte_human.list,
+                                   pb = pb_bulk.dte_human.list,   drna = drna_bulk.dte_human.list)
+
+dir.create(dirname(params$output_rds), recursive = TRUE, showWarnings = FALSE)
+saveRDS(output_list, params$output_rds)
+```
+
+## High-confidence DTE
+
+```{r high-conf-dte, echo=TRUE, message=FALSE, warning=FALSE}
+DTE_results_AvsL <- get_DEGs(mat.AvsL.DTE)
+DTE_results_PvsL <- get_DEGs(mat.PvsL.DTE)
+DTE_results_AvsP <- get_DEGs(mat.AvsP.DTE)
+
+dte_platforms <- list(
+  Illumina = ill_bulk.dte_human.list,
+  ONT_cDNA = ont_bulk.dte_human.list,
+  PacBio   = pb_bulk.dte_human.list,
+  ONT_dRNA = drna_bulk.dte_human.list
+)
+
+make_common_dte_table <- function(comparison_name, common_DTEs) {
+  lapply(names(dte_platforms), function(pl) {
+    filter_and_rename_columns(dte_platforms[[pl]][[paste0(comparison_name, ".DE")]]$table, common_DTEs, pl)
+  }) %>%
+    do.call(cbind, .) %>%
+    rownames_to_column("transcript") %>%
+    mutate(ensembl_tx_id = sub("\\..*", "", transcript))
+}
+
+combined_dte_tables <- list(
+  AvsL = make_common_dte_table("AvsL", DTE_results_AvsL$common_DEGs),
+  PvsL = make_common_dte_table("PvsL", DTE_results_PvsL$common_DEGs),
+  AvsP = make_common_dte_table("AvsP", DTE_results_AvsP$common_DEGs)
+)
+
+create_html_table(combined_dte_tables$AvsL, "High-confidence DTE — SCLC_A vs LUAD")
+create_html_table(combined_dte_tables$PvsL, "High-confidence DTE — SCLC_P vs LUAD")
+create_html_table(combined_dte_tables$AvsP, "High-confidence DTE — SCLC_A vs SCLC_P")
+```

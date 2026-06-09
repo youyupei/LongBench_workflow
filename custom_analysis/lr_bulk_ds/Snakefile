@@ -28,6 +28,7 @@ wildcard_constraints:
 # Platform mappings already cover ont_bulk / pb_bulk / dRNA_bulk.
 include: "../../sub_workflows/lr_bulk/rules/mutation.smk"
 include: config['main_wf_dir'] + "/modules/utilities.smk"
+include: "variant_analysis_ds.smk"
 
 
 # ── Step 1: extract read IDs from the downsampled FASTQ ──────────────────────
@@ -86,6 +87,17 @@ rule link_ds_bam:
         """
 
 
+use rule longcallR as longcallR_with_spike_in with:
+    input:
+        bam = results_dir + "/GenomeAlignment/{sample}_{cell_line}.sorted.bam",
+        reference = config['reference']['genome'],
+        annotation = config['reference']['gtf_sorted']
+    output:
+        bam = join(scratch_dir, "LongcallR_with_spike_in/{sample}_{cell_line}.longcallR.phased.sorted.bam"),
+        bai = join(scratch_dir, "LongcallR_with_spike_in/{sample}_{cell_line}.longcallR.phased.sorted.bam.bai"),
+        vcf = join(results_dir, "LongcallR_with_spike_in/{sample}_{cell_line}.longcallR.vcf")
+
+
 # ── Target rule ───────────────────────────────────────────────────────────────
 
 rule all:
@@ -96,6 +108,7 @@ rule all:
              rules.whatshap_stat.output.stat,
              rules.genomic_coverage_analysis.output.cov,
              rules.longcallR.output.vcf,
+             rules.longcallR_with_spike_in.output.vcf,
              rules.longcallR_analsyis_ase.output.flag,
              rules.longcallR_analsyis_asj.output.flag],
             sample=config['sample_id'],

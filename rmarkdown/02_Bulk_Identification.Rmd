@@ -1,0 +1,369 @@
+---
+title: "Bulk Gene & Transcript Identification"
+author: "Yupei & Ash"
+date: '`r Sys.Date()`'
+version: "v1.0"
+output:
+  html_document:
+    code_folding: hide
+    toc: yes
+    toc_float: yes
+    number_sections: yes
+    toc_depth: 4
+params:
+  random_seed: 2024
+  input_DGEobject_rds: "/vast/projects/LongBench/analysis/workflow/rmarkdown/RDS/bulk_DGE.obj.rds"
+  bulk_meta: '/vast/projects/LongBench/sequencing_data/illumina_bulk/metadata.txt'
+  cache_dir: NULL
+  fig.path: 'figures/02_Bulk_Identification/'
+  out.rds: '/vast/projects/LongBench/analysis/workflow/rmarkdown/RDS/bulk_identification.rds'
+---
+
+# Setup
+```{r Input filename setup, include=FALSE, eval=F}
+if (!exists("params")) {
+  params <- list(
+    random_seed = 2024,
+    input_DGEobject_rds = "/vast/projects/LongBench/analysis/workflow/rmarkdown/RDS/bulk_DGE.obj.rds",
+    bulk_meta = '/vast/projects/LongBench/sequencing_data/illumina_bulk/metadata.txt',
+    cache_dir = NULL,
+    fig.path = 'figures/02_Bulk_Identification/',
+    out.rds = '/vast/projects/LongBench/analysis/workflow/rmarkdown/RDS/bulk_identification.rds'
+  )
+}
+```
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  cache = TRUE,
+  fig.width = 15,
+  fig.height = 10,
+  echo = FALSE,
+  message = FALSE,
+  warning = FALSE,
+  fig.path = params$fig.path,
+  dev = c("png", "svg"),
+  cache.path = ifelse(is.null(params$cache_dir),
+                      paste0(tools::file_path_sans_ext(knitr::current_input()), "_cache/"),
+                      params$cache_dir))
+```
+
+```{r Libraries, include=FALSE}
+library(limma)
+library(edgeR)
+library(tidyverse)
+library(RColorBrewer)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(ggrepel)
+library(glue)
+library(gridExtra)
+library(ggExtra)
+library(knitr)
+library(kableExtra)
+library(rtracklayer)
+library(scales)
+library(UpSetR)
+library(ComplexUpset)
+library(patchwork)
+source("/home/users/allstaff/you.yu/LongBench/analysis/workflow/scripts/Rfunctions.R")
+
+rename <- dplyr::rename
+select <- dplyr::select
+
+color_palette <- c(
+  PacBio = "#df1995",
+  ONT = "#00789b",
+  ONT_1 = "#04476c",
+  ONT_2 = "#00789b",
+  Illumina = "#e88b20"
+)
+
+output_list <- list()
+```
+
+```{r helper functions}
+is.human <- function(dge) { grepl("^ENS", rownames(dge)) }
+
+pad_dge <- function(dge, all_features) {
+  missing <- setdiff(all_features, rownames(dge))
+  if (length(missing) > 0) {
+    pad <- matrix(0, nrow = length(missing), ncol = ncol(dge$counts),
+                  dimnames = list(missing, colnames(dge$counts)))
+    dge$counts <- rbind(dge$counts, pad)
+  }
+  dge[all_features, ]
+}
+```
+
+# Load data
+```{r Get the count data, echo=TRUE, message=FALSE, warning=FALSE, results='hide'}
+list2env(readRDS(params$input_DGEobject_rds), .GlobalEnv)
+```
+
+# Gene identification
+## Data preparation
+```{r Gene filtering}
+ill_bulk.gene.dge  <- ill_bulk.gene.dge[is.human(ill_bulk.gene.dge), ]
+ont_bulk.gene.dge  <- ont_bulk.gene.dge[is.human(ont_bulk.gene.dge), ]
+pb_bulk.gene.dge   <- pb_bulk.gene.dge[is.human(pb_bulk.gene.dge), ]
+drna_bulk.gene.dge <- drna_bulk.gene.dge[is.human(drna_bulk.gene.dge), ]
+
+all_genes <- Reduce(intersect, lapply(
+  list(ill_bulk.gene.dge, ont_bulk.gene.dge, pb_bulk.gene.dge, drna_bulk.gene.dge),
+  rownames
+))
+
+ill_bulk.gene.dge  <- pad_dge(ill_bulk.gene.dge, all_genes)
+ont_bulk.gene.dge  <- pad_dge(ont_bulk.gene.dge, all_genes)
+pb_bulk.gene.dge   <- pad_dge(pb_bulk.gene.dge, all_genes)
+drna_bulk.gene.dge <- pad_dge(drna_bulk.gene.dge, all_genes)
+
+rownames(ill_bulk.gene.dge)  <- rownames(ill_bulk.gene.dge)  %>% sub("\\..*", "", .)
+rownames(ont_bulk.gene.dge)  <- rownames(ont_bulk.gene.dge)  %>% sub("\\..*", "", .)
+rownames(pb_bulk.gene.dge)   <- rownames(pb_bulk.gene.dge)   %>% sub("\\..*", "", .)
+rownames(drna_bulk.gene.dge) <- rownames(drna_bulk.gene.dge) %>% sub("\\..*", "", .)
+```
+
+```{r Gene discovery tibble}
+gene_discovery <- tibble(
+  gene_id    = all_genes,
+  "Illumina" = filterByExpr(ill_bulk.gene.dge,  group = ill_bulk.gene.dge$samples$group),
+  "ONT cDNA" = filterByExpr(ont_bulk.gene.dge,  group = ont_bulk.gene.dge$samples$group),
+  "PacBio"   = filterByExpr(pb_bulk.gene.dge,   group = pb_bulk.gene.dge$samples$group),
+  "ONT dRNA" = filterByExpr(drna_bulk.gene.dge, group = drna_bulk.gene.dge$samples$group)
+) %>% filter(Illumina | `ONT cDNA` | PacBio | `ONT dRNA`)
+
+gene_discovery$gene_id <- gene_discovery$gene_id %>% sub("\\..*", "", .)
+```
+
+```{r Add biotype and gene length}
+tx_ref_df <- ill_bulk.tx.dge$genes %>%
+  select(full_id, Length) %>%
+  tibble() %>%
+  mutate(
+    biotype = strsplit(full_id, "\\|") %>% sapply(function(x) x[8]),
+    gene_id = strsplit(full_id, "\\|") %>% sapply(function(x) x[2]),
+    tx_id   = strsplit(full_id, "\\|") %>% sapply(function(x) x[1])
+  )
+
+gene_length_lookup <- tx_ref_df %>%
+  group_by(gene_id) %>%
+  summarise(mean_length = mean(Length, na.rm = TRUE), .groups = "drop") %>%
+  mutate(gene_id = sub("\\..*", "", gene_id))
+
+library(biomaRt)
+biotypes_cache <- file.path(dirname(params$out.rds), "biotypes_cache.rds")
+if (file.exists(biotypes_cache)) {
+  biotypes <- readRDS(biotypes_cache)
+} else {
+  ensembl <- useEnsembl(biomart = "genes", dataset = "hsapiens_gene_ensembl")
+  biotypes <- getBM(
+    attributes = c("ensembl_gene_id", "gene_biotype"),
+    filters    = "ensembl_gene_id",
+    values     = gene_discovery$gene_id,
+    mart       = ensembl
+  )
+  saveRDS(biotypes, biotypes_cache)
+}
+
+gene_discovery <- gene_discovery %>%
+  left_join(gene_length_lookup, by = "gene_id") %>%
+  rename(`Gene length` = mean_length) %>%
+  left_join(biotypes, by = c("gene_id" = "ensembl_gene_id")) %>%
+  rename(biotype = gene_biotype) %>%
+  mutate(biotype = ifelse(biotype %in%
+    names(sort(table(biotype), decreasing = TRUE)[1:6]),
+    biotype, "Others"))
+
+gene_discovery$biotype <- factor(
+  gene_discovery$biotype,
+  levels = c(sort(unique(gene_discovery$biotype)) %>% setdiff("Others"), "Others")
+)
+```
+
+```{r Save gene_discovery}
+output_list[["gene_discovery"]] <- gene_discovery
+if (!is.null(params$fig.path)) {
+  dir.create(params$fig.path, recursive = TRUE, showWarnings = FALSE)
+  write_tsv(gene_discovery, file.path(params$fig.path, "gene_discovery.tsv"))
+}
+```
+
+## GENE: Main Upset plot
+```{r GENE: Main Upset plot, fig.height=4, fig.width=8}
+ComplexUpset::upset(
+  gene_discovery %>% mutate(
+    biotype = case_when(
+      biotype == "protein_coding" ~ "Protein-coding",
+      TRUE ~ "Non-protein-coding"
+    )
+  ),
+  intersect = c('Illumina', "ONT cDNA", "PacBio", "ONT dRNA"),
+  annotations = list(
+    "Gene length" = list(
+      aes  = aes(x = intersection, y = `Gene length`),
+      geom = geom_boxplot(na.rm = TRUE, outliers = FALSE)
+    )
+  ),
+  base_annotations = list(
+    'Intersection size' = ComplexUpset::intersection_size(
+      counts  = TRUE,
+      mapping = aes(fill = biotype),
+      text    = list(element_text(size = 3, vjust = -0.2))
+    ) + scale_fill_manual(values = c(
+      "Non-protein-coding" = "#BAC5CB",
+      "Protein-coding"     = '#B5C952'
+    ))
+  ),
+  set_sizes = (
+    ComplexUpset::upset_set_size(
+      geom     = geom_bar(aes(fill = biotype), width = 0.8),
+      position = 'right'
+    ) + scale_fill_manual(values = c(
+      "Non-protein-coding" = "#BAC5CB",
+      "Protein-coding"     = '#B5C952'
+    )) + theme(legend.position = "none")
+  ),
+  guides = 'over',
+  wrap   = TRUE
+)
+```
+
+## GENE: Mean overlap
+We defined "Mean Overlap" to quantify the consistency of detected features across the four sequencing platforms. For any given platform, we calculated the proportion of its detected features also identified by at least two of the three remaining platforms, then averaged these proportions across all four platforms.
+
+```{r GENE: Mean overlap}
+calc_mean_overlap <- function(df, platforms = c('Illumina', 'ONT cDNA', 'PacBio', 'ONT dRNA')) {
+  per_platform <- sapply(platforms, function(p) {
+    others   <- setdiff(platforms, p)
+    n_others <- rowSums(df[others])
+    sum(df[[p]] & n_others >= 2) / sum(df[[p]])
+  })
+  mean(per_platform)
+}
+
+tibble(
+  Biotype = c("Protein-coding", "Non-protein-coding", "All"),
+  `Mean Overlap` = c(
+    calc_mean_overlap(gene_discovery %>% filter(biotype == "protein_coding")),
+    calc_mean_overlap(gene_discovery %>% filter(biotype != "protein_coding")),
+    calc_mean_overlap(gene_discovery)
+  )
+) %>%
+  mutate(`Mean Overlap` = round(`Mean Overlap`, 3)) %>%
+  kable() %>%
+  kable_styling(full_width = FALSE)
+```
+
+# Transcript identification
+## Data preparation
+```{r Transcript filtering}
+ill_bulk.tx.dge  <- ill_bulk.tx.dge[is.human(ill_bulk.tx.dge), ]
+ont_bulk.tx.dge  <- ont_bulk.tx.dge[is.human(ont_bulk.tx.dge), ]
+pb_bulk.tx.dge   <- pb_bulk.tx.dge[is.human(pb_bulk.tx.dge), ]
+drna_bulk.tx.dge <- drna_bulk.tx.dge[is.human(drna_bulk.tx.dge), ]
+
+all_tx <- Reduce(intersect, lapply(
+  list(ill_bulk.tx.dge, ont_bulk.tx.dge, pb_bulk.tx.dge, drna_bulk.tx.dge),
+  rownames
+))
+
+ill_bulk.tx.dge  <- pad_dge(ill_bulk.tx.dge, all_tx)
+ont_bulk.tx.dge  <- pad_dge(ont_bulk.tx.dge, all_tx)
+pb_bulk.tx.dge   <- pad_dge(pb_bulk.tx.dge, all_tx)
+drna_bulk.tx.dge <- pad_dge(drna_bulk.tx.dge, all_tx)
+
+tx_discovery <- tibble(
+  tx_id      = ill_bulk.tx.dge$genes$full_id,
+  "Illumina" = filterByExpr(ill_bulk.tx.dge,  group = ill_bulk.tx.dge$samples$group,  min.count = 5),
+  "ONT cDNA" = filterByExpr(ont_bulk.tx.dge,  group = ont_bulk.tx.dge$samples$group,  min.count = 5),
+  "PacBio"   = filterByExpr(pb_bulk.tx.dge,   group = pb_bulk.tx.dge$samples$group,   min.count = 5),
+  "ONT dRNA" = filterByExpr(drna_bulk.tx.dge, group = drna_bulk.tx.dge$samples$group, min.count = 5)
+) %>% filter(Illumina | `ONT cDNA` | PacBio | `ONT dRNA`)
+
+tx_discovery <- tx_discovery %>% mutate(
+  biotype = strsplit(tx_id, "\\|") %>% sapply(function(x) x[8]),
+  tx_length = strsplit(tx_id, "\\|") %>% sapply(function(x) x[7]) %>% as.integer(),
+  gene_id = strsplit(tx_id, "\\|") %>% sapply(function(x) x[2]),
+  tx_id   = strsplit(tx_id, "\\|") %>% sapply(function(x) x[1])
+)
+
+tx_discovery <- tx_discovery %>% mutate(
+  biotype = ifelse(biotype %in%
+    names(sort(table(biotype), decreasing = TRUE)[1:6]),
+    biotype, "Others")
+)
+```
+
+```{r Save tx_discovery}
+output_list[["tx_discovery"]] <- tx_discovery
+saveRDS(output_list, params$out.rds)
+if (!is.null(params$fig.path)) {
+  write_tsv(tx_discovery, file.path(params$fig.path, "tx_discovery.tsv"))
+}
+```
+
+## Transcript: Main Upset plot
+```{r Transcript: Main Upset plot, fig.height=4, fig.width=8}
+ComplexUpset::upset(
+  tx_discovery %>% mutate(
+    biotype = case_when(
+      biotype == "protein_coding" ~ "Protein-coding",
+      TRUE ~ "Non-protein-coding"
+    )
+  ),
+  intersect = c('Illumina', "ONT cDNA", "PacBio", "ONT dRNA"),
+  annotations = list(
+    "Transcript length" = list(
+      aes  = aes(x = intersection, y = tx_length),
+      geom = geom_boxplot(na.rm = TRUE, outliers = FALSE)
+    )
+  ),
+  base_annotations = list(
+    'Intersection size' = ComplexUpset::intersection_size(
+      counts  = TRUE,
+      mapping = aes(fill = biotype),
+      text    = list(element_text(size = 3, vjust = -0.2))
+    ) + scale_fill_manual(values = c(
+      "Non-protein-coding" = "#BAC5CB",
+      "Protein-coding"     = '#E3DEEE'
+    ))
+  ),
+  set_sizes = (
+    ComplexUpset::upset_set_size(
+      geom     = geom_bar(aes(fill = biotype), width = 0.8),
+      position = 'right'
+    ) + scale_fill_manual(values = c(
+      "Non-protein-coding" = "#BAC5CB",
+      "Protein-coding"     = '#E3DEEE'
+    )) + theme(legend.position = "none")
+  ),
+  guides = 'over',
+  wrap   = TRUE
+)
+```
+
+## Transcript: Mean overlap
+Same metric as for genes, applied at the transcript level.
+
+```{r Transcript: Mean overlap}
+tibble(
+  Biotype = c("Protein-coding", "Non-protein-coding", "All"),
+  `Mean Overlap` = c(
+    calc_mean_overlap(tx_discovery %>% filter(biotype == "protein_coding")),
+    calc_mean_overlap(tx_discovery %>% filter(biotype != "protein_coding")),
+    calc_mean_overlap(tx_discovery)
+  )
+) %>%
+  mutate(`Mean Overlap` = round(`Mean Overlap`, 3)) %>%
+  kable() %>%
+  kable_styling(full_width = FALSE)
+```
+
+
+# Session Info
+```{r Session Info}
+sessionInfo()
+```

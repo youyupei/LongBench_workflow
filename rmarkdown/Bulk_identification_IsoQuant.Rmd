@@ -1,0 +1,795 @@
+---
+
+title: "Bulk gene transcript identification analysis (IsoQuant)"
+author: "Yupei & Ash"
+date: '`r Sys.Date()`'
+version: "v1.0"
+output:
+  html_document:
+    code_folding: hide
+    toc: yes
+    toc_float: yes
+    number_sections: yes
+    toc_depth: 4
+  pdf_document:
+    toc: yes
+    toc_depth: '4'
+params:
+  random_seed: 2024
+  input_ill_rds: "/vast/projects/LongBench/analysis/workflow/rmarkdown/RDS/bulk_DGE.obj.rds"
+  isoquant_ont_rds: "/home/users/allstaff/you.yu/LongBench/analysis/lr_bulk/result/IsoQuant_output_no_novel/isoquant_bulk_dge.ont_bulk.rds"
+  isoquant_pb_rds:  "/home/users/allstaff/you.yu/LongBench/analysis/lr_bulk/result/IsoQuant_output_no_novel/isoquant_bulk_dge.pb_bulk.rds"
+  isoquant_drna_rds: "/home/users/allstaff/you.yu/LongBench/analysis/lr_bulk/result/IsoQuant_output_no_novel/isoquant_bulk_dge.dRNA_bulk.rds"
+  bulk_meta: '/vast/projects/LongBench/sequencing_data/illumina_bulk/metadata.txt'
+  cache_dir: NULL
+  fig.path: 'figures/'
+  out.rds: '/vast/projects/LongBench/analysis/workflow/rmarkdown/RDS/bulk_identification_IsoQuant.rds'
+---
+
+# Setup
+```{r Input filename setup, include=FALSE, eval=F}
+# This chunk is used only when running the file chunk by chunk manually
+params <- list(
+  random_seed = 2024,
+  cache_dir = NULL,
+  bulk_meta = "/vast/projects/LongBench/sequencing_data/illumina_bulk/metadata.txt",
+  input_ill_rds = "/vast/projects/LongBench/analysis/workflow/rmarkdown/RDS/bulk_DGE.obj.rds",
+  isoquant_ont_rds  = "/home/users/allstaff/you.yu/LongBench/analysis/lr_bulk/result/IsoQuant_output_no_novel/isoquant_bulk_dge.ont_bulk.rds",
+  isoquant_pb_rds   = "/home/users/allstaff/you.yu/LongBench/analysis/lr_bulk/result/IsoQuant_output_no_novel/isoquant_bulk_dge.pb_bulk.rds",
+  isoquant_drna_rds = "/home/users/allstaff/you.yu/LongBench/analysis/lr_bulk/result/IsoQuant_output_no_novel/isoquant_bulk_dge.dRNA_bulk.rds",
+  out.rds= '/vast/projects/LongBench/analysis/workflow/rmarkdown/RDS/bulk_identification_IsoQuant.rds'
+)
+```
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  cache = TRUE,
+  fig.width = 15,
+  fig.height = 10,
+  echo = FALSE,
+  message = FALSE,
+  warning = FALSE,
+  fig.path = params$fig.path,
+  dev = c("png", "svg"),
+  cache.path = ifelse(is.null(params$cache_dir),
+                      paste0(tools::file_path_sans_ext(knitr::current_input()), "_cache/"),
+                      params$cache_dir))
+```
+
+```{r Libraries,include=FALSE}
+library(limma)
+library(edgeR)
+library(tidyverse)
+library(RColorBrewer)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(ggrepel)
+library(glue)
+library(gridExtra)
+library(ggExtra)
+library(knitr)
+library(kableExtra)
+library(rtracklayer)
+library(scales)
+library(UpSetR)
+library(ggtree)
+library(aplot)
+library(patchwork)
+source("/home/users/allstaff/you.yu/LongBench/analysis/workflow/scripts/Rfunctions.R")
+
+# setup some conflict functions
+rename <- dplyr::rename
+select <- dplyr::select
+
+# Set color palette
+color_palette <- c(
+  PacBio = "#df1995",
+  ONT = "#00789b",
+  ONT_1 = "#04476c",
+  ONT_2 = "#00789b",
+  Illumina = "#e88b20"
+)
+
+
+output_list <- list() # used to store result for downstream analysis
+```
+
+```{r function for splitting the transcript origin}
+is.human <- function(dge) {grepl("^ENS", rownames(dge))}
+
+normalize_rownames <- function(dge) {
+  rownames(dge) <- sub("\\|.*", "", rownames(dge))
+  rownames(dge) <- sub("\\..*", "", rownames(dge))
+  dge
+}
+
+pad_dge <- function(dge, all_features) {
+  missing <- setdiff(all_features, rownames(dge))
+  if (length(missing) > 0) {
+    pad <- matrix(0, nrow = length(missing), ncol = ncol(dge$counts),
+                  dimnames = list(missing, colnames(dge$counts)))
+    dge$counts <- rbind(dge$counts, pad)
+  }
+  dge[all_features, ]
+}
+```
+
+
+# Get the count data
+
+```{r Load Illumina DGE, echo=TRUE, message=FALSE, warning=FALSE, results='hide'}
+ill_obj <- readRDS(params$input_ill_rds)
+ill_bulk.tx.dge   <- ill_obj[["ill_bulk.tx.dge"]]
+ill_bulk.gene.dge <- ill_obj[["ill_bulk.gene.dge"]]
+rm(ill_obj)
+```
+
+```{r Load IsoQuant DGE, echo=TRUE, message=FALSE, warning=FALSE, results='hide'}
+isoquant_ont_obj  <- readRDS(params$isoquant_ont_rds)
+isoquant_pb_obj   <- readRDS(params$isoquant_pb_rds)
+isoquant_drna_obj <- readRDS(params$isoquant_drna_rds)
+
+ont_bulk.tx.dge   <- isoquant_ont_obj[["ont_bulk.tx.dge"]]
+pb_bulk.tx.dge    <- isoquant_pb_obj[["pb_bulk.tx.dge"]]
+drna_bulk.tx.dge  <- isoquant_drna_obj[["dRNA_bulk.tx.dge"]]
+
+ont_bulk.gene.dge  <- isoquant_ont_obj[["ont_bulk.gene.dge"]]
+pb_bulk.gene.dge   <- isoquant_pb_obj[["pb_bulk.gene.dge"]]
+drna_bulk.gene.dge <- isoquant_drna_obj[["dRNA_bulk.gene.dge"]]
+
+rm(isoquant_ont_obj, isoquant_pb_obj, isoquant_drna_obj)
+```
+
+```{r Normalize IsoQuant IDs}
+# IsoQuant rownames contain pipe-delimited annotations; strip to bare ENST/ENSG IDs
+ont_bulk.tx.dge   <- normalize_rownames(ont_bulk.tx.dge)
+pb_bulk.tx.dge    <- normalize_rownames(pb_bulk.tx.dge)
+drna_bulk.tx.dge  <- normalize_rownames(drna_bulk.tx.dge)
+ont_bulk.gene.dge  <- normalize_rownames(ont_bulk.gene.dge)
+pb_bulk.gene.dge   <- normalize_rownames(pb_bulk.gene.dge)
+drna_bulk.gene.dge <- normalize_rownames(drna_bulk.gene.dge)
+
+# Also strip version numbers from Illumina gene DGE
+rownames(ill_bulk.gene.dge) <- sub("\\..*", "", rownames(ill_bulk.gene.dge))
+```
+
+# Gene discovery analysis
+## Get `gene_discovery`
+
+Based on `filterByExpr` for each dataset, using default parameters
+```{r gene filtering for DE}
+# Filter for human Gene
+ill_bulk.gene.dge  <- ill_bulk.gene.dge[is.human(ill_bulk.gene.dge),]
+ont_bulk.gene.dge  <- ont_bulk.gene.dge[is.human(ont_bulk.gene.dge),]
+pb_bulk.gene.dge   <- pb_bulk.gene.dge[is.human(pb_bulk.gene.dge),]
+drna_bulk.gene.dge <- drna_bulk.gene.dge[is.human(drna_bulk.gene.dge),]
+
+# Get union (superset) of genes
+all_genes <- Reduce(union, lapply(
+  list(ill_bulk.gene.dge, ont_bulk.gene.dge, pb_bulk.gene.dge, drna_bulk.gene.dge),
+  rownames
+))
+
+# Pad each DGE with missing genes (set to 0)
+ill_bulk.gene.dge  <- pad_dge(ill_bulk.gene.dge,  all_genes)
+ont_bulk.gene.dge  <- pad_dge(ont_bulk.gene.dge,  all_genes)
+pb_bulk.gene.dge   <- pad_dge(pb_bulk.gene.dge,   all_genes)
+drna_bulk.gene.dge <- pad_dge(drna_bulk.gene.dge, all_genes)
+```
+
+### Gene detection
+```{r Define Gene discovery, fig.height=6, fig.width=10}
+# Filter by expression
+gene_discovery <- tibble(
+  gene_id = sub("\\..*", "", all_genes),
+  "Illumina" = filterByExpr(ill_bulk.gene.dge, group = ill_bulk.gene.dge$samples$group),
+  "ONT cDNA" = filterByExpr(ont_bulk.gene.dge, group = ont_bulk.gene.dge$samples$group),
+  "PacBio" = filterByExpr(pb_bulk.gene.dge, group = pb_bulk.gene.dge$samples$group),
+  "ONT dRNA" = filterByExpr(drna_bulk.gene.dge, group = drna_bulk.gene.dge$samples$group)
+) %>% filter(
+  Illumina | `ONT cDNA` | PacBio | `ONT dRNA`
+)
+```
+
+
+### Add biotype and gene length
+Let's adding some more feature for plotting
+```{r, fig.height=6, fig.width=10}
+# Getting the gene biotype and gene id, using illumina data here but will be identical for all datasets
+tx_ref_df <- ill_bulk.tx.dge$genes %>%
+  mutate(
+    biotype = strsplit(full_id, "\\|") %>% sapply(function(x) x[8]),
+    gene_id = strsplit(full_id, "\\|") %>% sapply(function(x) x[2]),
+    tx_id   = strsplit(full_id, "\\|") %>% sapply(function(x) x[1])
+  ) %>%
+  select(tx_id, gene_id, biotype, Length) %>%
+  tibble()
+
+gene_length_lookup <- tx_ref_df %>%
+    group_by(gene_id) %>%
+    summarise(mean_length = mean(Length, na.rm = TRUE), .groups = "drop") %>%
+    mutate(gene_id= sub("\\..*", "", gene_id))
+
+# Connect to Ensembl
+library(biomaRt)
+ensembl <- useEnsembl(biomart = "genes", dataset = "hsapiens_gene_ensembl")
+
+
+gene_discovery <- gene_discovery %>%
+    left_join(gene_length_lookup, by = c("gene_id")) %>%
+    rename(`Gene length` = mean_length)
+
+biotypes <- getBM(
+  attributes = c("ensembl_gene_id", "gene_biotype"),
+  filters = "ensembl_gene_id",
+  values = gene_discovery$gene_id,
+  mart = ensembl
+)
+
+
+gene_discovery <- gene_discovery %>%
+  left_join(biotypes, by = c("gene_id" = "ensembl_gene_id")) %>%
+  rename(biotype = gene_biotype) %>%
+  mutate(biotype = ifelse(biotype %in%
+            names(sort(table(biotype), decreasing = TRUE)[1:6]),
+            biotype, "Others"))
+
+
+gene_discovery$biotype <- factor(gene_discovery$biotype, levels = c(sort(unique(gene_discovery$biotype)) %>% setdiff("Others"), "Others"))
+```
+
+### Add intronic Gene and exon count
+Boolean for intronic genes. Each gene is checked if it is located inside the intron of the other gene. The specific definition: `findOverlaps(exons, merged_introns, ignore.strand=TRUE, type='within',  select="all", minoverlap =50)`
+```{r Add intronic gene and exon count}
+
+rds_list <- readRDS("/home/users/allstaff/you.yu/LongBench/analysis/workflow/rmarkdown/RDS/intronic_gene_and_exon_count.rds")
+overlaps_tibble <- rds_list$exon_intron_overlaps
+overlaps_tibble$exon_gene <- sub("\\..*","", overlaps_tibble$exon_gene)
+overlaps_tibble$intron_gene <- sub("\\..*", "", overlaps_tibble$intron_gene)
+
+exons_count <- rds_list$exons_count  %>% mutate(Gene = sub("\\..*", "", Gene))
+
+rm(rds_list)
+
+# Merge the intronic gene information into the gene_discovery tibble
+gene_discovery <- gene_discovery %>% mutate(
+  "Intronic Gene" = gene_discovery$gene_id %in% overlaps_tibble[overlaps_tibble$intron_gene %in% gene_discovery$gene_id,]$exon_gene
+)  %>% left_join(exons_count, by = c("gene_id" = "Gene"))
+```
+
+
+### Save to `output_list`
+```{r}
+output_list[["gene_discovery"]] <- gene_discovery # save for downstream analysis
+```
+
+## Gene detection plots
+###  Main Upset plot
+```{r GENE: Main Upset plot, fig.height=4, fig.width=8}
+library(ComplexUpset)
+ComplexUpset::upset(
+  gene_discovery %>% mutate(
+    biotype = case_when(
+      biotype =="protein_coding" ~ "Protein-coding",
+      TRUE ~ "Non-protein-coding"
+    )
+  ),
+  intersect = c('Illumina', "ONT cDNA", "PacBio", "ONT dRNA"),
+  annotations = list(
+        # 1st method - passing list:
+        "Gene length" = list(
+          aes = aes(x = intersection, y = `Gene length`),
+          # provide a list if you wish to add several geoms
+          geom = geom_boxplot(na.rm = TRUE, outliers = FALSE)
+        )
+  ),
+  base_annotations=list(
+        'Intersection size'=ComplexUpset::intersection_size(
+            counts=TRUE,
+            mapping=aes(fill=biotype),
+            text=list(element_text(size = 3, vjust=-0.2))
+        ) + scale_fill_manual(values = c("Non-protein-coding"="#BAC5CB",
+                              "Protein-coding"='#B5C952'))
+    ),
+  set_sizes=(
+        ComplexUpset::upset_set_size(
+            geom=geom_bar(
+                aes(fill=biotype),
+                width=0.8
+            )
+        )+ scale_fill_manual(values = c("Non-protein-coding"="#BAC5CB",
+                              "Protein-coding"='#B5C952')) +
+          theme(legend.position = "none")
+  ),
+  guides='over',
+  wrap = TRUE
+)
+```
+
+
+```{r GENE: Agreement plot, fig.height=3, fig.width=8}
+agreement_plot <- function(df){
+  df_long <- df %>% select(gene_id, Illumina, `ONT cDNA`, PacBio, `ONT dRNA`) %>%
+  pivot_longer(-gene_id, names_to = "Platform", values_to = "Detected") %>%
+  group_by(gene_id) %>%
+  mutate(TotalDetected = sum(Detected)) %>%
+  ungroup() %>%
+  mutate(
+    Category = case_when(
+      Detected == 1 & TotalDetected == 1 ~ "Platform-Specific Detection",  # Only detected by this platform
+      Detected == 0 & TotalDetected == 3 ~ "Platform-Specific Absence",      # Not detected by this platform but present elsewhere
+      Detected == 1 & TotalDetected > 1 ~ "Common Detection (also detected in >0 other platform)",
+      Detected == 0 & TotalDetected < 3 ~ "Common Absence (also absent in >0 other platform)" # Detected by this platform + at least one other
+    )
+  ) %>%
+  count(Platform, Category)
+
+# Convert to factor for proper ordering in plot
+df_long$Category <- factor(df_long$Category,
+                           levels = c(
+                                      "Platform-Specific Absence",
+                                      "Common Absence (also absent in >0 other platform)",
+                                      "Platform-Specific Detection",
+                                      "Common Detection (also detected in >0 other platform)"
+                                      ))
+
+# Stacked bar plot
+df_long %>%
+  mutate(n = case_when(
+    Category %in% c("Platform-Specific Absence", "Common Absence (also absent in >0 other platform)") ~ -n,
+    TRUE ~ n
+  )) %>%
+  ggplot(aes(x = Platform, y = n, fill = Category)) +
+  geom_bar(stat = "identity") +
+  labs(
+    y = "Number of Genes",
+    x = "Platform",
+    fill = "Category"
+  ) +
+  theme_minimal() +
+  scale_fill_manual(
+    values = c(
+      "Platform-Specific Detection" = "#0072B2",  # Blue (color-blind friendly)
+      "Platform-Specific Absence" = "#E69F00",    # Orange (color-blind friendly)
+      "Common Detection (also detected in >0 other platform)" = "#009E73",  # Green
+      "Common Absence (also absent in >0 other platform)" = "#999999"  # Gray
+    )
+  ) +
+  coord_flip() +  # Flip axes for horizontal bars
+  theme(
+    axis.text.x = element_text(angle = 0, hjust = 0.5, vjust = 0.5),  # Ensure x-axis labels are readable
+    axis.title.x = element_text(size = 12),  # Adjust x-axis title size
+    axis.text.y = element_text(size = 10)   # Adjust y-axis text size if needed
+  )
+}
+
+gene_discovery %>% agreement_plot
+```
+### Sup Upset plot Protein coding gene only
+```{r GENE: Sup Upset plot Protein coding gene, fig.height=5, fig.width=8}
+# Protein coding only
+ComplexUpset::upset(
+  gene_discovery %>% filter(biotype=="protein_coding"),
+  intersect = c('Illumina', "ONT cDNA", "PacBio", "ONT dRNA"),
+  annotations = list(
+        # 1st method - passing list:
+        "Average transcript length" = list(
+          aes = aes(x = intersection, y = `Gene length`),
+          # provide a list if you wish to add several geoms
+          geom = geom_boxplot(na.rm = TRUE, outliers = FALSE)
+        )
+  ),
+  set_sizes=(
+        ComplexUpset::upset_set_size(
+            geom=geom_bar(
+                width=0.8
+            )
+        ) + theme(legend.position = "none")
+  ),
+   base_annotations=list(
+        'Intersection size'=ComplexUpset::intersection_size(
+            counts=TRUE,
+            text=list(element_text(size = 3, vjust=-0.2))
+        )
+    ),
+  guides='over',
+  wrap = TRUE
+)
+```
+
+
+```{r GENE: Platform specific detection, fig.height=3, fig.width=8}
+(
+  (agreement_plot(gene_discovery %>% filter(biotype=="protein_coding")) + ggtitle("Protein-coding")) |
+  (agreement_plot(gene_discovery %>% filter(biotype!="protein_coding")) + ggtitle("Non-Protein-coding"))
+) +
+patchwork::plot_layout(guides = "collect")
+```
+
+
+### Gene identification Jaccard similarity
+```{r gene identification Jaccard similarity, fig.height=3, fig.width=4.5}
+
+# Jaccard similarity
+library(ComplexHeatmap)
+binary_matrix <- gene_discovery %>%
+  select( Illumina, `ONT cDNA`, PacBio ,`ONT dRNA`) %>%
+  mutate(across(everything(), as.integer))
+
+# Compute Jaccard similarity
+jaccard_sim <- function(x, y) {
+  sum(x & y) / sum(x | y)
+}
+
+platforms <- colnames(binary_matrix)
+jaccard_matrix <- outer(platforms, platforms, Vectorize(function(i, j) {
+  jaccard_sim(binary_matrix[[i]], binary_matrix[[j]])
+}))
+
+# Convert to matrix format
+colnames(jaccard_matrix) <- rownames(jaccard_matrix) <- platforms
+
+label_func <- function(j, i, x, y, width, height, fill) {
+    grid.text(sprintf("%.2f", jaccard_matrix[i, j]), x, y, gp = gpar(fontsize = 10))
+}
+Heatmap(jaccard_matrix,
+        name = "Jaccard Similarity",
+        col = colorRampPalette(c("grey", "#06317F"))(50),
+        cell_fun = function(j, i, x, y, width, height, fill) {
+          grid.text(round(jaccard_matrix[i, j], 2), x, y,
+                    gp = gpar(col = "white"))  # Set font color to white
+        },
+        na_col = "white")  # Keeps upper triangle blank
+```
+
+
+
+### Detected and undetected gene length distribution
+```{r GENE: discovered gene distribution, fig.height=3, fig.width=12}
+gene_discovery$length_bin <- cut(gene_discovery$`Gene length`,
+                                 breaks = c(0, 500, 1000, 1500, 2000, 2500, Inf),
+                                 labels = c("0-0.5k", "0.5-1k", "1-1.5k", "1.5-2k", "2-2.5k", "2.5k+"))
+
+bg_dist <- gene_discovery %>%
+  filter(!is.na(length_bin)) %>%
+  count(length_bin) %>%
+  mutate(platform = "All annotated Gene")
+
+
+p1 <- gene_discovery %>%
+  pivot_longer(cols = c("Illumina", "ONT cDNA", "PacBio", "ONT dRNA"),
+               names_to = "platform", values_to = "keep") %>%
+  filter(keep) %>%
+  filter(!is.na(length_bin)) %>%
+  count(length_bin, platform) %>%  # Summarize counts per category
+  ggplot(aes(x = length_bin, y = n, color = platform, group = platform)) +
+  # background line
+  geom_line(data = bg_dist, aes(x = length_bin, y = n, group = 1),
+            color = "grey60", linewidth = 1, linetype = "dashed") +
+  # platform-specific lines
+  geom_line(linewidth = 1) +
+  geom_point(size = 2) +
+  theme_minimal() +
+  labs(title = "Detected Gene",
+       x = "Gene length (average transcript length)",
+       y = "# of Gene detected") +
+  scale_color_manual(values = color_palette[c("Illumina", "ONT_1", "ONT_2", "PacBio")] %>% unname())
+
+p2 <- gene_discovery %>%
+  pivot_longer(cols = c("Illumina", "ONT cDNA", "PacBio", "ONT dRNA"),
+               names_to = "platform", values_to = "keep") %>%
+  group_by(gene_id) %>%
+  mutate(n_detected = sum(keep)) %>%
+  ungroup() %>%
+  filter(keep & n_detected == 1) %>%   # detected in exactly 1 platform, absent in the other 3
+  filter(!is.na(length_bin)) %>%
+  count(length_bin, platform) %>%
+  ggplot(aes(x = length_bin, y = n, color = platform, group = platform)) +
+  geom_line(size = 1) +
+  geom_point(size = 2) +
+  theme_minimal() +
+  labs(title = "Platform-specific Detection",
+       x = "Gene length (average transcript length)",
+       y = "# of Gene detected") +
+  scale_color_manual(values = color_palette[c("Illumina", "ONT_1", "ONT_2", "PacBio")] %>% unname())
+
+p3 <- gene_discovery %>%
+  pivot_longer(cols = c("Illumina", "ONT cDNA", "PacBio", "ONT dRNA"),
+               names_to = "platform", values_to = "keep") %>%
+  group_by(gene_id) %>%
+  mutate(n_detected = sum(keep)) %>%
+  ungroup() %>%
+  filter(!keep & n_detected == 3) %>%   # absent in exactly 1 platform, present in the other 3
+  filter(!is.na(length_bin)) %>%
+  count(length_bin, platform) %>%
+  ggplot(aes(x = length_bin, y = n, color = platform, group = platform)) +
+  geom_line(size = 1) +
+  geom_point(size = 2) +
+  theme_minimal() +
+  labs(title = "Platform-specific Absence",
+       x = "Gene length (average transcript length)",
+       y = "# of Gene absent") +
+  scale_color_manual(values = color_palette[c("Illumina", "ONT_1", "ONT_2", "PacBio")] %>% unname())
+
+(p1 | p2 | p3) + plot_layout(guides = "collect")
+```
+
+
+# Transcript discovery analysis
+## Get `tx_discovery`
+### Tx detection
+```{r}
+# Filter for human Tx
+ill_bulk.tx.dge  <- ill_bulk.tx.dge[is.human(ill_bulk.tx.dge),]
+ont_bulk.tx.dge  <- ont_bulk.tx.dge[is.human(ont_bulk.tx.dge),]
+pb_bulk.tx.dge   <- pb_bulk.tx.dge[is.human(pb_bulk.tx.dge),]
+drna_bulk.tx.dge <- drna_bulk.tx.dge[is.human(drna_bulk.tx.dge),]
+
+# Normalize IsoQuant tx rownames (Illumina rownames already normalized above)
+save_full_id <- function(dge) {
+  if (!"full_id" %in% colnames(dge$genes)) {
+    dge$genes$full_id <- rownames(dge)
+  }
+  rownames(dge) <- sub("\\|.*", "", rownames(dge))
+  rownames(dge) <- sub("\\..*", "", rownames(dge))
+  dge
+}
+
+ill_bulk.tx.dge  <- save_full_id(ill_bulk.tx.dge)
+ont_bulk.tx.dge  <- save_full_id(ont_bulk.tx.dge)
+pb_bulk.tx.dge   <- save_full_id(pb_bulk.tx.dge)
+drna_bulk.tx.dge <- save_full_id(drna_bulk.tx.dge)
+
+all_tx <- Reduce(union, lapply(list(ill_bulk.tx.dge, ont_bulk.tx.dge, pb_bulk.tx.dge, drna_bulk.tx.dge), rownames))
+ill_bulk.tx.dge  <- pad_dge(ill_bulk.tx.dge,  all_tx)
+ont_bulk.tx.dge  <- pad_dge(ont_bulk.tx.dge,  all_tx)
+pb_bulk.tx.dge   <- pad_dge(pb_bulk.tx.dge,   all_tx)
+drna_bulk.tx.dge <- pad_dge(drna_bulk.tx.dge, all_tx)
+
+
+# Filter by expression
+tx_discovery <- tibble(
+  tx_id = all_tx,
+  "Illumina" = filterByExpr(ill_bulk.tx.dge, group = ill_bulk.tx.dge$samples$group, min.count=5),
+  "ONT cDNA" = filterByExpr(ont_bulk.tx.dge, group = ont_bulk.tx.dge$samples$group, min.count=5),
+  "PacBio" = filterByExpr(pb_bulk.tx.dge, group = pb_bulk.tx.dge$samples$group, min.count=5),
+  "ONT dRNA" = filterByExpr(drna_bulk.tx.dge, group = drna_bulk.tx.dge$samples$group, min.count=5)
+) %>% filter(
+  Illumina | `ONT cDNA` | PacBio | `ONT dRNA`
+)
+# tx_id is the normalized ENST ID.
+# Join with tx_ref_df to recover biotype, length, and gene_id from full_id.
+tx_discovery <- tx_discovery %>%
+  left_join(
+    tx_ref_df %>% select(tx_id, biotype, length = Length, gene_id) %>%
+      mutate(tx_id = sub("\\..*", "", tx_id)),
+    by = "tx_id"
+  )
+```
+
+### Add biotype
+```{r}
+tx_discovery <- tx_discovery %>% mutate(biotype = ifelse(biotype %in%
+            names(sort(table(biotype), decreasing = TRUE)[1:6]),
+            biotype, "Others"))
+```
+
+### Save Gene and Tx detection
+```{r}
+output_list[["tx_discovery"]] <- tx_discovery # save for downstream analysis
+saveRDS(output_list, params$out.rds)
+```
+
+## Tx detection plots
+### Main upset plot
+```{r Transcript: Main upset plot, fig.height=4, fig.width=8}
+library(ComplexUpset)
+ComplexUpset::upset(
+  tx_discovery %>% mutate(
+    biotype = case_when(
+      biotype =="protein_coding" ~ "Protein-coding",
+      TRUE ~ "Non-protein-coding"
+    )
+  ),
+  intersect = c('Illumina', "ONT cDNA", "PacBio", "ONT dRNA"),
+  annotations = list(
+        # 1st method - passing list:
+        "Transcript length" = list(
+          aes = aes(x = intersection, y = `length`),
+          # provide a list if you wish to add several geoms
+          geom = geom_boxplot(na.rm = TRUE, outliers = FALSE)
+        )
+  ),
+  base_annotations=list(
+        'Intersection size'=ComplexUpset::intersection_size(
+            counts=TRUE,
+            mapping=aes(fill=biotype),
+            text=list(element_text(size = 3, vjust=-0.2))
+        ) + scale_fill_manual(values = c("Non-protein-coding"="#BAC5CB",
+                              "Protein-coding"='#B5C952'))
+    ),
+  set_sizes=(
+        ComplexUpset::upset_set_size(
+            geom=geom_bar(
+                aes(fill=biotype),
+                width=0.8
+            )
+        )+ scale_fill_manual(values = c("Non-protein-coding"="#BAC5CB",
+                              "Protein-coding"='#B5C952')) +
+          theme(legend.position = "none")
+  ),
+  guides='over',
+  wrap = TRUE
+)
+```
+
+
+```{r Transcript: Main agreement plot, fig.height=3, fig.width=8}
+agreement_plot_tx <- function(d){
+  # the agreement_plot function take gene_id columns by default. Modify to work on tx_discovery
+  p <- d  %>% mutate(gene_id=tx_id) %>% agreement_plot()
+  p + labs(y = "Number of Transcripts")
+}
+
+ tx_discovery %>% mutate(
+    biotype = case_when(
+      biotype =="protein_coding" ~ "Protein-coding",
+      TRUE ~ "Non-protein-coding"
+    )) %>% agreement_plot_tx
+```
+
+
+```{r Transcript: Sup agreement plot, fig.height=3, fig.width=12}
+(
+  ( tx_discovery %>% filter(biotype =="protein_coding") %>% agreement_plot_tx + ggtitle("Protein-coding") ) |
+  ( tx_discovery %>% filter(biotype !="protein_coding") %>% agreement_plot_tx+ ggtitle("Non-protein-coding"))
+) + patchwork::plot_layout(guides = "collect")
+```
+## Jaccard similary
+```{r transcript identification Jaccard similarity, fig.height=3, fig.width=4.5}
+
+# Jaccard similarity
+library(ComplexHeatmap)
+binary_matrix <- tx_discovery %>%
+  select( Illumina, `ONT cDNA`, PacBio ,`ONT dRNA`) %>%
+  mutate(across(everything(), as.integer))
+
+# Compute Jaccard similarity
+jaccard_sim <- function(x, y) {
+  sum(x & y) / sum(x | y)
+}
+
+platforms <- colnames(binary_matrix)
+jaccard_matrix <- outer(platforms, platforms, Vectorize(function(i, j) {
+  jaccard_sim(binary_matrix[[i]], binary_matrix[[j]])
+}))
+
+# Convert to matrix format
+colnames(jaccard_matrix) <- rownames(jaccard_matrix) <- platforms
+
+label_func <- function(j, i, x, y, width, height, fill) {
+    grid.text(sprintf("%.2f", jaccard_matrix[i, j]), x, y, gp = gpar(fontsize = 10))
+}
+Heatmap(jaccard_matrix,
+        name = "Jaccard Similarity",
+        col = colorRampPalette(c("grey", "#06317F"))(50),
+        cell_fun = function(j, i, x, y, width, height, fill) {
+          grid.text(round(jaccard_matrix[i, j], 2), x, y,
+                    gp = gpar(col = "white"))  # Set font color to white
+        },
+        na_col = "white")  # Keeps upper triangle blank
+```
+## Discovered transcript length
+```{r Discovered transcript length dist, fig.height=3, fig.width=8}
+tx_discovery$length_bin <- cut(tx_discovery$length, breaks = c(0, 500, 1000, 1500, 2000, 2500,Inf), labels = c("0-0.5k", "0.5-1k", "1-1.5k", "1.5-2k", "2-2.5k", "2.5k+"))
+
+p1 <- tx_discovery %>%
+  pivot_longer(cols = c("Illumina", "ONT cDNA", "PacBio", "ONT dRNA"),
+               names_to = "platform", values_to = "keep") %>%
+  filter(keep) %>%
+  count(length_bin, platform) %>%  # Summarize counts per category
+  ggplot(aes(x = length_bin, y = n, color = platform, group = platform)) +
+  geom_line(size = 1) +  # Use lines instead of bars
+  geom_point(size = 2) +  # Add points for visibility
+  theme_minimal() +
+  labs(title = "Detected Transcript",
+       x = "Transcript length",
+       y = "# of transcript detected") +
+  scale_color_manual(values = color_palette[c("Illumina", "ONT_1", "ONT_2", "PacBio")] %>% unname())
+
+p2 <- tx_discovery %>%
+  pivot_longer(cols = c("Illumina", "ONT cDNA", "PacBio", "ONT dRNA"),
+               names_to = "platform", values_to = "keep") %>%
+  group_by(tx_id) %>%
+  mutate(n_detected = sum(keep)) %>%
+  ungroup() %>%
+  filter(keep & n_detected == 1) %>%   # detected in exactly 1 platform, absent in the other 3
+  filter(!is.na(length_bin)) %>%
+  count(length_bin, platform) %>%
+  ggplot(aes(x = length_bin, y = n, color = platform, group = platform)) +
+  geom_line(size = 1) +
+  geom_point(size = 2) +
+  theme_minimal() +
+  labs(title = "Platform-specific Detection",
+       x = "Transcript length",
+       y = "# of transcript detected") +
+  scale_color_manual(values = color_palette[c("Illumina", "ONT_1", "ONT_2", "PacBio")] %>% unname())
+
+p3 <- tx_discovery %>%
+  pivot_longer(cols = c("Illumina", "ONT cDNA", "PacBio", "ONT dRNA"),
+               names_to = "platform", values_to = "keep") %>%
+  group_by(tx_id) %>%
+  mutate(n_detected = sum(keep)) %>%
+  ungroup() %>%
+  filter(!keep & n_detected == 3) %>%   # absent in exactly 1 platform, present in the other 3
+  filter(!is.na(length_bin)) %>%
+  count(length_bin, platform) %>%
+  ggplot(aes(x = length_bin, y = n, color = platform, group = platform)) +
+  geom_line(size = 1) +
+  geom_point(size = 2) +
+  theme_minimal() +
+  labs(title = "Platform-specific Absence",
+       x = "Transcript length",
+       y = "# of transcript absent") +
+  scale_color_manual(values = color_palette[c("Illumina", "ONT_1", "ONT_2", "PacBio")] %>% unname())
+
+(p1 | p2 | p3) + plot_layout(guides = "collect")
+```
+
+```{r Discovered transcript length dist protein-coding, fig.height=3, fig.width=5}
+pc1 <- tx_discovery %>%
+  filter(biotype=="protein_coding") %>%
+  pivot_longer(cols = c("Illumina", "ONT cDNA", "PacBio", "ONT dRNA"),
+               names_to = "platform", values_to = "keep") %>%
+  filter(keep) %>%
+  count(length_bin, platform) %>%
+  ggplot(aes(x = length_bin, y = n, color = platform, group = platform)) +
+  geom_line(size = 1) +
+  geom_point(size = 2) +
+  theme_minimal() +
+  labs(title = "Detected protein-coding Transcript",
+       x = "Transcript length",
+       y = "# of transcript detected") +
+  scale_color_manual(values = color_palette[c("Illumina", "ONT_1", "ONT_2", "PacBio")] %>% unname())
+
+pc2 <- tx_discovery %>%
+  filter(biotype=="protein_coding") %>%
+  pivot_longer(cols = c("Illumina", "ONT cDNA", "PacBio", "ONT dRNA"),
+               names_to = "platform", values_to = "keep") %>%
+  group_by(tx_id) %>%
+  mutate(n_detected = sum(keep)) %>%
+  ungroup() %>%
+  filter(keep & n_detected == 1) %>%
+  filter(!is.na(length_bin)) %>%
+  count(length_bin, platform) %>%
+  ggplot(aes(x = length_bin, y = n, color = platform, group = platform)) +
+  geom_line(size = 1) +
+  geom_point(size = 2) +
+  theme_minimal() +
+  labs(title = "Platform-specific Detection (protein-coding)",
+       x = "Transcript length",
+       y = "# of transcript detected") +
+  scale_color_manual(values = color_palette[c("Illumina", "ONT_1", "ONT_2", "PacBio")] %>% unname())
+
+pc3 <- tx_discovery %>%
+  filter(biotype=="protein_coding") %>%
+  pivot_longer(cols = c("Illumina", "ONT cDNA", "PacBio", "ONT dRNA"),
+               names_to = "platform", values_to = "keep") %>%
+  group_by(tx_id) %>%
+  mutate(n_detected = sum(keep)) %>%
+  ungroup() %>%
+  filter(!keep & n_detected == 3) %>%
+  filter(!is.na(length_bin)) %>%
+  count(length_bin, platform) %>%
+  ggplot(aes(x = length_bin, y = n, color = platform, group = platform)) +
+  geom_line(size = 1) +
+  geom_point(size = 2) +
+  theme_minimal() +
+  labs(title = "Platform-specific Absence (protein-coding)",
+       x = "Transcript length",
+       y = "# of transcript absent") +
+  scale_color_manual(values = color_palette[c("Illumina", "ONT_1", "ONT_2", "PacBio")] %>% unname())
+
+(pc1 | pc2 | pc3) + plot_layout(guides = "collect")
+```

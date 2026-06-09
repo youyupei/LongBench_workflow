@@ -1,0 +1,745 @@
+---
+title: "Spike in DE analysis (IsoQuant quantification)"
+author: "Yupei & Ash"
+version: "v1.0"
+output:
+  html_document:
+    code_folding: hide
+    toc: yes
+    toc_float: yes
+    number_sections: yes
+    toc_depth: 4
+  pdf_document:
+    toc: yes
+    toc_depth: '4'
+params:
+  random_seed: 2024
+  cache_dir: NULL
+  sequins_tsv: '/vast/projects/LongBench/reference_files/Sequin_resources/v2.4/rnasequin_isoforms_2.4.tsv'
+  sirv_csv: '/home/users/allstaff/you.yu/LongBench/reference_files/SIRV_Set4_Norm_Sequences_20210507/SIRV_set4_concentration.csv'
+  bulk_meta: "/vast/projects/LongBench/sequencing_data/illumina_bulk/metadata.txt"
+  # Illumina DGE (Salmon bundle)
+  bulk_dge_rds: "/vast/projects/LongBench/analysis/workflow/rmarkdown/RDS/bulk_DGE.obj.rds"
+  # IsoQuant DGE bundles (no_novel set)
+  isoquant_ont_bulk_rds: "/home/users/allstaff/you.yu/LongBench/analysis/lr_bulk/result/IsoQuant_output_no_novel/isoquant_bulk_dge.ont_bulk.rds"
+  isoquant_pb_bulk_rds: "/home/users/allstaff/you.yu/LongBench/analysis/lr_bulk/result/IsoQuant_output_no_novel/isoquant_bulk_dge.pb_bulk.rds"
+  isoquant_drna_bulk_rds: "/home/users/allstaff/you.yu/LongBench/analysis/lr_bulk/result/IsoQuant_output_no_novel/isoquant_bulk_dge.dRNA_bulk.rds"
+  fig.path: NULL
+---
+
+# Setup: Create DGE from input
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(cache = TRUE, fig.width = 7, fig.height=5, warning = F)
+
+if (!exists("params")) {
+  params <- list(
+    random_seed = 2024,
+    cache_dir = NULL,
+    sequins_tsv = '/vast/projects/LongBench/reference_files/Sequin_resources/v2.4/rnasequin_isoforms_2.4.tsv',
+    sirv_csv = '/home/users/allstaff/you.yu/LongBench/reference_files/SIRV_Set4_Norm_Sequences_20210507/SIRV_set4_concentration.csv',
+    bulk_meta = "/vast/projects/LongBench/sequencing_data/illumina_bulk/metadata.txt",
+    bulk_dge_rds = "/vast/projects/LongBench/analysis/workflow/rmarkdown/RDS/bulk_DGE.obj.rds",
+    isoquant_ont_bulk_rds = "/home/users/allstaff/you.yu/LongBench/analysis/lr_bulk/result/IsoQuant_output_no_novel/isoquant_bulk_dge.ont_bulk.rds",
+    isoquant_pb_bulk_rds = "/home/users/allstaff/you.yu/LongBench/analysis/lr_bulk/result/IsoQuant_output_no_novel/isoquant_bulk_dge.pb_bulk.rds",
+    isoquant_drna_bulk_rds = "/home/users/allstaff/you.yu/LongBench/analysis/lr_bulk/result/IsoQuant_output_no_novel/isoquant_bulk_dge.dRNA_bulk.rds",
+    fig.path = NULL
+  )
+}
+```
+
+```{r Libraries,include=FALSE}
+library(limma)
+library(edgeR)
+library(tidyverse)
+library(RColorBrewer)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(ggrepel)
+library(glue)
+library(ggplot2)
+library(gridExtra)
+library(ggExtra)
+library(knitr)
+library(kableExtra)
+library(rtracklayer)
+library(scales)
+library(UpSetR)
+library(ggtree)
+library(aplot)
+library(patchwork)
+
+# setup some conflict functions
+rename <- dplyr::rename
+select <- dplyr::select
+
+
+knitr::opts_chunk$set(
+  cache = !is.null(params$cache_dir),  # Enable caching only if cache_dir is provided
+  fig.width = 7,                     # Set default figure width
+  fig.height = 5,                    # Set default figure height
+  echo = FALSE,                       # Hide code in the output
+  message = FALSE,                    # Suppress messages in the output
+  warning = FALSE,                    # Suppress warnings in the output
+  fig.path = params$fig.path,         # Set figure path (NULL if not provided)
+  dev = if (!is.null(params$fig.path)) c("png", "svg") else NULL  # Set output devices if fig.path is provided
+)
+
+# Set cache.path only if params$cache_dir is not NULL
+if (!is.null(params$cache_dir)) {
+  knitr::opts_chunk$set(cache.path = params$cache_dir)
+}
+```
+
+```{r color code, include=FALSE, eval=T}
+color_palette <- c(
+  PacBio = "#df1995",
+  ONT = "#00789b",
+  ONT_1 = "#04476c", #cDNA
+  ONT_2 = "#00789b", # dRNA
+  Illumina = "#e88b20"
+)
+```
+
+```{r function for splitting the transcript origin}
+is.sequins <- function(dge) {grepl("^R", rownames(dge))}
+is.human <- function(dge) {grepl("^ENS", rownames(dge))}
+is.sirv_or_ercc <- function(dge) {!is.human(dge) & !is.sequins(dge)} # thie is the whole SIRV set4 (ERCC + SIRV E0 + Long SIRV)
+is.sirv_E0 <- function(dge) {grepl("^SIRV\\d{3}$", rownames(dge))}
+is.sirv_all <- function(dge) {grepl("^SIRV", rownames(dge))} # including all SIRV E0 and Long SIRV
+is.long_sirv <- function(dge) {grepl("^SIRV\\d{4}", rownames(dge))}
+is.ercc      <- function(dge) grepl("^(ERCC|DQ|EF)", rownames(dge))
+```
+
+# Load the count
+## Get the count data from RDS
+
+LR platforms (ONT cDNA / PacBio / ONT dRNA) use IsoQuant-derived DGE objects.
+Illumina uses the Salmon-derived bundle (same as the main DE analysis).
+
+```{r helper functions}
+normalize_rownames <- function(dge) {
+  rownames(dge) <- sub("\\|.*", "", rownames(dge))
+  rownames(dge) <- sub("\\..*", "", rownames(dge))
+  dge
+}
+
+extract_and_normalize_ids <- function(dge) {
+  if (!"full_id" %in% colnames(dge$genes)) {
+    dge$genes$full_id <- rownames(dge)
+  }
+  rownames(dge) <- sub("\\|.*", "", rownames(dge))
+  rownames(dge) <- sub("\\..*", "", rownames(dge))
+  dge
+}
+```
+
+```{r load-dge, echo=TRUE, message=FALSE, warning=FALSE, results='hide'}
+bulk_obj          <- readRDS(params$bulk_dge_rds)
+isoquant_ont_obj  <- readRDS(params$isoquant_ont_bulk_rds)
+isoquant_pb_obj   <- readRDS(params$isoquant_pb_bulk_rds)
+isoquant_drna_obj <- readRDS(params$isoquant_drna_bulk_rds)
+
+# Illumina — from Salmon bundle
+ill_bulk.tx.dge <- extract_and_normalize_ids(bulk_obj[["ill_bulk.tx.dge"]])
+
+# LR — IsoQuant (no_novel)
+ont_bulk.tx.dge   <- normalize_rownames(isoquant_ont_obj[["ont_bulk.tx.dge"]])
+pb_bulk.tx.dge    <- normalize_rownames(isoquant_pb_obj[["pb_bulk.tx.dge"]])
+drna_bulk.tx.dge  <- normalize_rownames(isoquant_drna_obj[["dRNA_bulk.tx.dge"]])
+```
+
+
+# Separate spike in types
+```{r}
+# Get seqins and sirv transcript dge
+ill_bulk.txi.dge_sequins <- ill_bulk.tx.dge[is.sequins(ill_bulk.tx.dge), ]
+ont_bulk.txi.dge_sequins <- ont_bulk.tx.dge[is.sequins(ont_bulk.tx.dge), ]
+pb_bulk.txi.dge_sequins <- pb_bulk.tx.dge[is.sequins(pb_bulk.tx.dge), ]
+drna_bulk.txi.dge_sequins <- drna_bulk.tx.dge[is.sequins(drna_bulk.tx.dge), ]
+
+## get sirv transcript dge
+ill_bulk.txi.dge_sirv <- ill_bulk.tx.dge[is.sirv_all(ill_bulk.tx.dge), ]
+ont_bulk.txi.dge_sirv <- ont_bulk.tx.dge[is.sirv_all(ont_bulk.tx.dge), ]
+pb_bulk.txi.dge_sirv <- pb_bulk.tx.dge[is.sirv_all(pb_bulk.tx.dge), ]
+drna_bulk.txi.dge_sirv <- drna_bulk.tx.dge[is.sirv_all(drna_bulk.tx.dge), ]
+
+## get ercc transcript dge
+ill_bulk.txi.dge_ercc <- ill_bulk.tx.dge[is.ercc(ill_bulk.tx.dge), ]
+ont_bulk.txi.dge_ercc <- ont_bulk.tx.dge[is.ercc(ont_bulk.tx.dge), ]
+pb_bulk.txi.dge_ercc <- pb_bulk.tx.dge[is.ercc(pb_bulk.tx.dge), ]
+drna_bulk.txi.dge_ercc <- drna_bulk.tx.dge[is.ercc(drna_bulk.tx.dge), ]
+```
+
+# Gene Transcript discovery analysis
+Using `filterByExpr` for each dataset, using min.count = 10 for gene and min.count = 5 for transcript.
+```{r Gene Transcript discovery upset plot}
+# Transcript
+get_discovery_upset <- function(dge_lst, min.count = 10) {
+  # align all platforms to a common transcript order before stacking
+  common_tx <- Reduce(intersect, lapply(dge_lst, rownames))
+
+  make_keep <- function(dge) {
+    keep <- filterByExpr(dge[common_tx, ], group = dge$samples$sample, min.count = min.count)
+    keep[common_tx]
+  }
+
+  keeps <- lapply(dge_lst, make_keep)
+
+  tx_discovery <- tibble(
+    "Illumina" = keeps[["Illumina"]],
+    "ONT cDNA" = keeps[["ONT cDNA"]],
+    "PacBio"   = keeps[["PacBio"]],
+    "ONT dRNA" = keeps[["ONT dRNA"]],
+    Length = dge_lst[["Illumina"]][common_tx, ]$genes$Length
+  )
+
+  p <- ComplexUpset::upset(
+    tx_discovery,
+    intersect = c('Illumina', "ONT cDNA", "PacBio", "ONT dRNA"),
+    annotations = list(
+      "Gene length" = list(
+        aes = aes(x = intersection, y = Length),
+        geom = geom_boxplot(na.rm = TRUE, outliers = FALSE)
+      )
+    ),
+    wrap = TRUE
+  )
+
+  count_tbl <- tibble(
+    Platform   = names(keeps),
+    Identified = sapply(keeps, sum),
+    Total      = length(common_tx)
+  )
+
+  list(plot = p, table = count_tbl)
+}
+
+
+# Transcript
+res_seq <- list(
+  "Illumina" = ill_bulk.txi.dge_sequins,
+  "ONT cDNA" = ont_bulk.txi.dge_sequins,
+  "PacBio" = pb_bulk.txi.dge_sequins,
+  "ONT dRNA" = drna_bulk.txi.dge_sequins
+) %>% get_discovery_upset(min.count = 5)
+res_seq$plot + ggtitle("Sequins transcript discovery (IsoQuant)")
+res_seq$table %>% kable(caption = "Sequins transcripts identified per platform", format = "html") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE)
+
+res_sirv <- list(
+  "Illumina" = ill_bulk.txi.dge_sirv,
+  "ONT cDNA" = ont_bulk.txi.dge_sirv,
+  "PacBio" = pb_bulk.txi.dge_sirv,
+  "ONT dRNA" = drna_bulk.txi.dge_sirv
+) %>% get_discovery_upset(min.count = 5)
+res_sirv$plot + ggtitle("SIRV transcript discovery (IsoQuant)")
+res_sirv$table %>% kable(caption = "SIRV transcripts identified per platform", format = "html") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE)
+
+## ERCC with true abundance
+dge_lst <- list(
+  "Illumina" = ill_bulk.txi.dge_ercc,
+  "ONT cDNA" = ont_bulk.txi.dge_ercc,
+  "PacBio" = pb_bulk.txi.dge_ercc,
+  "ONT dRNA" = drna_bulk.txi.dge_ercc
+)
+min.count = 5
+ercc_common_tx <- Reduce(intersect, lapply(dge_lst, rownames))
+make_ercc_keep <- function(dge) {
+  keep <- filterByExpr(dge[ercc_common_tx, ], group = dge$samples$sample, min.count = min.count)
+  keep[ercc_common_tx]
+}
+tx_discovery <- tibble(
+    "Illumina" = make_ercc_keep(dge_lst[["Illumina"]]),
+    "ONT cDNA" = make_ercc_keep(dge_lst[["ONT cDNA"]]),
+    "PacBio"   = make_ercc_keep(dge_lst[["PacBio"]]),
+    "ONT dRNA" = make_ercc_keep(dge_lst[["ONT dRNA"]]),
+    Length = dge_lst[["Illumina"]][ercc_common_tx, ]$genes$Length,
+    Name = ercc_common_tx
+  ) %>% left_join(read_csv(params$sirv_csv) %>% filter(grepl("ERCC", txid)), by = c("Name" = "GenBank"))
+
+  ComplexUpset::upset(
+    tx_discovery,
+    intersect = c("Illumina", "ONT cDNA", "PacBio", "ONT dRNA"),
+    annotations = list(
+      # 1st method - passing list:
+      "Gene length" = list(
+        aes = aes(x = intersection, y = Length),
+        # provide a list if you wish to add several geoms
+        geom = geom_boxplot(na.rm = TRUE, outliers = FALSE)
+      ),
+      "True abundance (log10 amol/ul)" = list(
+        aes = aes(x = intersection, y = log10(conc)),
+        geom = geom_boxplot(na.rm = TRUE, outliers = FALSE)
+      )
+    ),
+    wrap = TRUE
+  ) + ggtitle("ERCC transcript discovery (IsoQuant)")
+
+tx_discovery %>%
+  summarise(across(c(Illumina, `ONT cDNA`, PacBio, `ONT dRNA`), sum)) %>%
+  pivot_longer(everything(), names_to = "Platform", values_to = "Identified") %>%
+  mutate(Total = length(ercc_common_tx)) %>%
+  kable(caption = "ERCC transcripts identified per platform", format = "html") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE)
+```
+
+## IsoQuant vs Oarfish discovery comparison
+```{r isoquant-vs-oarfish-discovery, fig.show='asis'}
+# Oarfish LR DGEs are in the same bundle as Illumina (bulk_obj), loaded in load-dge chunk
+oarfish_ont  <- bulk_obj[["ont_bulk.tx.dge"]]
+oarfish_pb   <- bulk_obj[["pb_bulk.tx.dge"]]
+oarfish_drna <- bulk_obj[["drna_bulk.tx.dge"]]
+
+count_detected <- function(dge, filter_fn, min.count = 5) {
+  sub <- dge[filter_fn(dge), ]
+  sum(filterByExpr(sub, group = sub$samples$sample, min.count = min.count))
+}
+
+spike_fns <- list(Sequins = is.sequins, SIRV = is.sirv_all, ERCC = is.ercc)
+
+# Illumina uses Salmon in both analyses — same value for IsoQuant and Oarfish columns
+comparison <- bind_rows(lapply(names(spike_fns), function(sp) {
+  fn  <- spike_fns[[sp]]
+  tot <- sum(fn(ill_bulk.tx.dge))
+  bind_rows(
+    tibble(`Spike-in` = sp, Platform = "Illumina",
+           IsoQuant = count_detected(ill_bulk.tx.dge, fn),
+           Oarfish  = count_detected(ill_bulk.tx.dge, fn),
+           Total = tot),
+    tibble(`Spike-in` = sp, Platform = "ONT cDNA",
+           IsoQuant = count_detected(ont_bulk.tx.dge,  fn),
+           Oarfish  = count_detected(oarfish_ont,       fn),
+           Total = tot),
+    tibble(`Spike-in` = sp, Platform = "PacBio",
+           IsoQuant = count_detected(pb_bulk.tx.dge,   fn),
+           Oarfish  = count_detected(oarfish_pb,        fn),
+           Total = tot),
+    tibble(`Spike-in` = sp, Platform = "ONT dRNA",
+           IsoQuant = count_detected(drna_bulk.tx.dge, fn),
+           Oarfish  = count_detected(oarfish_drna,      fn),
+           Total = tot)
+  )
+}))
+
+comparison %>%
+  kable(caption = "Detected spike-in transcripts: IsoQuant vs Oarfish (LR platforms)",
+        format = "html") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE) %>%
+  collapse_rows(columns = 1, valign = "top")
+```
+
+# Differential Transcript expression analysis
+
+```{r filter for common gene and transcript only}
+# Transcript
+# Sequin
+common_tx <- Reduce(intersect, lapply(list(ill_bulk.txi.dge_sequins, ont_bulk.txi.dge_sequins, pb_bulk.txi.dge_sequins, drna_bulk.txi.dge_sequins), rownames))
+ill_bulk.txi.dge_sequins <- ill_bulk.txi.dge_sequins[common_tx, ]
+ont_bulk.txi.dge_sequins <- ont_bulk.txi.dge_sequins[common_tx, ]
+pb_bulk.txi.dge_sequins <- pb_bulk.txi.dge_sequins[common_tx, ]
+drna_bulk.txi.dge_sequins <- drna_bulk.txi.dge_sequins[common_tx, ]
+keep <- filterByExpr(ill_bulk.txi.dge_sequins, group = ill_bulk.txi.dge_sequins$samples$group, min.count=5) &
+          filterByExpr(ont_bulk.txi.dge_sequins, group = ont_bulk.txi.dge_sequins$samples$group, min.count=5) &
+          filterByExpr(pb_bulk.txi.dge_sequins, group = pb_bulk.txi.dge_sequins$samples$group, min.count=5) &
+          filterByExpr(drna_bulk.txi.dge_sequins, group = drna_bulk.txi.dge_sequins$samples$group, min.count=5)
+ill_bulk.txi.dge_sequins <- ill_bulk.txi.dge_sequins[keep, ,keep.lib.sizes=FALSE]
+ont_bulk.txi.dge_sequins <- ont_bulk.txi.dge_sequins[keep, ,keep.lib.sizes=FALSE]
+pb_bulk.txi.dge_sequins <- pb_bulk.txi.dge_sequins[keep, ,keep.lib.sizes=FALSE]
+drna_bulk.txi.dge_sequins <- drna_bulk.txi.dge_sequins[keep, ,keep.lib.sizes=FALSE]
+
+
+# Sirv
+common_tx <- Reduce(intersect, lapply(list(ill_bulk.txi.dge_sirv, ont_bulk.txi.dge_sirv, pb_bulk.txi.dge_sirv, drna_bulk.txi.dge_sirv), rownames))
+ill_bulk.txi.dge_sirv <- ill_bulk.txi.dge_sirv[common_tx, ]
+ont_bulk.txi.dge_sirv <- ont_bulk.txi.dge_sirv[common_tx, ]
+pb_bulk.txi.dge_sirv <- pb_bulk.txi.dge_sirv[common_tx, ]
+drna_bulk.txi.dge_sirv <- drna_bulk.txi.dge_sirv[common_tx, ]
+
+keep <- filterByExpr(ill_bulk.txi.dge_sirv, group = ill_bulk.txi.dge_sirv$samples$group, min.count=5) &
+          filterByExpr(ont_bulk.txi.dge_sirv, group = ont_bulk.txi.dge_sirv$samples$group, min.count=5) &
+          filterByExpr(pb_bulk.txi.dge_sirv, group = pb_bulk.txi.dge_sirv$samples$group, min.count=5) &
+          filterByExpr(drna_bulk.txi.dge_sirv, group = drna_bulk.txi.dge_sirv$samples$group, min.count=5)
+ill_bulk.txi.dge_sirv <- ill_bulk.txi.dge_sirv[keep, ,keep.lib.sizes=FALSE]
+ont_bulk.txi.dge_sirv <- ont_bulk.txi.dge_sirv[keep, ,keep.lib.sizes=FALSE]
+pb_bulk.txi.dge_sirv <- pb_bulk.txi.dge_sirv[keep, ,keep.lib.sizes=FALSE]
+drna_bulk.txi.dge_sirv <- drna_bulk.txi.dge_sirv[keep, ,keep.lib.sizes=FALSE]
+
+
+
+# ERCC
+common_tx <- Reduce(intersect, lapply(list(ill_bulk.txi.dge_ercc, ont_bulk.txi.dge_ercc, pb_bulk.txi.dge_ercc, drna_bulk.txi.dge_ercc), rownames))
+ill_bulk.txi.dge_ercc <- ill_bulk.txi.dge_ercc[common_tx, ]
+ont_bulk.txi.dge_ercc <- ont_bulk.txi.dge_ercc[common_tx, ]
+pb_bulk.txi.dge_ercc <- pb_bulk.txi.dge_ercc[common_tx, ]
+drna_bulk.txi.dge_ercc <- drna_bulk.txi.dge_ercc[common_tx, ]
+
+keep <- filterByExpr(ill_bulk.txi.dge_ercc, group = ill_bulk.txi.dge_ercc$samples$group, min.count=5) &
+          filterByExpr(ont_bulk.txi.dge_ercc, group = ont_bulk.txi.dge_ercc$samples$group, min.count=5) &
+          filterByExpr(pb_bulk.txi.dge_ercc, group = pb_bulk.txi.dge_ercc$samples$group, min.count=5) &
+          filterByExpr(drna_bulk.txi.dge_ercc, group = drna_bulk.txi.dge_ercc$samples$group, min.count=5)
+ill_bulk.txi.dge_ercc <- ill_bulk.txi.dge_ercc[keep, ,keep.lib.sizes=FALSE]
+ont_bulk.txi.dge_ercc <- ont_bulk.txi.dge_ercc[keep, ,keep.lib.sizes=FALSE]
+pb_bulk.txi.dge_ercc <- pb_bulk.txi.dge_ercc[keep, ,keep.lib.sizes=FALSE]
+drna_bulk.txi.dge_ercc <- drna_bulk.txi.dge_ercc[keep, ,keep.lib.sizes=FALSE]
+
+```
+
+
+## Transcript level
+### Run DTE edgeR+scaling (IsoQuant LR / Salmon Illumina)
+
+> **Note:** Illumina counts are scaled by overdispersion estimates from Salmon bootstrap samples. IsoQuant LR platforms (ONT cDNA, PacBio, ONT dRNA) do not provide bootstrap overdispersion, so their counts are used unscaled.
+
+```{r}
+DTE.edgeR_sequins <- function(dge, norm.method = "TMM") {
+
+  if (!is.null(norm.method)) {
+    dge <- calcNormFactors(dge, method = norm.method)
+  }
+
+  design <- model.matrix(~0 + sequins, data = dge$samples)
+  dge <- estimateDisp(dge, design)
+  qlfit <- glmQLFit(dge, design)
+
+  contrasts <- makeContrasts(
+    AvsB = sequinsA - sequinsB,
+    levels = design
+  )
+
+  AvsB.QLF.test <- glmQLFTest(qlfit, contrast = contrasts[, "AvsB"])
+
+  list(
+    AvsB.DE = AvsB.QLF.test
+  )
+}
+```
+
+```{r get dte scaling}
+filter_dge <- function(dge, min.count = 5) {
+  keep <- filterByExpr(dge, group = dge$samples$group, min.count = min.count)
+  dge[keep, , keep.lib.sizes = FALSE]
+}
+
+# Scale Illumina by overdispersion (from Salmon bootstraps); LR used as-is
+ill_bulk.txi.dge_sequins_scaled <- filter_dge(ill_bulk.txi.dge_sequins)
+ill_bulk.txi.dge_sequins_scaled$counts <- ill_bulk.txi.dge_sequins_scaled$counts / ill_bulk.txi.dge_sequins_scaled$genes$Overdispersion
+
+ill_bulk.dte_sequins.list <- DTE.edgeR_sequins(ill_bulk.txi.dge_sequins_scaled)
+ont_bulk.dte_sequins.list <- DTE.edgeR_sequins(filter_dge(ont_bulk.txi.dge_sequins))
+drna_bulk.dte_sequins.list <- DTE.edgeR_sequins(filter_dge(drna_bulk.txi.dge_sequins))
+pb_bulk.dte_sequins.list <- DTE.edgeR_sequins(filter_dge(pb_bulk.txi.dge_sequins))
+
+ill_bulk.txi.dge_sirvercc_scaled <- filter_dge(rbind(ill_bulk.txi.dge_sirv, ill_bulk.txi.dge_ercc))
+ill_bulk.txi.dge_sirvercc_scaled$counts <- ill_bulk.txi.dge_sirvercc_scaled$counts / ill_bulk.txi.dge_sirvercc_scaled$genes$Overdispersion
+
+ill_bulk.dte_sirv.list <- DTE.edgeR_sequins(ill_bulk.txi.dge_sirvercc_scaled)
+ont_bulk.dte_sirv.list <- DTE.edgeR_sequins(filter_dge(rbind(ont_bulk.txi.dge_sirv, ont_bulk.txi.dge_ercc)))
+drna_bulk.dte_sirv.list <- DTE.edgeR_sequins(filter_dge(rbind(drna_bulk.txi.dge_sirv, drna_bulk.txi.dge_ercc)))
+pb_bulk.dte_sirv.list <- DTE.edgeR_sequins(filter_dge(rbind(pb_bulk.txi.dge_sirv, pb_bulk.txi.dge_ercc)))
+```
+
+### Upset plot helper
+```{r upset-helper}
+complex_upset_plot <- function(lst) {
+  DEGs <- lapply(lst, function(x) rownames(x)[decideTests(x) != 0])
+  long_df <- stack(DEGs)
+
+  if (nrow(long_df) == 0) {
+    message("No significant DE features detected in any platform — skipping upset plot.")
+    return(list(plot = ggplot() + annotate("text", x = 0.5, y = 0.5, label = "No significant DE detected", size = 6) + theme_void(), matrix = tibble(Gene = character())))
+  }
+
+  binary_matrix <- long_df %>%
+    mutate(present = 1) %>%
+    pivot_wider(names_from = ind, values_from = present, values_fill = 0)
+
+  # ensure all platform columns exist (platforms with 0 DE get added as all-zero)
+  for (nm in names(lst)) {
+    if (!nm %in% colnames(binary_matrix)) binary_matrix[[nm]] <- 0L
+  }
+
+  p <- ComplexUpset::upset(
+    binary_matrix %>% select(-values) %>% as.data.frame(),
+    intersect = names(lst),
+    base_annotations = list(
+      'Intersection size' = ComplexUpset::intersection_size(
+        counts = TRUE,
+        text = list(element_text(size = 3, vjust = -0.2))
+      )
+    ),
+    wrap = TRUE
+  )
+  list(plot = p, matrix = binary_matrix %>% rename(Gene = values))
+}
+```
+
+### DTE Upset plot (sequins transcript)
+```{r upset plot dte sequins edgeR scaling, fig.width=8, fig.height=6}
+lst <- list(
+  "Illumina" = ill_bulk.dte_sequins.list$AvsB.DE,
+  "ONT cDNA" = ont_bulk.dte_sequins.list$AvsB.DE,
+  "PacBio" = pb_bulk.dte_sequins.list$AvsB.DE,
+  "ONT dRNA" = drna_bulk.dte_sequins.list$AvsB.DE
+)
+complex_upset_plot(lst)$plot + ggtitle("DTE Sequins MIX_A vs MIX_B (IsoQuant)") + theme(plot.title = element_text(size = 20))
+```
+
+### DTE Upset plot (SIRV + ERCC transcript)
+```{r upset plot dte sirv edgeR scaling, fig.width=8, fig.height=6}
+lst_sirv <- list(
+  "Illumina" = ill_bulk.dte_sirv.list$AvsB.DE,
+  "ONT cDNA" = ont_bulk.dte_sirv.list$AvsB.DE,
+  "PacBio" = pb_bulk.dte_sirv.list$AvsB.DE,
+  "ONT dRNA" = drna_bulk.dte_sirv.list$AvsB.DE
+)
+complex_upset_plot(lst_sirv)$plot + ggtitle("DTE SIRV+ERCC MIX_A vs MIX_B (IsoQuant, FP calls)") + theme(plot.title = element_text(size = 20))
+```
+
+# Spike in fold change analysis
+```{r}
+compare_sequins_txi_logFC <- function(glm.test.rst, fig.title){
+  sequins.gt <- read_tsv(params$sequins_tsv)
+  sequins.gt$gt.logFC <- log2(sequins.gt$MIX_A/sequins.gt$MIX_B)
+
+  # glm.test result
+  df <- glm.test.rst %>%
+    topTags(adjust.method = 'BH', n = nrow(glm.test.rst))  %>%
+    data.frame() %>% tibble::rownames_to_column(var="Transcript") %>%
+    select(Transcript, logFC, FDR) %>%
+    left_join(sequins.gt %>% select(NAME, gt.logFC, LENGTH), by = c("Transcript"="NAME"))
+
+  # add a column for significant DE, "down" for downregulated, "up" for upregulated
+  df$DE <- ifelse(df$logFC > 0 & df$FDR < 0.05, "up", ifelse(df$logFC < 0 & df$FDR < 0.05, "down", "not significant"))
+
+  # plot gt.logFC vs logFC, add correlation
+  p <- ggplot(df, aes(x = logFC, y = gt.logFC, color = DE, size = LENGTH, label=Transcript)) +
+    geom_point() +
+    # geom_text_repel(size = 3)    +
+    scale_size(limits = c(min(sequins.gt$LENGTH), max(sequins.gt$LENGTH))) +
+    geom_abline(intercept = 0, slope = 1, linetype = "dashed") +
+    scale_color_viridis_d() +
+    theme_minimal() +
+    labs(x = "Estimated logFC", y = " Ground truth logFC", color = "DE") +
+    annotate("text",
+      x = min(df$logFC), y = max(df$gt.logFC),
+      label = paste(
+        "\nMAE: ", round(mean(abs(df$logFC - df$gt.logFC)), 2),
+        "\nMSE: ", round(mean((df$logFC - df$gt.logFC)^2), 2)
+      ),
+      hjust = 0, vjust = 1,
+      color = "black", size = 4,
+      fontface = "italic"
+    ) +
+    ggtitle(fig.title)
+  return(p)
+}
+
+
+
+```
+
+
+```{r spike in logFC scater edgeR + scaling, fig.width=8, fig.height=6}
+# Sequins
+lst <- list(
+  "Illumina" = ill_bulk.dte_sequins.list$AvsB.DE,
+  "ONT cDNA" = ont_bulk.dte_sequins.list$AvsB.DE,
+  "PacBio" = pb_bulk.dte_sequins.list$AvsB.DE,
+  "ONT dRNA" = drna_bulk.dte_sequins.list$AvsB.DE
+)
+lfc_plot <- lapply(1:4, function(x) compare_sequins_txi_logFC(lst[[x]], fig.title = names(lst)[x]))
+(lfc_plot[[1]] | lfc_plot[[2]]) / (lfc_plot[[3]] | lfc_plot[[4]]) + patchwork::plot_annotation(
+  title = "Sequins MixA vs MixB (IsoQuant)",
+  theme = theme(plot.title = element_text(size =25))
+  )  + patchwork::plot_layout(
+    guides = "collect"
+)
+```
+
+
+```{r spike in logFC scater edgeR + scaling SIRV, fig.width=8, fig.height=6}
+# SIRV (including ERCC)
+
+compare_sirv_txi_logFC <- function(glm.test.rst.list){
+  df <- do.call(rbind, lapply(
+    names(glm.test.rst.list),
+    function(x){
+      glm.test.rst.list[[x]] %>%
+        topTags(adjust.method = 'BH', n = nrow(glm.test.rst.list[[x]])) %>%
+        data.frame() %>%
+        tibble::rownames_to_column(var="NAME") %>%
+        select(NAME, logFC, FDR) %>%
+        mutate(gt.logFC = 0, Platform = x)
+    }
+  ))
+
+  df$DE <- ifelse(df$logFC > 0 & df$FDR < 0.05, "up",
+                  ifelse(df$logFC < 0 & df$FDR < 0.05, "down", "not_sig"))
+
+  # Calculate MAE and MSE per platform
+  metrics <- df %>%
+    group_by(Platform) %>%
+    summarise(
+      MAE = mean(abs(logFC)),
+      MSE = mean(logFC^2)
+    )
+
+  # Generate plot
+  p <- ggplot(df, aes(x = logFC, fill = DE, y = Platform)) +
+    geom_dotplot(binwidth = (max(df$logFC) - min(df$logFC))/100, stackdir = "up", color = NA, dotsize = 1.5) +
+    scale_fill_viridis_d() +
+    theme_minimal() +
+    geom_vline(xintercept = 0, linetype = "dashed") +
+    labs(x = "Estimated logFC", fill = "DE")
+
+  # Add per-platform MAE and MSE as annotations
+  y_positions <- seq_along(unique(df$Platform))
+  for (i in seq_len(nrow(metrics))) {
+    p <- p + annotate("text",
+                      x = min(df$logFC),
+                      y = metrics$Platform[i],
+                      vjust = -4,
+                      hjust = -1,
+                      label = paste0("MAE=", round(metrics$MAE[i], 2),
+                                     " | MSE=", round(metrics$MSE[i], 2)),
+                      size = 3.5,
+                      fontface = "italic")
+  }
+
+  return(p)
+}
+
+list(
+  "Illumina" = ill_bulk.dte_sirv.list$AvsB.DE,
+  "ONT cDNA" = ont_bulk.dte_sirv.list$AvsB.DE,
+  "PacBio" = pb_bulk.dte_sirv.list$AvsB.DE,
+  "ONT dRNA" = drna_bulk.dte_sirv.list$AvsB.DE
+) %>% compare_sirv_txi_logFC + ggtitle("SIRV + ERCC logFC (IsoQuant)")
+```
+
+# DTE method comparison: IsoQuant vs Oarfish
+
+> **Note:** Each platform's DTE is run independently using all features available in its own count matrix (no cross-platform overlap filter). Illumina and Oarfish LR counts are scaled by `$genes$Overdispersion` before DTE; IsoQuant LR counts are used unscaled.
+
+```{r dte-method-comparison}
+run_dte_count <- function(dge, filter_fn, scale_od = FALSE, min.count = 5) {
+  sub <- dge[filter_fn(dge), ]
+  keep <- filterByExpr(sub, group = sub$samples$group, min.count = min.count)
+  sub <- sub[keep, , keep.lib.sizes = FALSE]
+  if (nrow(sub) == 0) return(0L)
+  if (scale_od && !is.null(sub$genes$Overdispersion)) {
+    sub$counts <- sub$counts / sub$genes$Overdispersion
+  }
+  res <- DTE.edgeR_sequins(sub)
+  sum(decideTests(res$AvsB.DE) != 0)
+}
+
+# Helper to normalise oarfish row names the same way as IsoQuant
+normalize_rownames_oarfish <- function(dge) {
+  rownames(dge) <- sub("\\|.*", "", rownames(dge))
+  rownames(dge) <- sub("\\..*", "", rownames(dge))
+  dge
+}
+
+oarfish_ont_n   <- normalize_rownames_oarfish(bulk_obj[["ont_bulk.tx.dge"]])
+oarfish_pb_n    <- normalize_rownames_oarfish(bulk_obj[["pb_bulk.tx.dge"]])
+oarfish_drna_n  <- normalize_rownames_oarfish(bulk_obj[["drna_bulk.tx.dge"]])
+
+is.sirv_and_ercc <- function(dge) is.sirv_all(dge) | is.ercc(dge)
+
+spike_filters <- list(
+  Sequins    = is.sequins,
+  `SIRV+ERCC` = is.sirv_and_ercc
+)
+
+# Illumina (Salmon) is the same for both columns; scale_od = TRUE because it has Overdispersion
+ill_dte_count <- function(fn) run_dte_count(ill_bulk.tx.dge, fn, scale_od = TRUE)
+
+platforms_lr <- list(
+  list(label = "ONT cDNA",  isoquant = ont_bulk.tx.dge,  oarfish = oarfish_ont_n),
+  list(label = "PacBio",    isoquant = pb_bulk.tx.dge,   oarfish = oarfish_pb_n),
+  list(label = "ONT dRNA",  isoquant = drna_bulk.tx.dge, oarfish = oarfish_drna_n)
+)
+
+dte_rows <- do.call(rbind, lapply(names(spike_filters), function(spk) {
+  fn <- spike_filters[[spk]]
+  ill_n <- ill_dte_count(fn)
+  lr_rows <- do.call(rbind, lapply(platforms_lr, function(p) {
+    data.frame(
+      `Spike-in`  = spk,
+      Platform    = p$label,
+      IsoQuant    = run_dte_count(p$isoquant, fn, scale_od = FALSE),
+      Oarfish     = run_dte_count(p$oarfish,  fn, scale_od = TRUE),
+      check.names = FALSE
+    )
+  }))
+  rbind(
+    data.frame(`Spike-in` = spk, Platform = "Illumina", IsoQuant = ill_n, Oarfish = ill_n, check.names = FALSE),
+    lr_rows
+  )
+}))
+
+kable(dte_rows, row.names = FALSE,
+      caption = "Number of significant DETs (FDR < 0.05) per platform and spike-in type") %>%
+  kable_styling(bootstrap_options = c("striped","hover","condensed"), full_width = FALSE) %>%
+  collapse_rows(columns = 1, valign = "top")
+```
+
+```{r dte-comparison-figure, fig.width=10, fig.height=6}
+run_dte_summary <- function(dge, filter_fn, scale_od = FALSE) {
+  sub <- dge[filter_fn(dge), ]
+  keep <- filterByExpr(sub, group = sub$samples$group, min.count = 5)
+  sub <- sub[keep, , keep.lib.sizes = FALSE]
+  n_detected <- nrow(sub)
+  if (n_detected == 0) return(tibble(Detected = 0L, DE = 0L))
+  if (scale_od && !is.null(sub$genes$Overdispersion)) {
+    sub$counts <- sub$counts / sub$genes$Overdispersion
+  }
+  res <- DTE.edgeR_sequins(sub)
+  tibble(Detected = n_detected, DE = sum(decideTests(res$AvsB.DE) != 0))
+}
+
+platforms_all <- list(
+  list(label = "Illumina",  isoquant = ill_bulk.tx.dge,  oarfish = NULL,          scale_iq = TRUE),
+  list(label = "ONT cDNA",  isoquant = ont_bulk.tx.dge,  oarfish = oarfish_ont_n, scale_iq = FALSE),
+  list(label = "PacBio",    isoquant = pb_bulk.tx.dge,   oarfish = oarfish_pb_n,  scale_iq = FALSE),
+  list(label = "ONT dRNA",  isoquant = drna_bulk.tx.dge, oarfish = oarfish_drna_n, scale_iq = FALSE)
+)
+
+fig_df <- do.call(rbind, lapply(names(spike_filters), function(spk) {
+  fn <- spike_filters[[spk]]
+  do.call(rbind, lapply(platforms_all, function(p) {
+    iq <- run_dte_summary(p$isoquant, fn, scale_od = p$scale_iq)
+    rows <- tibble(`Spike-in` = spk, Platform = p$label,
+                   Method = if (p$label == "Illumina") "Salmon" else "IsoQuant",
+                   Detected = iq$Detected, DE = iq$DE)
+    if (!is.null(p$oarfish)) {
+      oa <- run_dte_summary(p$oarfish, fn, scale_od = TRUE)
+      rows <- bind_rows(rows, tibble(`Spike-in` = spk, Platform = p$label,
+                                     Method = "Oarfish", Detected = oa$Detected, DE = oa$DE))
+    }
+    rows
+  }))
+}))
+
+fig_df %>%
+  pivot_longer(cols = c(Detected, DE), names_to = "Metric", values_to = "Count") %>%
+  mutate(
+    Platform = factor(Platform, levels = c("Illumina", "ONT cDNA", "PacBio", "ONT dRNA")),
+    Method   = factor(Method,   levels = c("Salmon", "IsoQuant", "Oarfish")),
+    Metric   = factor(Metric,   levels = c("Detected", "DE"))
+  ) %>%
+  ggplot(aes(x = Platform, y = Count, fill = Method)) +
+  geom_col(position = position_dodge(width = 0.8), width = 0.7) +
+  facet_grid(`Spike-in` ~ Metric, scales = "free_y") +
+  scale_fill_brewer(palette = "Set2") +
+  theme_minimal(base_size = 13) +
+  theme(
+    axis.text.x = element_text(angle = 30, hjust = 1),
+    strip.text  = element_text(face = "bold")
+  ) +
+  labs(x = NULL, y = "Count", fill = "Method",
+       title = "Spike-in transcript detection and DTE: IsoQuant vs Oarfish")
+```
