@@ -50,7 +50,8 @@ params <- list(
   ont_drnd_oarfish_dir = '/vast/projects/LongBench/analysis/main_workflow/result/rarefraction_analysis/oarfish/dRNA_bulk/20M',
   ill_bulk_salmon_dir = '/vast/projects/LongBench/analysis/main_workflow/result/rarefraction_analysis/salmon/20M',
   bulk_meta = "/vast/projects/LongBench/sequencing_data/illumina_bulk/metadata.txt",
-  out.rds= '/vast/projects/LongBench/analysis/reports/RDS/bulk_de_human_summary.rds'
+  out.rds= '/vast/projects/LongBench/analysis/reports/RDS/bulk_de_human_summary.rds',
+  Tx2Gene.map.rds = "/vast/projects/LongBench/analysis/workflow/rmarkdown/RDS/Tx2Gene.map.rds"
 )
 ```
 
@@ -107,13 +108,7 @@ color_palette <- c(
 ```
 
 ```{r function for splitting the transcript origin}
-is.sequins <- function(dge) {grepl("^R", rownames(dge))}
 is.human <- function(dge) {grepl("^ENS", rownames(dge))}
-is.sirv_or_ercc <- function(dge) {!is.human(dge) & !is.sequins(dge)} # thie is the whole SIRV set4 (ERCC + SIRV E0 + Long SIRV)
-is.sirv_E0 <- function(dge) {grepl("^SIRV\\d{3}$", rownames(dge))} 
-is.sirv_all <- function(dge) {grepl("^SIRV", rownames(dge))} # including all SIRV E0 and Long SIRV
-is.long_sirv <- function(dge) {grepl("^SIRV\\d{4}", rownames(dge))}
-is.ercc <- function(dge) {!is.human(dge) & !is.sequins(dge) & !is.sirv_all(dge)}
 ```
 
 ```{r, ge transcripts to gene map}
@@ -231,7 +226,7 @@ Based on `filterByExpr` for each dataset, using default parameters
 
 ```{r gene identification}
 # 1. Get union (superset) of genes
-all_genes <- Reduce(union, lapply(
+all_genes <- Reduce(union, lapply( # TODO: intersect for more stringent analysis?
   list(ill_bulk.gene.dge, ont_bulk.gene.dge, pb_bulk.gene.dge, drna_bulk.gene.dge),
   rownames
 ))
@@ -263,54 +258,6 @@ gene_discovery <- tibble(
   filter(Illumina | `ONT cDNA` | PacBio | `ONT dRNA`)
 ```
 
-### Add biotype and gene length
-
-Let's adding some more feature for plotting
-
-```{r}
-# Getting the gene biotype and gene id, using illumina data here but will be identical for all datasets
-tx_ref_df <- ill_bulk.dge$genes %>%
-  rownames_to_column("tx_id") %>%
-  select(tx_id, Length) %>%
-  tibble() %>%
-  mutate(
-    biotype = strsplit(tx_id, "\\|") %>% sapply(function(x) x[8]),
-    gene_id = strsplit(tx_id, "\\|") %>% sapply(function(x) x[2]),
-    tx_id = strsplit(tx_id, "\\|") %>% sapply(function(x) x[1])
-  )
-
-gene_length_lookup <- tx_ref_df %>%
-    group_by(gene_id) %>%
-    summarise(mean_length = mean(Length, na.rm = TRUE), .groups = "drop") %>%
-    mutate(gene_id= sub("\\..*", "", gene_id))
-
-# Connect to Ensembl
-library(biomaRt)
-ensembl <- useEnsembl(biomart = "genes", dataset = "hsapiens_gene_ensembl")
-
-gene_discovery <- gene_discovery %>%
-    left_join(gene_length_lookup, by = c("gene_id")) %>%
-    rename(`Gene length` = mean_length)
-gene_discovery$gene_id <- gene_discovery$gene_id %>% sub("\\..*", "", .)
-biotypes <- getBM(
-  attributes = c("ensembl_gene_id", "gene_biotype"),
-  filters = "ensembl_gene_id",
-  values = gene_discovery$gene_id,
-  mart = ensembl
-)
-
-
-gene_discovery <- gene_discovery %>%
-  left_join(biotypes, by = c("gene_id" = "ensembl_gene_id")) %>%
-  rename(biotype = gene_biotype) %>%  
-  mutate(biotype = ifelse(biotype %in% 
-            names(sort(table(biotype), decreasing = TRUE)[1:6]), 
-            biotype, "Others"))
-
-
-gene_discovery$biotype <- factor(gene_discovery$biotype, levels = c(sort(unique(gene_discovery$biotype)) %>% setdiff("Others"), "Others"))
-```
-
 ### Add GC content
 
 #### GC% calculation at gene-level (reduced exons)
@@ -330,21 +277,16 @@ txdb <- GenomicFeatures::makeTxDbFromGFF(params$human_gtf, format = "gtf")
 ex_by_gene <- GenomicFeatures::exonsBy(txdb, by = "gene")
 ex_by_gene_red <- GenomicRanges::reduce(ex_by_gene)  # GRangesList
 
-# Total exon lenght per gene
-tot_bases <- vapply(ex_by_gene_red, function(gr) sum(width(gr)), numeric(1))
+# Flatten to a single GRanges so getSeq is called once for all exons
+flat_gr     <- unlist(ex_by_gene_red)
+gene_labels <- names(flat_gr)
 
-# Countin G+C per gene in the exon regions
-gc_counts <- vapply(
-  ex_by_gene_red,
-  function(gr) {
-    if (length(gr) == 0) return(NA_real_)
-    seqs <- BSgenome::getSeq(hg, gr)  # DNAStringSet (not LIST)
-    # sum G and C over all the gene sequences
-    sum(letterFrequency(seqs, "G", as.prob = FALSE)) +
-      sum(letterFrequency(seqs, "C", as.prob = FALSE))
-  },
-  numeric(1)
-)
+# Single vectorised getSeq + letterFrequency call, then aggregate per gene
+all_seqs  <- BSgenome::getSeq(hg, flat_gr)
+gc_per_exon <- letterFrequency(all_seqs, "GC", as.prob = FALSE)
+
+tot_bases <- tapply(width(flat_gr), gene_labels, sum)
+gc_counts <- tapply(gc_per_exon,    gene_labels, sum)
 
 # Final table with GC%
 gc_tbl <- tibble::tibble(
@@ -387,23 +329,6 @@ gd_long <- gene_discovery %>%
 
 ```
 
-```{r GC density - platform-specific detected, fig.height=3.8, fig.width=8}
-ps_detected <- gd_long %>%
-  dplyr::filter(keep, n_detected==1, !is.na(GC_percent))
-
-ggplot(ps_detected, aes(x=GC_percent, color=platform)) +
-  geom_density(linewidth=1) +
-  theme_minimal() +
-  labs(title="GC% density (platform-specific detected)", x="GC%", y="Density") +
-  scale_color_manual(values=c(
-    "Illumina"=color_palette["Illumina"],
-    "ONT cDNA"=color_palette["ONT_1"],
-    "ONT dRNA"=color_palette["ONT_2"],
-    "PacBio"  =color_palette["PacBio"]
-  ) %>% as.vector())
-
-```
-
 ```{r GC violin plot- platform-specific detected, fig.height=3.8, fig.width=8}
 #VIOLIN PLOT: Platform-specific detected genes
 
@@ -440,54 +365,19 @@ p_violin_ps_detected <- ggplot(ps_detected_df, aes(x = platform, y = GC_percent,
 # show the plot
 p_violin_ps_detected
 
-```
-
-```{r GC percent by bin - platform-specific detected, fig.height=3.8, fig.width=8}
-# bin creation if not present 
-if (!"gc_bin" %in% colnames(gene_discovery)) {
-  gene_discovery <- transform(
-    gene_discovery,
-    gc_bin = cut(GC_percent, breaks=seq(20,80,by=5), include.lowest=TRUE, right=FALSE)
+ps_detected_df %>%
+  select(platform, GC_percent, platform) %>%
+  group_by(platform) %>%
+  summarise(
+    mean = mean(GC_percent),
+    median = median(GC_percent), 
+    Q1 = quantile(GC_percent, 0.25),
+    Q3 = quantile(GC_percent, 0.75),
+    min = min(GC_percent),
+    max = max(GC_percent)
   )
-  gd_long <- gd_long %>% dplyr::left_join(gene_discovery[,c("gene_id","gc_bin")], by="gene_id")
-}
-
-ps_pct <- gd_long %>%
-  dplyr::filter(keep, n_detected==1, !is.na(gc_bin)) %>%
-  dplyr::count(platform, gc_bin, name="n") %>%
-  dplyr::group_by(platform) %>%
-  dplyr::mutate(pct = 100*n/sum(n)) %>%
-  dplyr::ungroup()
-
-ggplot(ps_pct, aes(x=gc_bin, y=pct, color=platform, group=platform)) +
-  geom_line(linewidth=0.9) + geom_point(size=2) +
-  theme_minimal() + theme(axis.text.x=element_text(angle=45,hjust=1)) +
-  labs(title="Platform-specific detected: % per GC% bin", x="GC% (binned)", y="% of platform-specific genes") +
-  scale_color_manual(values=c(
-    "Illumina"=color_palette["Illumina"],
-    "ONT cDNA"=color_palette["ONT_1"],
-    "ONT dRNA"=color_palette["ONT_2"],
-    "PacBio"  =color_palette["PacBio"]
-  ) %>% as.vector())
 ```
 
-```{r GC density - platform-specific absent, fig.height=3.8, fig.width=8}
-#keep only the genes not detected by one platform but present in the other 3
-ps_absent <- gd_long %>%
-  dplyr::filter(!keep, n_detected==3, !is.na(GC_percent))
-
-ggplot(ps_absent, aes(x=GC_percent, color=platform)) +
-  geom_density(linewidth=1) +
-  theme_minimal() +
-  labs(title="GC% density (platform-specific absent)", x="GC%", y="Density") +
-  scale_color_manual(values=c(
-    "Illumina"=color_palette["Illumina"],
-    "ONT cDNA"=color_palette["ONT_1"],
-    "ONT dRNA"=color_palette["ONT_2"],
-    "PacBio"  =color_palette["PacBio"]
-  ) %>% as.vector())
-
-```
 
 ```{r r GC violin plot- platform-specific absent, fig.height=3.8, fig.width=8}
 # VIOLIN PLOT: Platform-specific ABSENT genes 
@@ -523,511 +413,18 @@ p_violin_ps_absent <- ggplot(ps_absent_df, aes(x = platform, y = GC_percent, fil
 # show the plot
 p_violin_ps_absent
 
-```
-
-```{r GC percent by bin - platform-specific absent, fig.height=3.8, fig.width=8}
-ps_absent_pct <- gd_long %>%
-  dplyr::filter(!keep, n_detected==3, !is.na(gc_bin)) %>%
-  dplyr::count(platform, gc_bin, name="n") %>%
-  dplyr::group_by(platform) %>%
-  dplyr::mutate(pct = 100*n/sum(n)) %>%
-  dplyr::ungroup()
-
-ggplot(ps_absent_pct, aes(x=gc_bin, y=pct, color=platform, group=platform)) +
-  geom_line(linewidth=0.9) +
-  geom_point(size=2) +
-  theme_minimal() +
-  theme(axis.text.x=element_text(angle=45, hjust=1)) +
-  labs(
-    title="Platform-specific absent: % per GC% bin",
-    x="GC% (binned)",
-    y="% of platform-specific absent genes"
-  ) +
-  scale_color_manual(values=c(
-    "Illumina"=color_palette["Illumina"],
-    "ONT cDNA"=color_palette["ONT_1"],
-    "ONT dRNA"=color_palette["ONT_2"],
-    "PacBio"  =color_palette["PacBio"]
-  ) %>% as.vector())
-```
-
-```{r overall GC distribution per platform, fig.height=3.8, fig.width=8}
-p_overall_gc <- gene_discovery %>%
-  pivot_longer(cols = c("Illumina", "ONT cDNA", "PacBio", "ONT dRNA"),
-               names_to = "platform", values_to = "keep") %>%
-  filter(keep, !is.na(GC_percent)) %>%
-  ggplot(aes(x = GC_percent, color = platform, fill = platform)) +
-  geom_density(alpha = 0.2, linewidth = 1) +
-  theme_minimal() +
-  labs(
-    title = "Overall GC% distribution per platform (all detected genes)",
-    x = "GC%",
-    y = "Density"
-  ) +
-  scale_color_manual(values = color_palette[c("Illumina","ONT_1","ONT_2","PacBio")] %>% unname()) +
-  scale_fill_manual(values = color_palette[c("Illumina","ONT_1","ONT_2","PacBio")] %>% unname())
-
-p_overall_gc
-```
-
-```{r overall GC content per platform - violin plot, fig.height=4, fig.width=8 }
-
-#Create a long-format dataframe with ALL detected genes (exonic + intronic)
-gc_overall_df <- gene_discovery %>%
-  tidyr::pivot_longer(
-    cols = c("Illumina", "ONT cDNA", "PacBio", "ONT dRNA"),
-    names_to = "platform", values_to = "keep"
-  ) %>%
-  dplyr::filter(keep, !is.na(GC_percent)) %>%     # keep only detected genes with GC%
-  dplyr::mutate(platform = factor(platform, levels = plat_levels))
-
-# count genes per platform
-n_per_plat <- gc_overall_df %>% dplyr::count(platform)
-
-# VIOLIN + BOXPLOT combined 
-p_gc_violin <- ggplot(gc_overall_df, aes(x = platform, y = GC_percent, fill = platform)) +
-  geom_violin(trim = FALSE, alpha = 0.25, width = 0.9) +                      # violin distribution
-  geom_boxplot(width = 0.18, outlier.shape = NA, linewidth = 0.4) +           # embedded box
-  stat_summary(fun = median, geom = "point", shape = 21, size = 2.2, 
-               fill = "white", stroke = 0.4) +                                # median point
-  theme_minimal() +
-  labs(
-    title = "Overall GC% distribution per platform (all detected genes)",
-    subtitle = paste("N detected genes:", 
-                     paste(n_per_plat$platform, n_per_plat$n, sep = "=", collapse = "  ")),
-    x = NULL,
-    y = "GC%"
-  ) +
-  scale_fill_manual(values = color_palette[c("Illumina","ONT_1","ONT_2","PacBio")] %>% unname()) +
-  theme(
-    legend.position = "none",
-    axis.text.x = element_text(size = 10)
+# Figure data
+ps_absent_df %>%
+  select(platform, GC_percent, platform) %>%
+  group_by(platform) %>%
+  summarise(
+    mean = mean(GC_percent),
+    median = median(GC_percent), 
+    Q1 = quantile(GC_percent, 0.25),
+    Q3 = quantile(GC_percent, 0.75),
+    min = min(GC_percent),
+    max = max(GC_percent)
   )
-
-# Simple boxplot version
-p_gc_box <- ggplot(gc_overall_df, aes(x = platform, y = GC_percent, fill = platform)) +
-  geom_boxplot(outlier.alpha = 0.25, width = 0.6) +
-  theme_minimal() +
-  labs(
-    title = "Overall GC% per platform",
-    x = NULL,
-    y = "GC%"
-  ) +
-  scale_fill_manual(values = color_palette[c("Illumina","ONT_1","ONT_2","PacBio")] %>% unname()) +
-  theme(
-    legend.position = "none",
-    axis.text.x = element_text(size = 10)
-  )
-
-# Show plot
-p_gc_violin / p_gc_box
-
- 
-# Summary statistics per platform (GC% all detected genes)
-gc_summary_stats <- gc_overall_df %>%
-  dplyr::group_by(platform) %>%
-  dplyr::summarise(
-    n_genes = dplyr::n(),
-    mean_GC = round(mean(GC_percent, na.rm = TRUE), 2),
-    median_GC = round(median(GC_percent, na.rm = TRUE), 2),
-    sd_GC = round(sd(GC_percent, na.rm = TRUE), 2),
-    min_GC = round(min(GC_percent, na.rm = TRUE), 2),
-    max_GC = round(max(GC_percent, na.rm = TRUE), 2),
-    .groups = "drop"
-  )
-
-print(gc_summary_stats)
-```
-
-```{r r overall GC content per platform without core genes- violin plot, fig.height=4, fig.width=8 }
-#EXCLUDE CORE GENES (detected by all 4 platforms) 
-
-gd_no_core <- gene_discovery %>%
-  dplyr::mutate(
-    n_detected = Illumina + `ONT cDNA` + `ONT dRNA` + PacBio
-  ) %>%
-  dplyr::filter(n_detected < 4)  # elimina quelli con 4/4
-
-
-n_core <- sum((gene_discovery$Illumina +
-               gene_discovery$`ONT cDNA` +
-               gene_discovery$`ONT dRNA` +
-               gene_discovery$PacBio) == 4, na.rm = TRUE)
-cat("Core genes removed:", n_core, "\n")
-
-# Transform to long format
-gc_overall_nocore <- gd_no_core %>%
-  tidyr::pivot_longer(
-    cols = c("Illumina", "ONT cDNA", "PacBio", "ONT dRNA"),
-    names_to = "platform", values_to = "keep"
-  ) %>%
-  dplyr::filter(keep, !is.na(GC_percent)) %>%
-  dplyr::mutate(platform = factor(platform, levels = plat_levels))
-
-n_per_plat_nocore <- gc_overall_nocore %>% dplyr::count(platform)
-
-# VIOLIN + BOX (non-core)
-p_gc_violin_nocore <- ggplot(gc_overall_nocore, aes(x = platform, y = GC_percent, fill = platform)) +
-  geom_violin(trim = FALSE, alpha = 0.25, width = 0.9) +
-  geom_boxplot(width = 0.18, outlier.shape = NA, linewidth = 0.4) +
-  stat_summary(fun = median, geom = "point", shape = 21, size = 2.2,
-               fill = "white", stroke = 0.4) +
-  theme_minimal() +
-  labs(
-    title = "Overall GC% distribution per platform (excluding core genes)",
-    subtitle = paste("N detected (non-core):",
-                     paste(n_per_plat_nocore$platform, n_per_plat_nocore$n, sep = "=", collapse = "  ")),
-    x = NULL, y = "GC%"
-  ) +
-  scale_fill_manual(values = color_palette[c("Illumina","ONT_1","ONT_2","PacBio")] %>% unname()) +
-  theme(legend.position = "none", axis.text.x = element_text(size = 10))
-
-# box plot (non-core)
-p_gc_box_nocore <- ggplot(gc_overall_nocore, aes(x = platform, y = GC_percent, fill = platform)) +
-  geom_boxplot(outlier.alpha = 0.25, width = 0.6) +
-  theme_minimal() +
-  labs(title = "Overall GC% per platform (non-core genes only)", x = NULL, y = "GC%") +
-  scale_fill_manual(values = color_palette[c("Illumina","ONT_1","ONT_2","PacBio")] %>% unname()) +
-  theme(legend.position = "none", axis.text.x = element_text(size = 10))
-
-# show the two plots
-p_gc_violin_nocore / p_gc_box_nocore
-
-# 7) summary stats for non-core genes
-gc_summary_stats_nocore <- gc_overall_nocore %>%
-  dplyr::group_by(platform) %>%
-  dplyr::summarise(
-    n_genes  = dplyr::n(),
-    mean_GC  = round(mean(GC_percent), 2),
-    median_GC= round(median(GC_percent), 2),
-    sd_GC    = round(sd(GC_percent), 2),
-    min_GC   = round(min(GC_percent), 2),
-    max_GC   = round(max(GC_percent), 2),
-    .groups = "drop"
-  )
-print(gc_summary_stats_nocore)
-
-```
-
-### Add intronic Gene and exon count
-
-Boolean for intronic genes. Each gene is checked if it is located inside
-the intron of the other gene. The specific definition:
-`findOverlaps(exons, merged_introns, ignore.strand=TRUE, type='within',  select="all", minoverlap =50)`
-
-```{r Add intronic gene and exon count}
-
-rds_list <- readRDS("/vast/projects/LongBench/analysis/workflow/rmarkdown/RDS/intronic_gene_and_exon_count.rds")
-overlaps_tibble <- rds_list$exon_intron_overlaps
-overlaps_tibble$exon_gene <- sub("\\..*","", overlaps_tibble$exon_gene)
-overlaps_tibble$intron_gene <- sub("\\..*", "", overlaps_tibble$intron_gene)
-
-exons_count <- rds_list$exons_count  %>% mutate(Gene = sub("\\..*", "", Gene))
-
-rm(rds_list)
-
-# Merge the intronic gene information into the gene_discovery tibble
-gene_discovery <- gene_discovery %>% mutate(
-  "Intronic Gene" = gene_discovery$gene_id %in% overlaps_tibble[overlaps_tibble$intron_gene %in% gene_discovery$gene_id,]$exon_gene
-)  %>% left_join(exons_count, by = c("gene_id" = "Gene"))
-```
-
-## Gene discovery plots
-
-### Main Upset plot
-
-```{r GENE: Main Upset plot, fig.height=4, fig.width=8}
-library(ComplexUpset)
-ComplexUpset::upset(
-  gene_discovery %>% mutate(
-    biotype = case_when(
-      biotype =="protein_coding" ~ "Protein-coding",
-      TRUE ~ "Non-protein-coding"
-    )
-  ),
-  intersect = c('Illumina', "ONT cDNA", "PacBio", "ONT dRNA"),
-  annotations = list(
-        # 1st method - passing list:
-        "Gene length" = list(
-          aes = aes(x = intersection, y = `Gene length`),
-          # provide a list if you wish to add several geoms
-          geom = geom_boxplot(na.rm = TRUE, outliers = FALSE)
-        )
-        # ,
-        # "BioType" = list(
-        #   aes = aes(x = intersection, fill = biotype),
-        #   geom = geom_bar(position = "fill")
-        # )
-  ),
-  base_annotations=list(
-        'Intersection size'=ComplexUpset::intersection_size(
-            counts=TRUE,
-            mapping=aes(fill=biotype),
-            #text=element_text(size = 3, vjust=-0.2)
-        ) + scale_fill_manual(values = c("Non-protein-coding"="#BAC5CB",
-                              "Protein-coding"='#B5C952'))
-    ),
-  set_sizes=(
-        ComplexUpset::upset_set_size(
-            geom=geom_bar(
-                aes(fill=biotype),
-                width=0.8
-            ) ,
-            position='right'
-        )+ scale_fill_manual(values = c("Non-protein-coding"="#BAC5CB",
-                              "Protein-coding"='#B5C952')) + 
-          theme(legend.position = "none")
-  ),
-  guides='over',
-  wrap = TRUE,
-  sort_intersections_by=c('degree', 'cardinality')
-)
-
-```
-
-```{r overall GC content per platform exluding core genes (detected in all 4 platforms), fig.width=8, fig.height=10}
-
-# Removing the genes detected by all 4 platforms
-gene_discovery <- gene_discovery %>%
-  dplyr::mutate(
-    n_detected = Illumina + `ONT cDNA` + `ONT dRNA` + PacBio
-  )
-
-# Keep only genes that are NOT detected in all 4 platforms
-gene_discovery_noncore <- gene_discovery %>%
-  dplyr::filter(n_detected < 4)
-
-# Create long-format dataframe for these genes
-gc_noncore_df <- gene_discovery_noncore %>%
-  tidyr::pivot_longer(
-    cols = c("Illumina", "ONT cDNA", "PacBio", "ONT dRNA"),
-    names_to = "platform", values_to = "keep"
-  ) %>%
-  dplyr::filter(keep, !is.na(GC_percent)) %>%
-  dplyr::mutate(platform = factor(platform, levels = plat_levels))
-
-# Count genes per platform (non-core only)
-n_noncore_plat <- gc_noncore_df %>% dplyr::count(platform)
-
-#  VIOLIN + BOXPLOT (non-core genes only) 
-p_gc_violin_noncore <- ggplot(gc_noncore_df, aes(x = platform, y = GC_percent, fill = platform)) +
-  geom_violin(trim = FALSE, alpha = 0.25, width = 0.9) +
-  geom_boxplot(width = 0.18, outlier.shape = NA, linewidth = 0.4) +
-  stat_summary(fun = median, geom = "point", shape = 21, size = 2.2,
-               fill = "white", stroke = 0.4) +
-  theme_minimal() +
-  labs(
-    title = "Overall GC% distribution per platform (excluding core genes)",
-    subtitle = paste("N detected (non-core):",
-                     paste(n_noncore_plat$platform, n_noncore_plat$n, sep = "=", collapse = "  ")),
-    x = NULL, y = "GC%"
-  ) +
-  scale_fill_manual(values = color_palette[c("Illumina", "ONT_1", "ONT_2", "PacBio")] %>% unname()) +
-  theme(legend.position = "none", axis.text.x = element_text(size = 10))
-
-#  Simple boxplot version 
-p_gc_box_noncore <- ggplot(gc_noncore_df, aes(x = platform, y = GC_percent, fill = platform)) +
-  geom_boxplot(outlier.alpha = 0.25, width = 0.6) +
-  theme_minimal() +
-  labs(
-    title = "Overall GC% per platform (non-core genes only)",
-    x = NULL, y = "GC%"
-  ) +
-  scale_fill_manual(values = color_palette[c("Illumina", "ONT_1", "ONT_2", "PacBio")] %>% unname()) +
-  theme(legend.position = "none", axis.text.x = element_text(size = 10))
-
-# Combine the two graphs
-p_gc_violin_noncore / p_gc_box_noncore
-
-# Summary statistics per platform (non-core genes only)
-gc_noncore_stats <- gc_noncore_df %>%
-  dplyr::group_by(platform) %>%
-  dplyr::summarise(
-    n_genes = dplyr::n(),
-    mean_GC = round(mean(GC_percent, na.rm = TRUE), 2),
-    median_GC = round(median(GC_percent, na.rm = TRUE), 2),
-    sd_GC = round(sd(GC_percent, na.rm = TRUE), 2),
-    min_GC = round(min(GC_percent, na.rm = TRUE), 2),
-    max_GC = round(max(GC_percent, na.rm = TRUE), 2),
-    .groups = "drop"
-  )
-
-
-print(gc_noncore_stats)
-
-```
-
-### Upset plot with addition feature
-
-```{r Prepare plot_df and intersetion order}
-plot_df <- gene_discovery %>% mutate(
-  "Intronic Gene" = gene_discovery$gene_id %in% overlaps_tibble[overlaps_tibble$intron_gene %in% gene_discovery$gene_id,]$exon_gene,
-  "Single exon" = gene_discovery$Exon_Count == 1
-)
-
-
-intersection_summary <- plot_df %>%
-  group_by(Illumina, `ONT cDNA`, PacBio, `ONT dRNA`) %>%
-  summarise(prop_intronic = mean(`Intronic Gene`, na.rm = TRUE),
-            mean_gene_length = mean(`Gene length`, na.rm = TRUE), .groups = "drop")
-
-platform_cols <- c("Illumina", "ONT cDNA", "PacBio", "ONT dRNA")
-
-intersection_summary <- intersection_summary %>%
-  rowwise() %>%
-  mutate(
-    intersection_list = list(platform_cols[unlist(across(all_of(platform_cols)))])
-  ) %>%
-  ungroup()
-
-ordered_intersections_by_intronic_gene <- intersection_summary %>%
-  arrange(desc(prop_intronic)) %>% pull(intersection_list)
-
-ordered_intersections_by_gene_length <- intersection_summary %>%
-  arrange(desc(mean_gene_length)) %>% pull(intersection_list)
-
-```
-
-```{r,  Expression of the intronic and single-exon gene, fig.height=6, fig.width=10}
-ComplexUpset::upset(
-  plot_df,
-  intersect = c('Illumina', "ONT cDNA", "PacBio", "ONT dRNA"),
-  annotations = list(
-        "Exon counts" = list(
-            aes = aes(x = intersection, y = Exon_Count),
-            # provide a list if you wish to add several geoms
-            geom = geom_boxplot(na.rm = TRUE, outliers = FALSE)
-          ),
-        # "Single-exon Genes" = (
-        #     ggplot(mapping=aes(fill = `Single exon`)) +
-        #       geom_bar(position = "fill")+
-        #       scale_fill_manual(values = c("#BAC5CB",'#B5C952')) + 
-        #       ylab('Single-exon gene proportion')
-        #   ),
-        "Intronic Genes" = (
-            ggplot(mapping=aes(fill = `Intronic Gene`)) +
-              geom_bar(position = "fill")+
-              scale_fill_manual(values = c("#BAC5CB",'#B5C952')) + 
-              ylab('Intronic gene proportion')
-          )
-  ),
-  set_sizes=(
-        ComplexUpset::upset_set_size(
-            geom=geom_bar(
-                width=0.8
-            )
-        )+ theme(legend.position = "none")
-    ),
-  wrap = TRUE,
-  sort_intersections=FALSE,
-  intersections = ordered_intersections_by_intronic_gene
-)
-
-```
-
-### Jaccard similarity
-
-```{r gene identification Jaccard similarity, fig.height=3, fig.width=4.5}
-
-# Jaccard similarity
-library(ComplexHeatmap)
-binary_matrix <- gene_discovery %>% 
-  select( Illumina, `ONT cDNA`, PacBio ,`ONT dRNA`) %>% 
-  mutate(across(everything(), as.integer))
-
-# Compute Jaccard similarity
-jaccard_sim <- function(x, y) {
-  sum(x & y) / sum(x | y)
-}
-
-platforms <- colnames(binary_matrix)
-jaccard_matrix <- outer(platforms, platforms, Vectorize(function(i, j) {
-  jaccard_sim(binary_matrix[[i]], binary_matrix[[j]])
-}))
-
-# Convert to matrix format
-colnames(jaccard_matrix) <- rownames(jaccard_matrix) <- platforms
-
-label_func <- function(j, i, x, y, width, height, fill) {
-    grid.text(sprintf("%.2f", jaccard_matrix[i, j]), x, y, gp = gpar(fontsize = 10))
-}
-Heatmap(jaccard_matrix, 
-        name = "Jaccard Similarity", 
-        col = colorRampPalette(c("grey", "#06317F"))(50),
-        cell_fun = function(j, i, x, y, width, height, fill) {
-          grid.text(round(jaccard_matrix[i, j], 2), x, y, 
-                    gp = gpar(col = "white"))  # Set font color to white
-        },
-        na_col = "white")  # Keeps upper triangle blank
-```
-
-### Detected and undetected gene length distribution
-
-```{r GENE: discovered gene distribution, fig.height=3, fig.width=5}
-gene_discovery$length_bin <- cut(gene_discovery$`Gene length`, 
-                                 breaks = c(0, 500, 1000, 1500, 2000, 2500, Inf), 
-                                 labels = c("0-0.5k", "0.5-1k", "1-1.5k", "1.5-2k", "2-2.5k", "2.5k+"))
-
-
-p1 <- gene_discovery %>%
-  pivot_longer(cols = c("Illumina", "ONT cDNA", "PacBio", "ONT dRNA"), 
-               names_to = "platform", values_to = "keep") %>%
-  filter(keep) %>%
-  filter(!is.na(length_bin)) %>% 
-  count(length_bin, platform) %>%  # Summarize counts per category
-  ggplot(aes(x = length_bin, y = n, color = platform, group = platform)) +
-  # platform-specific lines
-  geom_line(linewidth = 1) +
-  geom_point(size = 2) +
-  theme_minimal() +
-  theme(axis.text.x = element_text(angle = 45, hjust = 1)) + 
-  labs(title = "Detected Gene", 
-       x = "Gene length (average transcript length)", 
-       y = "# of Gene detected") + 
-  scale_color_manual(values = color_palette[c("Illumina", "ONT_1", "ONT_2", "PacBio")] %>% unname())
-```
-
-```{r Plarform specific absense gene, fig.height=3, fig.width=8}
-
-p2 <- gene_discovery %>%
-  pivot_longer(cols = c("Illumina", "ONT cDNA", "PacBio", "ONT dRNA"),
-               names_to = "platform", values_to = "keep") %>%
-  group_by(gene_id) %>%
-  mutate(n_detected = sum(keep)) %>%
-  ungroup() %>%
-  filter(keep & n_detected == 1) %>%   # detected in exactly 1 platform, absent in the other 3
-  filter(!is.na(length_bin)) %>%
-  count(length_bin, platform) %>%
-  ggplot(aes(x = length_bin, y = n, color = platform, group = platform)) +
-  geom_line(size = 1) +
-  geom_point(size = 2) +
-  theme_minimal() +
-  theme(axis.text.x = element_text(angle = 45, hjust = 1)) + 
-  labs(title = "Platform-specific Detection",
-       x = "Gene length (average transcript length)",
-       y = "# of Gene detected") +
-  scale_color_manual(values = color_palette[c("Illumina", "ONT_1", "ONT_2", "PacBio")] %>% unname())
-
-p3 <- gene_discovery %>%
-  pivot_longer(cols = c("Illumina", "ONT cDNA", "PacBio", "ONT dRNA"),
-               names_to = "platform", values_to = "keep") %>%
-  group_by(gene_id) %>%
-  mutate(n_detected = sum(keep)) %>%
-  ungroup() %>%
-  filter(!keep & n_detected == 3) %>%   # absent in exactly 1 platform, present in the other 3
-  filter(!is.na(length_bin)) %>% 
-  count(length_bin, platform) %>%
-  ggplot(aes(x = length_bin, y = n, color = platform, group = platform)) +
-  geom_line(size = 1) +
-  geom_point(size = 2) +
-  theme_minimal() +
-  theme(axis.text.x = element_text(angle = 45, hjust = 1)) + 
-  labs(title = "Platform-specific Absence",
-       x = "Gene length (average transcript length)",
-       y = "# of Gene absent") +
-  scale_color_manual(values = color_palette[c("Illumina", "ONT_1", "ONT_2", "PacBio")] %>% unname())
-
-(p1 | p2 | p3) + plot_layout(guides = "collect")
 ```
 
 # Tx discovery analysis
@@ -1095,221 +492,7 @@ tx_discovery <- tx_discovery %>%
 
 ## Tx discovery plots
 
-### Main upset plot
-
-```{r Transcript: Main upset plot, fig.height=4, fig.width=8}
-library(ComplexUpset)
-ComplexUpset::upset(
-  tx_discovery %>% mutate(
-    biotype = case_when(
-      biotype =="protein_coding" ~ "Protein-coding",
-      TRUE ~ "Non-protein-coding"
-    )
-  ),
-  intersect = c('Illumina', "ONT cDNA", "PacBio", "ONT dRNA"),
-  annotations = list(
-        # 1st method - passing list:
-        "Transcript length" = list(
-          aes = aes(x = intersection, y = `length`),
-          # provide a list if you wish to add several geoms
-          geom = geom_boxplot(na.rm = TRUE, outliers = FALSE)
-        )
-        # ,
-        # "BioType" = list(
-        #   aes = aes(x = intersection, fill = biotype),
-        #   geom = geom_bar(position = "fill")
-        # )
-  ),
-  base_annotations=list(
-        'Intersection size'=ComplexUpset::intersection_size(
-            counts=TRUE,
-            mapping=aes(fill=biotype),
-            #text=element_text(size = 3, vjust=-0.2)
-        ) + scale_fill_manual(values = c("Non-protein-coding"="#BAC5CB",
-                              "Protein-coding"='#B5C952'))
-    ),
-  set_sizes=(
-        ComplexUpset::upset_set_size(
-            geom=geom_bar(
-                aes(fill=biotype),
-                width=0.8
-            ) ,
-            position='right'
-        )+ scale_fill_manual(values = c("Non-protein-coding"="#BAC5CB",
-                              "Protein-coding"='#B5C952')) + 
-          theme(legend.position = "none")
-  ),
-  guides='over',
-  wrap = TRUE
-)
-```
-
-### Upset plot with addition feature
-
-```{r Transcript: upset plot more feature, fig.height=10, fig.width=8}
-library(ComplexUpset)
-ComplexUpset::upset(
-  tx_discovery %>% mutate(
-    biotype = case_when(
-      biotype =="protein_coding" ~ "Protein-coding",
-      TRUE ~ "Non-protein-coding"
-    )
-  ),
-  intersect = c('Illumina', "ONT cDNA", "PacBio", "ONT dRNA"),
-  annotations = list(
-        # 1st method - passing list:
-        "Transcript length" = list(
-          aes = aes(x = intersection, y = `length`),
-          geom = geom_boxplot(na.rm = TRUE, outliers = FALSE)
-        ),
-        "Illumina" = list(
-          aes = aes(x = intersection, y = Overdispersion_Illumina),
-          geom = geom_boxplot(na.rm = TRUE, outliers = FALSE)
-        ),
-        "ONT cDNA" = list(
-          aes = aes(x = intersection, y = Overdispersion_ONT_cDNA),
-          geom = geom_boxplot(na.rm = TRUE, outliers = FALSE)
-        ),
-        "PacBio" = list(
-          aes = aes(x = intersection, y = Overdispersion_PacBio),
-          geom = geom_boxplot(na.rm = TRUE, outliers = FALSE)
-        ),
-        "ONT dRNA" = list(
-          aes = aes(x = intersection, y = Overdispersion_ONT_dRNA),
-          geom = geom_boxplot(na.rm = TRUE, outliers = FALSE)
-        )
-  ),
-  base_annotations=list(
-        'Intersection size'=ComplexUpset::intersection_size(
-            counts=TRUE,
-            mapping=aes(fill=biotype),
-            #text=element_text(size = 3, vjust=-0.2)
-        ) + scale_fill_manual(values = c("Non-protein-coding"="#BAC5CB",
-                              "Protein-coding"='#B5C952'))
-    ),
-  set_sizes=(
-        ComplexUpset::upset_set_size(
-            geom=geom_bar(
-                aes(fill=biotype),
-                width=0.8
-            ) ,
-            position='right'
-        )+ scale_fill_manual(values = c("Non-protein-coding"="#BAC5CB",
-                              "Protein-coding"='#B5C952')) + 
-          theme(legend.position = "none")
-  ),
-  guides='over',
-  wrap = TRUE
-)
-```
-
-## Jaccard similary
-
-```{r transcript identification Jaccard similarity, fig.height=3, fig.width=4.5}
-
-# Jaccard similarity
-library(ComplexHeatmap)
-binary_matrix <- tx_discovery %>% 
-  select( Illumina, `ONT cDNA`, PacBio ,`ONT dRNA`) %>% 
-  mutate(across(everything(), as.integer))
-
-# Compute Jaccard similarity
-jaccard_sim <- function(x, y) {
-  sum(x & y) / sum(x | y)
-}
-
-platforms <- colnames(binary_matrix)
-jaccard_matrix <- outer(platforms, platforms, Vectorize(function(i, j) {
-  jaccard_sim(binary_matrix[[i]], binary_matrix[[j]])
-}))
-
-# Convert to matrix format
-colnames(jaccard_matrix) <- rownames(jaccard_matrix) <- platforms
-
-label_func <- function(j, i, x, y, width, height, fill) {
-    grid.text(sprintf("%.2f", jaccard_matrix[i, j]), x, y, gp = gpar(fontsize = 10))
-}
-Heatmap(jaccard_matrix, 
-        name = "Jaccard Similarity", 
-        col = colorRampPalette(c("grey", "#06317F"))(50),
-        cell_fun = function(j, i, x, y, width, height, fill) {
-          grid.text(round(jaccard_matrix[i, j], 2), x, y, 
-                    gp = gpar(col = "white"))  # Set font color to white
-        },
-        na_col = "white")  # Keeps upper triangle blank
-```
-
-## Detected and Undetected transcript length
-
-```{r Discovered transcript length dist, fig.height=3, fig.width=5}
-tx_discovery$length_bin <- cut(tx_discovery$length, breaks = c(0, 500, 1000, 1500, 2000, 2500,Inf), labels = c("0-0.5k", "0.5-1k", "1-1.5k", "1.5-2k", "2-2.5k", "2.5k+"))
-
-
-p1 <- tx_discovery %>%
-  pivot_longer(cols = c("Illumina", "ONT cDNA", "PacBio", "ONT dRNA"), 
-               names_to = "platform", values_to = "keep") %>%
-  filter(keep) %>%
-  count(length_bin, platform) %>%  # Summarize counts per category
-  ggplot(aes(x = length_bin, y = n, color = platform, group = platform)) +
-  # platform-specific lines
-  geom_line(linewidth = 1) +
-  geom_point(size = 2) +
-  theme_minimal() +  
-  theme(axis.text.x = element_text(angle = 45, hjust = 1)) + 
-  labs(title = "Detected Transcript", 
-       x = "Transcript length", 
-       y = "# of transcripts detected") + 
-  scale_color_manual(values = color_palette[c("Illumina", "ONT_1", "ONT_2", "PacBio")] %>% unname())
-
-```
-
-```{r Plarform specific absense tx, fig.height=3, fig.width=8}
-
-# Platform-specific detection
-p2 <- tx_discovery %>%
-  pivot_longer(cols = c("Illumina", "ONT cDNA", "PacBio", "ONT dRNA"),
-               names_to = "platform", values_to = "keep") %>%
-  group_by(tx_id) %>%
-  mutate(n_detected = sum(keep)) %>%
-  ungroup() %>%
-  filter(keep & n_detected == 1) %>%   # detected in exactly 1 platform, absent in the other 3
-  filter(!is.na(length_bin)) %>%
-  count(length_bin, platform) %>%
-  ggplot(aes(x = length_bin, y = n, color = platform, group = platform)) +
-  geom_line(size = 1) +
-  geom_point(size = 2) +
-  theme_minimal() +
-  theme(axis.text.x = element_text(angle = 45, hjust = 1)) + 
-  labs(title = "Platform-specific Detection",
-       x = "Transcript length",
-       y = "# of transcripts detected") +
-  scale_color_manual(values = color_palette[c("Illumina", "ONT_1", "ONT_2", "PacBio")] %>% unname())
-
-
-p3 <- tx_discovery %>%
-  pivot_longer(cols = c("Illumina", "ONT cDNA", "PacBio", "ONT dRNA"),
-               names_to = "platform", values_to = "keep") %>%
-  group_by(tx_id) %>%
-  mutate(n_detected = sum(keep)) %>%
-  ungroup() %>%
-  filter(!keep & n_detected == 3) %>%   # absent in exactly 1 platform, present in the other 3
-  count(length_bin, platform) %>%
-  ggplot(aes(x = length_bin, y = n, color = platform, group = platform)) +
-  geom_line(size = 1) +
-  geom_point(size = 2) +
-  theme_minimal() +
-  theme(axis.text.x = element_text(angle = 45, hjust = 1)) + 
-  labs(title = "Platform-specific Absence",
-       x = "Transcript length",
-       y = "# of transcripts absent") +
-  scale_color_manual(values = color_palette[c("Illumina", "ONT_1", "ONT_2", "PacBio")] %>% unname())
-
-
-(p1 | p2 | p3) + plot_layout(guides = "collect")
-```
-
 #### GC% calculation from transcript-level averages
-
 ```{r}
 # helper for cleaning the transcript ID 
 tx_clean <- function(x) sub("\\..*$", "", sub("\\|.*$", "", x))  
@@ -1339,16 +522,19 @@ cat("Transcript in GTF after matching: ", length(ex_by_tx), "\n") #present in GT
 
 ```{r}
 
-ex_by_tx_red <- GenomicRanges::reduce(ex_by_tx) #combination of overlapping exonic region of the same transcript
-seqs_by_tx   <- BSgenome::getSeq(hg, ex_by_tx_red) #DNA seq extraction
+ex_by_tx_red <- GenomicRanges::reduce(ex_by_tx)
 
-tx_len <- vapply(seqs_by_tx, function(dss) sum(width(dss)), numeric(1)) #tot number of bp
-tx_gc  <- vapply(seqs_by_tx, function(dss)
-  sum(letterFrequency(dss, c("G","C"), as.prob=FALSE)), numeric(1)) # count G+C in the seq
+flat_tx     <- unlist(ex_by_tx_red)
+tx_labels   <- names(flat_tx)
+all_tx_seqs <- BSgenome::getSeq(hg, flat_tx)
+gc_per_exon_tx <- letterFrequency(all_tx_seqs, "GC", as.prob = FALSE)
+
+tx_len <- tapply(width(flat_tx),      tx_labels, sum)
+tx_gc  <- tapply(gc_per_exon_tx,      tx_labels, sum)
 
 # table with GC% and length of transcript
 tx_gc_tbl <- tibble::tibble(
-  tx_id   = names(seqs_by_tx),          
+  tx_id   = names(tx_gc),
   GC_tx   = as.numeric(100 * tx_gc / tx_len),
   L_tx_bp = as.numeric(tx_len)
 )
@@ -1382,7 +568,6 @@ tx_discovery <- tx_discovery %>%
 
 cat("With GC_tx no-NA: ", sum(!is.na(tx_discovery$GC_tx)), "\n")
 
-
 ```
 
 ```{r reshape tx_discovery to long format}
@@ -1406,29 +591,6 @@ td_long <- tx_discovery %>%
 ```
 
 ##### Detected and undetected GC content distribution
-
-```{r GC density transcript, fig.height=3.8, fig.width=8}
-# GC% density (transcript-level, platform-specific detected)
-p_tx_det_density <- td_long %>%
-  dplyr::filter(keep, n_detected == 1, !is.na(GC_tx)) %>%
-  ggplot(aes(x = GC_tx, color = platform)) +
-  geom_density(linewidth = 1) +
-  theme_minimal() +
-  labs(
-    title = "GC% density (transcript-level, platform-specific detected)",
-    x = "GC% (transcript)",
-    y = "Density"
-  ) +
-  scale_color_manual(values = c(
-    "Illumina" = color_palette["Illumina"],
-    "ONT cDNA" = color_palette["ONT_1"],
-    "ONT dRNA" = color_palette["ONT_2"],
-    "PacBio"   = color_palette["PacBio"]
-  ) %>% as.vector())
-
-p_tx_det_density
-
-```
 
 ```{r GC transcript violin plot - platform specific detected, fig.width=8, fig.height=8}
 #  VIOLIN PLOT: Transcript-level, platform-specific detected 
@@ -1463,59 +625,15 @@ p_violin_tx_detected <- ggplot(tx_detected_df, aes(x = platform, y = GC_tx, fill
 # show the plot
 p_violin_tx_detected
 
-```
 
-```{r transcirpt detected per bin, fig.height=3.8, fig.width=8}
-# Platform-specific detected transcripts: % per GC% bin
-ps_tx_pct <- td_long %>%
-  dplyr::filter(keep, n_detected == 1, !is.na(gc_bin_tx)) %>%
-  dplyr::count(platform, gc_bin_tx, name = "n") %>%
-  dplyr::group_by(platform) %>%
-  dplyr::mutate(pct = 100 * n / sum(n)) %>%
-  dplyr::ungroup()
-
-ggplot(ps_tx_pct, aes(x = gc_bin_tx, y = pct, color = platform, group = platform)) +
-  geom_line(linewidth =1) +
-  geom_point(size = 2) +
-  theme_minimal() +
-  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
-  labs(
-    title = "Platform-specific detected transcripts: % per GC% bin",
-    x = "GC% (binned)",
-    y = "% of platform-specific transcripts"
-  ) +
-  scale_color_manual(values = c(
-    "Illumina" = color_palette["Illumina"],
-    "ONT cDNA" = color_palette["ONT_1"],
-    "ONT dRNA" = color_palette["ONT_2"],
-    "PacBio"   = color_palette["PacBio"]
-  ) %>% as.vector())
-
-
-
-```
-
-```{r transcript gc density, fig.height=3.8, fig.width=8}
-# GC% density (transcript-level, platform-specific absent)
-p_tx_abs_density <- td_long %>%
-  dplyr::filter(!keep, n_detected == 3, !is.na(GC_tx)) %>%
-  ggplot(aes(x = GC_tx, color = platform)) +
-  geom_density(linewidth = 1) +
-  theme_minimal() +
-  labs(
-    title = "GC% density (transcript-level, platform-specific absent)",
-    x = "GC% (transcript)",
-    y = "Density"
-  ) +
-  scale_color_manual(values = c(
-    "Illumina" = color_palette["Illumina"],
-    "ONT cDNA" = color_palette["ONT_1"],
-    "ONT dRNA" = color_palette["ONT_2"],
-    "PacBio"   = color_palette["PacBio"]
-  ) %>% as.vector())
-
-p_tx_abs_density
-
+tx_detected_df %>% select(platform, GC_tx) %>% group_by(platform) %>% summarise(
+  mean = mean(GC_tx, na.rm = TRUE),
+  median = median(GC_tx, na.rm = TRUE),
+  Q1 = quantile(GC_tx, 0.25, na.rm = TRUE),
+  Q3 = quantile(GC_tx, 0.75, na.rm = TRUE),
+  min = min(GC_tx, na.rm = TRUE),
+  max = max(GC_tx, na.rm = TRUE)
+)
 ```
 
 ```{r GC transcript violin plot - platform specific absent, fig.width=8, fig.height=8}
@@ -1551,488 +669,13 @@ p_violin_tx_absent <- ggplot(tx_absent_df, aes(x = platform, y = GC_tx, fill = p
 
 
 p_violin_tx_absent
-
-```
-
-```{r transcipt detected per bin, fig.height=3.8, fig.width=8}
-# Platform-specific absent transcripts: % per GC% bin
-ps_tx_abs_pct <- td_long %>%
-  dplyr::filter(!keep, n_detected == 3, !is.na(gc_bin_tx)) %>%
-  dplyr::count(platform, gc_bin_tx, name = "n") %>%
-  dplyr::group_by(platform) %>%
-  dplyr::mutate(pct = 100 * n / sum(n)) %>%
-  dplyr::ungroup()
-
-ggplot(ps_tx_abs_pct, aes(x = gc_bin_tx, y = pct, color = platform, group = platform)) +
-  geom_line(linewidth = 1) +
-  geom_point(size = 2) +
-  theme_minimal() +
-  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
-  labs(
-    title = "Platform-specific absent transcripts: % per GC% bin",
-    x = "GC% (binned)",
-    y = "% of platform-specific absent transcripts"
-  ) +
-  scale_color_manual(values = c(
-    "Illumina" = color_palette["Illumina"],
-    "ONT cDNA" = color_palette["ONT_1"],
-    "ONT dRNA" = color_palette["ONT_2"],
-    "PacBio"   = color_palette["PacBio"]
-  ) %>% as.vector())
-
-```
-
-### Assessing GC Content Differences Between Exonic and Intronic Genes Across Platforms
-
-```{r, fig.height=3.8, fig.width=8}
-
-# Filter exon-only genes
-gene_discovery_exonic <- gene_discovery %>%
-  dplyr::filter(`Intronic Gene` == FALSE)
-
-# Long format for plotting
-gc_exonic_df <- gene_discovery_exonic %>%
-  tidyr::pivot_longer(
-    cols = c("Illumina","ONT cDNA","PacBio","ONT dRNA"),
-    names_to = "platform", values_to = "keep"
-  ) %>%
-  dplyr::filter(keep, !is.na(GC_percent)) %>%
-  dplyr::mutate(platform = factor(platform, levels = plat_levels))
-
-# Plot
-p_gc_exon_violin <- ggplot(gc_exonic_df, aes(x = platform, y = GC_percent, fill = platform)) +
-  geom_violin(trim = FALSE, alpha = 0.25, width = 0.9) +
-  geom_boxplot(width = 0.18, outlier.shape = NA, linewidth = 0.4) +
-  stat_summary(fun = median, geom = "point", shape = 21, size = 2.2,
-               fill = "white", stroke = 0.4) +
-  theme_minimal() +
-  labs(
-    title = "GC% distribution per platform (exon-only genes)",
-    x = NULL, y = "GC%"
-  ) +
-  scale_fill_manual(values = color_palette[c("Illumina","ONT_1","ONT_2","PacBio")] %>% unname()) +
-  theme(legend.position = "none")
-
-p_gc_exon_violin
-
-```
-
-```{r Excluding intronic genes}
-# long df: EXON-ONLY (exclude intronic genes)
-gc_exonic_df <- gene_discovery %>%
-  dplyr::filter(`Intronic Gene` == FALSE) %>%
-  tidyr::pivot_longer(
-    cols = c("Illumina","ONT cDNA","PacBio","ONT dRNA"),
-    names_to = "platform", values_to = "keep"
-  ) %>%
-  dplyr::filter(keep, !is.na(GC_percent)) %>%
-  dplyr::mutate(platform = factor(platform, levels = plat_levels))
-
-
-n_all   <- gc_overall_df %>% dplyr::count(platform)
-n_exon  <- gc_exonic_df %>% dplyr::count(platform)
-```
-
-```{r comparison between overall GC content with all detected genes and exon only genes}
-p_violin_all <- ggplot(gc_overall_df, aes(x = platform, y = GC_percent, fill = platform)) +
-  geom_violin(trim = FALSE, alpha = 0.25, width = 0.9) +
-  geom_boxplot(width = 0.18, outlier.shape = NA, linewidth = 0.4) +
-  stat_summary(fun = median, geom = "point", shape = 21, size = 2.2,
-               fill = "white", stroke = 0.4) +
-  theme_minimal() +
-  labs(
-    title = "Overall GC% per platform (ALL detected genes)",
-    subtitle = paste("N:", paste(n_all$platform, n_all$n, sep="=", collapse="  ")),
-    x = NULL, y = "GC%"
-  ) +
-  scale_fill_manual(values = color_palette[c("Illumina","ONT_1","ONT_2","PacBio")] %>% unname()) +
-  theme(legend.position = "none", axis.text.x = element_text(size = 10))
-
-p_violin_exon <- ggplot(gc_exonic_df, aes(x = platform, y = GC_percent, fill = platform)) +
-  geom_violin(trim = FALSE, alpha = 0.25, width = 0.9) +
-  geom_boxplot(width = 0.18, outlier.shape = NA, linewidth = 0.4) +
-  stat_summary(fun = median, geom = "point", shape = 21, size = 2.2,
-               fill = "white", stroke = 0.4) +
-  theme_minimal() +
-  labs(
-    title = "Overall GC% per platform (EXON-ONLY genes)",
-    subtitle = paste("N:", paste(n_exon$platform, n_exon$n, sep="=", collapse="  ")),
-    x = NULL, y = "GC%"
-  ) +
-  scale_fill_manual(values = color_palette[c("Illumina","ONT_1","ONT_2","PacBio")] %>% unname()) +
-  theme(legend.position = "none", axis.text.x = element_text(size = 10))
-
-p_violin_all / p_violin_exon
-
-gc_intronic_df <- gene_discovery %>%
-  dplyr::filter(`Intronic Gene` == TRUE) %>%
-  tidyr::pivot_longer(
-    cols = c("Illumina","ONT cDNA","PacBio","ONT dRNA"),
-    names_to = "platform", values_to = "keep"
-  ) %>%
-  dplyr::filter(keep, !is.na(GC_percent)) %>%
-  dplyr::mutate(platform = factor(platform, levels = plat_levels))
-
-n_intronic <- gc_intronic_df %>% dplyr::count(platform)
-
-
-p_intronic_genes <- ggplot(gc_intronic_df, aes(x = platform, y = GC_percent, fill = platform)) +
-  geom_violin(trim = FALSE, alpha = 0.25, width = 0.9) +
-  geom_boxplot(width = 0.18, outlier.shape = NA, linewidth = 0.4) +
-  stat_summary(fun = median, geom = "point", shape = 21, size = 2.2,
-               fill = "white", stroke = 0.4) +
-  theme_minimal() +
-  labs(
-    title = "Overall GC% per platform (intonic genes)",
-    subtitle = paste("N:", paste(n_intronic$platform, n_intronic$n, sep="=", collapse="  ")),
-    x = NULL, y = "GC%"
-  ) +
-  scale_fill_manual(values = color_palette[c("Illumina","ONT_1","ONT_2","PacBio")] %>% unname()) +
-  theme(legend.position = "none", axis.text.x = element_text(size = 10))
-
-p_violin_all / p_violin_exon/p_intronic_genes
-
-```
-
-
-```{r Transcript level GC% violin plots excluding core transcripts}
-
-platform_cols <- c("Illumina","ONT cDNA","ONT dRNA","PacBio")
-
-# Identify core transcripts (present in all 4 platforms)
-core_tx <- tx_discovery %>%
-  dplyr::mutate(
-    n_detected = (`Illumina`) + (`ONT cDNA`) + (`ONT dRNA`) + (`PacBio`)
-  ) %>%
-  dplyr::filter(n_detected == 4) %>%
-  dplyr::pull(tx_id)
-
-cat("N core transcripts (present in all 4 platforms):", length(core_tx), "\n")
-
-# Create long-format df excluding core transcripts
-gc_overall_tx_nocore <- tx_discovery %>%
-  dplyr::filter(!tx_id %in% core_tx) %>%
-  tidyr::pivot_longer(
-    cols = all_of(platform_cols),
-    names_to = "platform", values_to = "keep"
-  ) %>%
-  dplyr::filter(keep, !is.na(GC_tx)) %>%
-  dplyr::mutate(platform = factor(platform, levels = plat_levels))
-
-# Count transcripts per platform
-n_tx <- gc_overall_tx_nocore %>% dplyr::count(platform)
-
-# Violin + boxplot per platform
-p_tx_overall_violin_nocore <- ggplot(gc_overall_tx_nocore, aes(x = platform, y = GC_tx, fill = platform)) +
-  geom_violin(trim = FALSE, alpha = 0.25, width = 0.9) +
-  geom_boxplot(width = 0.18, outlier.shape = NA, linewidth = 0.4) +
-  stat_summary(fun = median, geom = "point", shape = 21, size = 2.2,
-               fill = "white", stroke = 0.4) +
-  theme_minimal() +
-  labs(
-    title = "Transcript-level GC% per platform (excluding core transcripts)",
-    subtitle = paste("N transcripts:",
-                     paste(n_tx$platform, n_tx$n, sep="=", collapse="  ")),
-    x = NULL,
-    y = "GC% (transcript)"
-  ) +
-  scale_fill_manual(values = color_palette[c("Illumina","ONT_1","ONT_2","PacBio")] %>% unname()) +
-  theme(
-    legend.position = "none",
-    axis.text.x = element_text(size = 10)
-  )
-
-p_tx_overall_violin_nocore
-
-```
-
-```{r density plot of GC content between all detected genes and exon only genes}
-p_dens_all <- ggplot(gc_overall_df, aes(x = GC_percent, color = platform)) +
-  geom_density(linewidth = 1) +
-  theme_minimal() +
-  labs(title = "GC% density per platform (ALL detected genes)", x = "GC%", y = "Density") +
-  scale_color_manual(values = color_palette[c("Illumina","ONT_1","ONT_2","PacBio")] %>% unname())
-
-p_dens_exon <- ggplot(gc_exonic_df, aes(x = GC_percent, color = platform)) +
-  geom_density(linewidth = 1) +
-  theme_minimal() +
-  labs(title = "GC% density per platform (EXON-ONLY genes)", x = "GC%", y = "Density") +
-  scale_color_manual(values = color_palette[c("Illumina","ONT_1","ONT_2","PacBio")] %>% unname())
-
-p_dens_all / p_dens_exon
-
-```
-
-```{r summary statistics of GC% between all genes and exon-only genes}
-summ_all <- gc_overall_df %>%
-  dplyr::group_by(platform) %>%
-  dplyr::summarise(
-    n_genes = dplyr::n(),
-    mean_GC = mean(GC_percent),
-    median_GC = median(GC_percent),
-    sd_GC = sd(GC_percent),
-    min_GC = min(GC_percent),
-    max_GC = max(GC_percent),
-    .groups = "drop"
-  ) %>%
-  dplyr::mutate(set = "ALL")
-
-summ_exon <- gc_exonic_df %>%
-  dplyr::group_by(platform) %>%
-  dplyr::summarise(
-    n_genes = dplyr::n(),
-    mean_GC = mean(GC_percent),
-    median_GC = median(GC_percent),
-    sd_GC = sd(GC_percent),
-    min_GC = min(GC_percent),
-    max_GC = max(GC_percent),
-    .groups = "drop"
-  ) %>%
-  dplyr::mutate(set = "EXON_ONLY")
-
-gc_compare <- dplyr::bind_rows(summ_all, summ_exon) %>%
-  dplyr::mutate(
-    mean_GC   = round(mean_GC, 2),
-    median_GC = round(median_GC, 2),
-    sd_GC     = round(sd_GC, 2),
-    min_GC    = round(min_GC, 2),
-    max_GC    = round(max_GC, 2)
-  ) %>%
-  tidyr::pivot_wider(
-    id_cols = platform,
-    names_from = set,
-    values_from = c(n_genes, mean_GC, median_GC, sd_GC, min_GC, max_GC),
-    names_sep = "."
-  )
-
-cat("\nOverall GC% per platform — ALL vs EXON-ONLY (summary):\n")
-print(gc_compare)
-
-```
-
-```{r sanity check - number of intronic genes, fig.height=3.8, fig.width=8}
-# controls
-if (!"Intronic Gene" %in% names(gene_discovery)) {
-  stop("Column 'Intronic Gene' not found in gene_discovery. Run the intronic gene annotation chunk first.")
-}
-platfrom_col <- c("Illumina","ONT cDNA","ONT dRNA","PacBio")
-
-# intronic vs non intronic genes
-get_intronic_stats <- function(df, platform_col) {
-  df %>%
-    dplyr::filter(.data[[platform_col]] == TRUE) %>%
-    dplyr::summarise(
-      n_total = dplyr::n(),
-      n_intronic = sum(`Intronic Gene`, na.rm = TRUE),
-      perc_intronic = round(100 * n_intronic / n_total, 2)
-    ) %>%
-    dplyr::mutate(platform = platform_col)
-}
-
-plat_cols <- c("Illumina","ONT cDNA","ONT dRNA","PacBio")
-intronic_summary <- purrr::map_dfr(plat_cols, ~get_intronic_stats(gene_discovery, .x)) %>%
-  dplyr::select(platform, n_total, n_intronic, perc_intronic)
-
-# table
-cat("\nNumber and percentage of intronic genes detected per platform:\n")
-print(intronic_summary)
-
-# graph
-ggplot(intronic_summary, aes(x = platform, y = perc_intronic, fill = platform)) +
-  geom_col(width = 0.6, alpha = 0.8) +
-  geom_text(aes(label = paste0(perc_intronic, "%")), vjust = -0.5, size = 3.5) +
-  theme_minimal() +
-  labs(title = "Percentage of intronic genes detected per platform",
-       x = NULL, y = "% intronic genes (of detected)") +
-  scale_fill_manual(values = color_palette[c("Illumina","ONT_1","ONT_2","PacBio")] %>% unname()) +
-  theme(legend.position = "none", axis.text.x = element_text(size = 10))
-
-```
-
-```{r Percentage of intronic genes among platform specific detection}
-
-#uselful to compare to the upset plot
-specific_intronic_summary <- gene_discovery %>%
-  dplyr::mutate(n_detected = Illumina + `ONT cDNA` + `ONT dRNA` + PacBio) %>%
-  tidyr::pivot_longer(cols = c("Illumina","ONT cDNA","ONT dRNA","PacBio"),
-                      names_to = "platform", values_to = "keep") %>%
-  dplyr::filter(keep, n_detected == 1) %>% # specifici
-  dplyr::group_by(platform) %>%
-  dplyr::summarise(
-    n_total = n(),
-    n_intronic = sum(`Intronic Gene`, na.rm = TRUE),
-    perc_intronic = round(100 * n_intronic / n_total, 2)
-  )
-
-print(specific_intronic_summary)
-
-```
-
-For each platform, we identify "platform-specific" genes (i.e., detected
-only by that platform and absent in the other three). Then, we compute
-how many of these genes are classified as "Intronic Gene" (i.e., genes
-located within introns of other genes) based on the overlap analysis
-performed earlier. This quantifies whether PacBio (as mentioned in the
-paper) indeed detects a higher proportion of intronic genes compared to
-other sequencing platforms. This quantitative summary directly
-complements the visualization shown in Section 3.2.2 — UpSet plot with
-addition feature, where PacBio appears to have a higher proportion of
-intronic genes among its specific detections.
-
-```{r Summary statistic for core genes}
-#  Summary statistics: total, intronic, core genes 
-
-gene_summary <- gene_discovery %>%
-  dplyr::mutate(
-    n_detected = (`Illumina`) + (`ONT cDNA`) + (`ONT dRNA`) + (`PacBio`)
-  )
-
-# core genes count
-core_genes <- gene_summary %>%
-  dplyr::filter(n_detected == 4) %>%
-  dplyr::pull(gene_id)
-
-n_core <- length(core_genes)
-
-# intronic genes count
-n_intronic <- sum(gene_summary$`Intronic Gene`, na.rm = TRUE)
-
-# total genes and summary statistics
-n_total <- nrow(gene_summary)
-perc_intronic <- round(100 * n_intronic / n_total, 2)
-perc_core     <- round(100 * n_core / n_total, 2)
-
-
-mean_detected <- round(mean(gene_summary$n_detected), 2)
-
-
-cat("---- SUMMARY STATISTICS ----\n")
-cat("Total genes analyzed:        ", n_total, "\n")
-cat("Intronic genes:              ", n_intronic, " (", perc_intronic, "%)\n", sep = "")
-cat("Core genes (detected in all):", n_core, " (", perc_core, "%)\n", sep = "")
-cat("Average platforms per gene:  ", mean_detected, "\n")
-
-
-summary_table <- tibble::tibble(
-  Metric = c("Total genes", "Intronic genes", "Core genes", "Avg. platforms per gene"),
-  Value  = c(n_total, n_intronic, n_core, mean_detected),
-  Percent = c(NA, perc_intronic, perc_core, NA)
+tx_absent_df %>% select(platform, GC_tx) %>% group_by(platform) %>% summarise(
+  mean = mean(GC_tx, na.rm = TRUE),
+  median = median(GC_tx, na.rm = TRUE),
+  Q1 = quantile(GC_tx, 0.25, na.rm = TRUE),
+  Q3 = quantile(GC_tx, 0.75, na.rm = TRUE),
+  min = min(GC_tx, na.rm = TRUE),
+  max = max(GC_tx, na.rm = TRUE)
 )
-
-knitr::kable(summary_table, caption = "Summary statistics across all genes") %>%
-  kableExtra::kable_styling(full_width = FALSE)
-
 ```
 
-```{r helper function for saving the figures}
-
-
-save_plot_pdf <- function(plot_obj, filename, width = 8, height = 5, folder = "figures", dpi = 300) {
-  if (!dir.exists(folder)) dir.create(folder, recursive = TRUE)
-  filepath <- file.path(folder, paste0(filename, ".pdf"))
-  
-
-  ggsave(
-    filename = filepath,
-    plot = plot_obj,
-    device = cairo_pdf,    # font vettoriali, alta qualità
-    width = width, height = height, dpi = dpi, units = "in"
-  )
-  
-  message("✅ Saved: ", filepath)
-}
-
-```
-
-```{r Saving plots}
-# ---- Transcript-level ----
-save_plot_pdf(p_tx_overall_violin_nocore, "TX_overall_GC_nocore", width = 8, height = 5)
-save_plot_pdf(p_violin_tx_detected, "TX_platform_specific_detected", width = 8, height = 5)
-save_plot_pdf(p_violin_tx_absent, "TX_platform_specific_absent", width = 8, height = 5)
-
-# ---- Gene-level ----
-save_plot_pdf(p_violin_all, "GENE_overall_GC", width = 8, height = 5)
-save_plot_pdf(p_violin_exon, "GENE_exononly_GC", width = 8, height = 5)
-save_plot_pdf(p_intronic_genes, "GENE_intronic_GC", width = 8, height = 5)
-
-```
-
-```{r Exporting list}
-
-# ===============================
-# 📊 EXPORT LIST — Transcript-level
-# ===============================
-
-save_plot_pdf(p_violin_tx_detected, "TX_platform_specific_detected", width = 8, height = 5)
-save_plot_pdf(p_violin_tx_absent, "TX_platform_specific_absent", width = 8, height = 5)
-
-# se hai anche i plot "platform-specific" denominati diversamente
-if (exists("p_violin_ps_detected")) {
-  save_plot_pdf(p_violin_ps_detected, "GENE_platform_specific_detected", width = 8, height = 5)
-}
-if (exists("p_violin_ps_absent")) {
-  save_plot_pdf(p_violin_ps_absent, "GENE_platform_specific_absent", width = 8, height = 5)
-}
-
-# Overall GC% transcript-level (no core)
-if (exists("p_tx_overall_violin_nocore")) {
-  save_plot_pdf(p_tx_overall_violin_nocore, "TX_overall_GC_nocore", width = 8, height = 5)
-}
-
-# ===============================
-# 📊 EXPORT LIST — Gene-level
-# ===============================
-
-if (exists("p_violin_all")) {
-  save_plot_pdf(p_violin_all, "GENE_overall_GC", width = 8, height = 5)
-}
-if (exists("p_violin_exon")) {
-  save_plot_pdf(p_violin_exon, "GENE_exononly_GC", width = 8, height = 5)
-}
-if (exists("p_intronic_genes")) {
-  save_plot_pdf(p_intronic_genes, "GENE_intronic_GC", width = 8, height = 5)
-}
-
-
-```
-
-
-```{r export minimal table}
-
-tx_gc_export <- tx_discovery %>%
-  dplyr::mutate(
-    GC_tx = dplyr::coalesce(GC_tx, GC_tx.x, GC_tx.y)
-  ) %>%
-  dplyr::select(tx_id, GC_tx) %>%
-  dplyr::filter(!is.na(GC_tx) & is.finite(GC_tx)) %>%
-  dplyr::distinct(tx_id, .keep_all = TRUE) %>%
-  dplyr::mutate(GC_tx = round(GC_tx, 2)) %>%
-  dplyr::arrange(tx_id)
-
-# Export as CSV
-readr::write_csv(tx_gc_export, "transcript_GCpercent.csv")
-
-cat("✅ Exported transcript_GCpercent.csv with", nrow(tx_gc_export), "transcripts.\n")
-
-
-```
-
-```{r number of transcript}
-# Number of transcripts
-n_exported <- nrow(tx_gc_export)
-
-n_filtered <- nrow(tx_discovery)
-
-cat("Transcripts in exported table: ", n_exported, "\n")
-cat("Transcripts in tx_discovery (after filtering): ", n_filtered, "\n")
-
-n_common <- sum(tx_gc_export$tx_id %in% tx_discovery$tx_id)
-cat("Common transcripts: ", n_common, "\n")
-
-if (n_common == n_filtered && n_common == n_exported) {
-  cat("✅ The exported table matches the filtered tx_discovery dataset perfectly.\n")
-} else {
-  cat("⚠️ Some transcripts differ between the export and tx_discovery.\n")
-}
-
-```

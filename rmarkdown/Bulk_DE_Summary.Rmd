@@ -2,7 +2,7 @@
 title: "DE analysis"
 author: "Yupei & Ash"
 date: '`r Sys.Date()`'
-version: 'v4.0_lfc0'
+version: 'v4.2_lfc0'
 output:
   html_document:
     code_folding: hide
@@ -393,7 +393,7 @@ complex_upset_plot <- function(lst) {
     base_annotations=list(
         'Intersection size'=ComplexUpset::intersection_size(
             counts=TRUE,
-            text=element_text(size = 3, vjust=-0.2)
+            text=list(element_text(size = 3, vjust=-0.2))
         )
     ),
     wrap = TRUE
@@ -403,6 +403,48 @@ complex_upset_plot <- function(lst) {
     plot = p,
     matrix = binary_matrix %>% rename(Gene = values)
   ))
+}
+
+mean_pairwise_jaccard <- function(mat) {
+  platforms <- setdiff(names(mat), "Gene")
+  pairs     <- combn(platforms, 2, simplify = FALSE)
+  jac <- sapply(pairs, function(p) {
+    a <- mat[[p[1]]]; b <- mat[[p[2]]]
+    sum(a & b) / sum(a | b)
+  })
+  names(jac) <- sapply(pairs, function(p) paste(p, collapse = " vs "))
+  jac
+}
+
+platform_overlap_pct <- function(mat) {
+  platforms <- setdiff(names(mat), "Gene")
+  mat2 <- mat[, platforms, drop = FALSE]
+  mat2$TotalDetected <- rowSums(mat2)
+  do.call(rbind, lapply(platforms, function(p) {
+    detected <- mat2[mat2[[p]] == 1, , drop = FALSE]
+    n <- nrow(detected)
+    data.frame(
+      Platform         = p,
+      N                = n,
+      `>=1 other (%)`  = if (n > 0) round(100 * sum(detected$TotalDetected >= 2) / n, 1) else NA_real_,
+      `>=2 others (%)` = if (n > 0) round(100 * sum(detected$TotalDetected >= 3) / n, 1) else NA_real_,
+      `=3 others (%)`  = if (n > 0) round(100 * sum(detected$TotalDetected == 4) / n, 1) else NA_real_,
+      check.names = FALSE
+    )
+  }))
+}
+
+feature_platform_coverage <- function(mat) {
+  platforms <- setdiff(names(mat), "Gene")
+  total <- rowSums(mat[, platforms, drop = FALSE])
+  n <- nrow(mat)
+  data.frame(
+    `Total unique features` = n,
+    `>=2 platforms (%)`     = round(100 * sum(total >= 2) / n, 1),
+    `>=3 platforms (%)`     = round(100 * sum(total >= 3) / n, 1),
+    `=4 platforms (%)`      = round(100 * sum(total == 4) / n, 1),
+    check.names = FALSE
+  )
 }
 ```
 
@@ -439,6 +481,53 @@ mat.AvsP.DE <- complex_upset_plot(lst)$matrix
   title = "DGE Human",
   theme = theme(plot.title = element_text(size =15))
 )
+```
+
+```{r jaccard-dge, echo=FALSE}
+jac_rows <- lapply(
+  list(AvsL = mat.AvsL.DE, PvsL = mat.PvsL.DE, AvsP = mat.AvsP.DE),
+  mean_pairwise_jaccard
+)
+jac_tbl <- do.call(rbind, lapply(names(jac_rows), function(contrast) {
+  v <- jac_rows[[contrast]]
+  c(Contrast = contrast, round(v, 3), Mean = round(mean(v), 3))
+})) |> as.data.frame()
+print(knitr::kable(jac_tbl, caption = "Mean pairwise Jaccard similarity — DGE"))
+
+ovlp_tbl <- do.call(rbind, lapply(
+  c("AvsL", "PvsL", "AvsP"),
+  function(contrast) {
+    mat <- get(paste0("mat.", contrast, ".DE"))
+    cbind(Contrast = contrast, platform_overlap_pct(mat))
+  }
+))
+knitr::kable(ovlp_tbl, caption = "Platform overlap with other platforms — DGE (%)",
+             row.names = FALSE)
+
+cov_tbl <- do.call(rbind, lapply(
+  c("AvsL", "PvsL", "AvsP"),
+  function(contrast) {
+    mat <- get(paste0("mat.", contrast, ".DE"))
+    cbind(Contrast = contrast, feature_platform_coverage(mat))
+  }
+))
+knitr::kable(cov_tbl,
+             caption = "% of unique DE features detected by N platforms — DGE",
+             row.names = FALSE)
+
+if (!is.null(params$fig.path)) {
+  for (contrast in c("AvsL", "PvsL", "AvsP")) {
+    mat <- get(paste0("mat.", contrast, ".DE"))
+    write.table(mat, file.path(params$fig.path, paste0("upset_dge_", contrast, ".tsv")),
+                sep = "\t", quote = FALSE, row.names = FALSE)
+  }
+  write.table(jac_tbl,  file.path(params$fig.path, "jaccard_dge.tsv"),
+              sep = "\t", quote = FALSE, row.names = FALSE)
+  write.table(ovlp_tbl, file.path(params$fig.path, "platform_overlap_dge.tsv"),
+              sep = "\t", quote = FALSE, row.names = FALSE)
+  write.table(cov_tbl,  file.path(params$fig.path, "feature_coverage_dge.tsv"),
+              sep = "\t", quote = FALSE, row.names = FALSE)
+}
 ```
 
 ```{r gene: platform specific detection summary, fig.height=2, fig.width=13}
@@ -594,7 +683,7 @@ my_complexUpset <- function(data, gene_length_lookup, ensembl, title) {
         'Intersection size'=ComplexUpset::intersection_size(
             counts=TRUE,
             mapping=aes(fill=biotype),
-            text=element_text(size = 3, vjust=-0.2)
+            text=list(element_text(size = 3, vjust=-0.2))
         ) + scale_fill_manual(values = c("Non-protein-coding"="#BAC5CB",
                               "Protein-coding"='#B5C952'))
     ),
@@ -1581,6 +1670,53 @@ p1 / p2 / p3 + patchwork::plot_annotation(
 )
 ```
 
+```{r jaccard-dte, echo=FALSE}
+jac_rows <- lapply(
+  list(AvsL = mat.AvsL.DTE, PvsL = mat.PvsL.DTE, AvsP = mat.AvsP.DTE),
+  mean_pairwise_jaccard
+)
+jac_tbl <- do.call(rbind, lapply(names(jac_rows), function(contrast) {
+  v <- jac_rows[[contrast]]
+  c(Contrast = contrast, round(v, 3), Mean = round(mean(v), 3))
+})) |> as.data.frame()
+print(knitr::kable(jac_tbl, caption = "Mean pairwise Jaccard similarity — DTE"))
+
+ovlp_tbl <- do.call(rbind, lapply(
+  c("AvsL", "PvsL", "AvsP"),
+  function(contrast) {
+    mat <- get(paste0("mat.", contrast, ".DTE"))
+    cbind(Contrast = contrast, platform_overlap_pct(mat))
+  }
+))
+knitr::kable(ovlp_tbl, caption = "Platform overlap with other platforms — DTE (%)",
+             row.names = FALSE)
+
+cov_tbl <- do.call(rbind, lapply(
+  c("AvsL", "PvsL", "AvsP"),
+  function(contrast) {
+    mat <- get(paste0("mat.", contrast, ".DTE"))
+    cbind(Contrast = contrast, feature_platform_coverage(mat))
+  }
+))
+knitr::kable(cov_tbl,
+             caption = "% of unique DE features detected by N platforms — DTE",
+             row.names = FALSE)
+
+if (!is.null(params$fig.path)) {
+  for (contrast in c("AvsL", "PvsL", "AvsP")) {
+    mat <- get(paste0("mat.", contrast, ".DTE"))
+    write.table(mat, file.path(params$fig.path, paste0("upset_dte_", contrast, ".tsv")),
+                sep = "\t", quote = FALSE, row.names = FALSE)
+  }
+  write.table(jac_tbl,  file.path(params$fig.path, "jaccard_dte.tsv"),
+              sep = "\t", quote = FALSE, row.names = FALSE)
+  write.table(ovlp_tbl, file.path(params$fig.path, "platform_overlap_dte.tsv"),
+              sep = "\t", quote = FALSE, row.names = FALSE)
+  write.table(cov_tbl,  file.path(params$fig.path, "feature_coverage_dte.tsv"),
+              sep = "\t", quote = FALSE, row.names = FALSE)
+}
+```
+
 ```{r Biotype and transcript length on DTE, echo=TRUE, fig.height=9, fig.width=15}
 library(patchwork)
 # Function to preprocess the data and create an upset plot
@@ -1617,7 +1753,7 @@ my_complexUpset <- function(data, tx_length_lookup, title) {
         'Intersection size'=ComplexUpset::intersection_size(
             counts=TRUE,
             mapping=aes(fill=biotype),
-            text=element_text(size = 3, vjust=-0.2)
+            text=list(element_text(size = 3, vjust=-0.2))
         ) + scale_fill_manual(values = c("Non-protein-coding"="#BAC5CB",
                               "Protein-coding"='#B5C952'))
     ),
@@ -1724,11 +1860,11 @@ map(list(mat.AvsL.DTE, mat.PvsL.DTE, mat.AvsP.DTE), platform_specific_gene_summa
   patchwork::plot_layout(guides = 'collect')
 ```
 
-```{r}
+```{r, cache=FALSE}
 # Save the de gene list to output_list
-output_list[["AvsP.DTE.all"]] <- mat.AvsP.DTE %>% 
+output_list[["AvsP.DTE.all"]] <- mat.AvsP.DTE %>%
   filter(rowSums(select(., where(is.numeric))) == 4) %>% pull(Gene)
-output_list[["AvsP.DTE.any"]] <- mat.AvsP.DTE %>% 
+output_list[["AvsP.DTE.any"]] <- mat.AvsP.DTE %>%
   filter(rowSums(select(., where(is.numeric))) > 0) %>% pull(Gene)
 
 output_list[["AvsL.DTE.all"]] <- mat.AvsL.DTE %>% 

@@ -25,6 +25,18 @@ params:
 
 # Setup: Create DGE from input
 ```{r setup, include=FALSE}
+if interactive(){
+  params <- list(
+    random_seed = 2024,
+    cache_dir = NULL,
+    sequins_tsv = '/vast/projects/LongBench/reference_files/Sequin_resources/v2.4/rnasequin_isoforms_2.4.tsv',
+    sirv_csv = '/home/users/allstaff/you.yu/LongBench/reference_files/SIRV_Set4_Norm_Sequences_20210507/SIRV_set4_concentration.csv',
+    bulk_meta = "/vast/projects/LongBench/sequencing_data/illumina_bulk/metadata.txt",
+    input_DGEobject_rds = "/vast/projects/LongBench/analysis/workflow/rmarkdown/RDS/bulk_DGE.obj.rds",
+    Tx2Gene.map.rds = "/vast/projects/LongBench/analysis/workflow/rmarkdown/RDS/Tx2Gene.map.rds",
+    fig.path = NULL
+  )
+}
 knitr::opts_chunk$set(cache = TRUE, fig.width = 7, fig.height=5, warning = F)
 
 ```
@@ -135,43 +147,63 @@ Using `filterByExpr` for each dataset, using min.count = 10 for gene and min.cou
 ```{r Gene Transcript discovery upset plot}
 # Transcript
 get_discovery_upset <- function(dge_lst, min.count = 10) {
-  tx_discovery <- tibble(
+  keeps <- list(
     "Illumina" = filterByExpr(dge_lst[["Illumina"]], group = dge_lst[["Illumina"]]$samples$sample, min.count = min.count),
     "ONT cDNA" = filterByExpr(dge_lst[["ONT cDNA"]], group = dge_lst[["ONT cDNA"]]$samples$sample, min.count = min.count),
-    "PacBio" = filterByExpr(dge_lst[["PacBio"]], group = dge_lst[["PacBio"]]$samples$sample, min.count = min.count),
-    "ONT dRNA" = filterByExpr(dge_lst[["ONT dRNA"]], group = dge_lst[["ONT dRNA"]]$samples$sample, min.count = min.count),
-    Length = dge_lst[["Illumina"]]$genes$Length # use illumina here but they are the same
+    "PacBio"   = filterByExpr(dge_lst[["PacBio"]],   group = dge_lst[["PacBio"]]$samples$sample,   min.count = min.count),
+    "ONT dRNA" = filterByExpr(dge_lst[["ONT dRNA"]], group = dge_lst[["ONT dRNA"]]$samples$sample, min.count = min.count)
   )
 
-ComplexUpset::upset(
-  tx_discovery,
-  intersect = c('Illumina', "ONT cDNA", "PacBio", "ONT dRNA"),
-  annotations = list(
-        # 1st method - passing list:
-        "Gene length" = list(
-          aes = aes(x = intersection, y = Length),
-          # provide a list if you wish to add several geoms
-          geom = geom_boxplot(na.rm = TRUE, outliers = FALSE)
-        )
-  ),
-  wrap = TRUE
-)}
+  tx_discovery <- tibble(
+    "Illumina" = keeps[["Illumina"]],
+    "ONT cDNA" = keeps[["ONT cDNA"]],
+    "PacBio"   = keeps[["PacBio"]],
+    "ONT dRNA" = keeps[["ONT dRNA"]],
+    Length = dge_lst[["Illumina"]]$genes$Length
+  )
+
+  p <- ComplexUpset::upset(
+    tx_discovery,
+    intersect = c('Illumina', "ONT cDNA", "PacBio", "ONT dRNA"),
+    annotations = list(
+      "Gene length" = list(
+        aes = aes(x = intersection, y = Length),
+        geom = geom_boxplot(na.rm = TRUE, outliers = FALSE)
+      )
+    ),
+    wrap = TRUE
+  )
+
+  count_tbl <- tibble(
+    Platform   = names(keeps),
+    Identified = sapply(keeps, sum),
+    Total      = nrow(dge_lst[["Illumina"]])
+  )
+
+  list(plot = p, table = count_tbl)
+}
 
 
 # Transcript
-list(
+res_seq <- list(
   "Illumina" = ill_bulk.txi.dge_sequins,
   "ONT cDNA" = ont_bulk.txi.dge_sequins,
   "PacBio" = pb_bulk.txi.dge_sequins,
   "ONT dRNA" = drna_bulk.txi.dge_sequins
-) %>% get_discovery_upset(min.count = 5) + ggtitle("Sequins transcript discovery")
+) %>% get_discovery_upset(min.count = 5)
+res_seq$plot + ggtitle("Sequins transcript discovery")
+res_seq$table %>% kable(caption = "Sequins transcripts identified per platform", format = "html") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE)
 
-list(
+res_sirv <- list(
   "Illumina" = ill_bulk.txi.dge_sirv,
   "ONT cDNA" = ont_bulk.txi.dge_sirv,
   "PacBio" = pb_bulk.txi.dge_sirv,
   "ONT dRNA" = drna_bulk.txi.dge_sirv
-) %>% get_discovery_upset(min.count = 5) + ggtitle("SIRV transcript discovery")
+) %>% get_discovery_upset(min.count = 5)
+res_sirv$plot + ggtitle("SIRV transcript discovery")
+res_sirv$table %>% kable(caption = "SIRV transcripts identified per platform", format = "html") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE)
 
 ## ERCC with true abundance
 dge_lst <- list(
@@ -207,6 +239,13 @@ tx_discovery <- tibble(
     ),
     wrap = TRUE
   ) + ggtitle("ERCC transcript discovery")
+
+tx_discovery %>%
+  summarise(across(c(Illumina, `ONT cDNA`, PacBio, `ONT dRNA`), sum)) %>%
+  pivot_longer(everything(), names_to = "Platform", values_to = "Identified") %>%
+  mutate(Total = nrow(dge_lst[["Illumina"]])) %>%
+  kable(caption = "ERCC transcripts identified per platform", format = "html") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE)
 ```
 
 # Differential Transcript expression analysis
@@ -306,6 +345,39 @@ pb_bulk.dte_sirv.list <- DTE.edgeR_sequins(rbind(pb_bulk.txi.dge_sirv, pb_bulk.t
 ```
 
 ### Upset plot
+```{r upset-helper}
+complex_upset_plot <- function(lst) {
+  DEGs <- lapply(lst, function(x) rownames(x)[decideTests(x) != 0])
+  long_df <- stack(DEGs)
+
+  if (nrow(long_df) == 0) {
+    message("No significant DE features detected in any platform — skipping upset plot.")
+    return(list(plot = ggplot() + annotate("text", x = 0.5, y = 0.5, label = "No significant DE detected", size = 6) + theme_void(), matrix = tibble(Gene = character())))
+  }
+
+  binary_matrix <- long_df %>%
+    mutate(present = 1) %>%
+    pivot_wider(names_from = ind, values_from = present, values_fill = 0)
+
+  for (nm in names(lst)) {
+    if (!nm %in% colnames(binary_matrix)) binary_matrix[[nm]] <- 0L
+  }
+
+  p <- ComplexUpset::upset(
+    binary_matrix %>% select(-values) %>% as.data.frame(),
+    intersect = names(lst),
+    base_annotations = list(
+      'Intersection size' = ComplexUpset::intersection_size(
+        counts = TRUE,
+        text = list(element_text(size = 3, vjust = -0.2))
+      )
+    ),
+    wrap = TRUE
+  )
+  list(plot = p, matrix = binary_matrix %>% rename(Gene = values))
+}
+```
+
 ### DTE Upset plot (sequins transcript)
 ```{r upset plot dte sequins edgeR scaling, fig.width=8, fig.height=6}
 # Upset plot

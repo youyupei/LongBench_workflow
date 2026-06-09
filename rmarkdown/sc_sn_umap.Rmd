@@ -293,6 +293,24 @@ plots <- map(
 )
 
 wrap_plots(plots, guides = "collect")
+plot_d %>%
+  group_by(Sequencer, Library.Type) %>%
+  summarise(
+    median_nFeature = median(nFeature_Gene_quant, na.rm = TRUE),
+    Q1_nFeature = quantile(nFeature_Gene_quant, 0.25, na.rm = TRUE),
+    Q3_nFeature = quantile(nFeature_Gene_quant, 0.75, na.rm = TRUE),
+    median_nCount = median(nCount_Gene_quant, na.rm = TRUE),
+    Q1_nCount = quantile(nCount_Gene_quant, 0.25, na.rm = TRUE),
+    Q3_nCount = quantile(nCount_Gene_quant, 0.75, na.rm = TRUE),
+    median_percent_mt = median(percent.mt, na.rm = TRUE),
+    Q1_percent_mt = quantile(percent.mt, 0.25, na.rm = TRUE),
+    Q3_percent_mt = quantile(percent.mt, 0.75, na.rm = TRUE),
+    median_percent_ribo = median(percent.ribo, na.rm = TRUE),
+    Q1_percent_ribo = quantile(percent.ribo, 0.25, na.rm = TRUE),
+    Q3_percent_ribo = quantile(percent.ribo, 0.75, na.rm = TRUE),
+    .groups = "drop"
+  ) 
+
 ```
 
 
@@ -353,6 +371,21 @@ so_list <- list(
 
 # save the seurat objects
 saveRDS(so_list, file = params$filtered_so_rds_out,compress = FALSE)
+
+# The UMAP 1 and 2 Coordinates 
+
+umap_coords_df <- purrr::imap_dfr(so_list, function(so, protocol_name) {
+  umap_coords <- Embeddings(so, reduction = "umap.Gene_quant")
+  data.frame(
+    cell_barcode = rownames(umap_coords),
+    UMAP_1 = umap_coords[, 1],
+    UMAP_2 = umap_coords[, 2],
+    protocol = protocol_name,
+    cell_line = so$cell_line[match(rownames(umap_coords), colnames(so))]
+  )
+})
+
+umap_coords_df
 ```
 
 With the so_list, plot the boxplot of library size for each cell line and protocol.

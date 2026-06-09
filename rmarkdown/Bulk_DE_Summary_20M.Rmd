@@ -2,7 +2,7 @@
 title: "DE analysis 20M reads subsample"
 author: "Yupei & Ash"
 date: '`r Sys.Date()`'
-version: 'v3.1_lfc0'
+version: 'v3.2_lfc0'
 output:
   html_document:
     code_folding: hide
@@ -56,6 +56,29 @@ params:
     \- **Long-Read Sequencing**: PacBio ,  Oxford Nanopore Technologies (ONT) (`ONT cDNA` (cDNA sequencing), `ONT dRNA` (dRNA sequencing))
 
 ```{r setup, include=FALSE}
+
+if (!exists("params")) {
+  params <- list(
+  random_seed= 2024,
+  cache_dir= NULL,
+  fig.path= NULL,
+  sirv_ercc_gtf= '/vast/projects/LongBench/reference_files/SIRV_Set4_Norm_Sequences_20210507/SIRV_ERCC_longSIRV_multi-fasta_20210507.gtf',
+  sequins_gtf= '/vast/projects/LongBench/reference_files/Sequin_resources/v2.4/rnasequin_annotation_2.4.gtf',
+  sequins_tsv= '/vast/projects/LongBench/reference_files/Sequin_resources/v2.4/rnasequin_isoforms_2.4.tsv',
+  human_gtf= '/vast/projects/LongBench/reference_files/GRCh38/gencode.v44.annotation.gtf',
+  sirv_csv= '/vast/projects/LongBench/reference_files/SIRV_Set4_Norm_Sequences_20210507/SIRV_set4_concentration.csv',
+  ont_bulk_oarfish_dir= '/vast/projects/LongBench/analysis/main_workflow/result/rarefraction_analysis/oarfish/ont_bulk/20M',
+  pb_bulk_oarfish_dir= '/vast/projects/LongBench/analysis/main_workflow/result/rarefraction_analysis/oarfish/pb_bulk/20M',
+  ont_drnd_oarfish_dir= '/vast/projects/LongBench/analysis/main_workflow/result/rarefraction_analysis/oarfish/dRNA_bulk/20M',
+  ill_bulk_salmon_dir= '/vast/projects/LongBench/analysis/main_workflow/result/rarefraction_analysis/salmon/20M',
+  expected_de_table= '/vast/projects/LongBench/reference_files/Expected_DE.csv',
+  bulk_meta= "/vast/projects/LongBench/sequencing_data/illumina_bulk/metadata.txt",
+  bulk_DE_rds= "/vast/projects/LongBench/analysis/workflow/rmarkdown/RDS/bulk_DE.rds",
+  output_rds= "/vast/projects/LongBench/analysis/workflow/rmarkdown/RDS/Bulk_identification_DE_M20.rds",
+  log2FC_cutoff= 0
+  )
+}
+
 knitr::opts_chunk$set(
 	echo = TRUE,
 	fig.height = 5,
@@ -109,24 +132,6 @@ knitr::opts_chunk$set(
 if (!is.null(params$cache_dir)) {
   knitr::opts_chunk$set(cache.path = params$cache_dir)
 }
-```
-
-```{r Input filename setup, include=FALSE, eval=F}
-params <- list(
-  random_seed = 2024,
-  cache_dir = NULL,
-  sirv_ercc_gtf = '/vast/projects/LongBench/reference_files/SIRV_Set4_Norm_Sequences_20210507/SIRV_ERCC_longSIRV_multi-fasta_20210507.gtf',
-  sequins_gtf = '/vast/projects/LongBench/reference_files/Sequin_resources/v2.4/rnasequin_annotation_2.4.gtf',
-  sequins_tsv = '/vast/projects/LongBench/reference_files/Sequin_resources/v2.4/rnasequin_isoforms_2.4.tsv',
-  human_gtf = '/vast/projects/LongBench/reference_files/GRCh38/gencode.v44.annotation.gtf',
-  sirv_csv = '/vast/projects/LongBench/reference_files/SIRV_Set4_Norm_Sequences_20210507/SIRV_set4_concentration.csv',
-  ont_bulk_oarfish_dir = "/vast/projects/LongBench/analysis/lr_bulk/result/oarfish_cov_output/ont_bulk",
-  pb_bulk_oarfish_dir = "/vast/projects/LongBench/analysis/lr_bulk/result/oarfish_cov_output/pb_bulk",
-  ont_drnd_oarfish_dir = "/vast/projects/LongBench/analysis/lr_bulk/result/oarfish_cov_output/dRNA_bulk",
-  ill_bulk_salmon_dir = "/vast/projects/LongBench/analysis/sr_bulk/result/salmon/salmon_quant",
-  bulk_meta = "/vast/projects/LongBench/sequencing_data/illumina_bulk/metadata.txt",
-  log2FC_cutoff= 0
-)
 ```
 
 ```{r color code, include=FALSE}
@@ -528,7 +533,7 @@ complex_upset_plot <- function(lst) {
     base_annotations=list(
         'Intersection size'=ComplexUpset::intersection_size(
             counts=TRUE,
-            text=element_text(size = 3, vjust=-0.2)
+            text=list(element_text(size = 3, vjust=-0.2))
         )
     ),
     wrap = TRUE
@@ -538,6 +543,48 @@ complex_upset_plot <- function(lst) {
     plot = p,
     matrix = binary_matrix %>% rename(Gene = values)
   ))
+}
+
+mean_pairwise_jaccard <- function(mat) {
+  platforms <- setdiff(names(mat), "Gene")
+  pairs     <- combn(platforms, 2, simplify = FALSE)
+  jac <- sapply(pairs, function(p) {
+    a <- mat[[p[1]]]; b <- mat[[p[2]]]
+    sum(a & b) / sum(a | b)
+  })
+  names(jac) <- sapply(pairs, function(p) paste(p, collapse = " vs "))
+  jac
+}
+
+platform_overlap_pct <- function(mat) {
+  platforms <- setdiff(names(mat), "Gene")
+  mat2 <- mat[, platforms, drop = FALSE]
+  mat2$TotalDetected <- rowSums(mat2)
+  do.call(rbind, lapply(platforms, function(p) {
+    detected <- mat2[mat2[[p]] == 1, , drop = FALSE]
+    n <- nrow(detected)
+    data.frame(
+      Platform         = p,
+      N                = n,
+      `>=1 other (%)`  = if (n > 0) round(100 * sum(detected$TotalDetected >= 2) / n, 1) else NA_real_,
+      `>=2 others (%)` = if (n > 0) round(100 * sum(detected$TotalDetected >= 3) / n, 1) else NA_real_,
+      `=3 others (%)`  = if (n > 0) round(100 * sum(detected$TotalDetected == 4) / n, 1) else NA_real_,
+      check.names = FALSE
+    )
+  }))
+}
+
+feature_platform_coverage <- function(mat) {
+  platforms <- setdiff(names(mat), "Gene")
+  total <- rowSums(mat[, platforms, drop = FALSE])
+  n <- nrow(mat)
+  data.frame(
+    `Total unique features` = n,
+    `>=2 platforms (%)`     = round(100 * sum(total >= 2) / n, 1),
+    `>=3 platforms (%)`     = round(100 * sum(total >= 3) / n, 1),
+    `=4 platforms (%)`      = round(100 * sum(total == 4) / n, 1),
+    check.names = FALSE
+  )
 }
 ```
 
@@ -574,6 +621,53 @@ mat.AvsP.DE <- complex_upset_plot(lst)$matrix
   title = "DGE Human",
   theme = theme(plot.title = element_text(size =15))
 )
+```
+
+```{r jaccard-dge, echo=FALSE}
+jac_rows <- lapply(
+  list(AvsL = mat.AvsL.DE, PvsL = mat.PvsL.DE, AvsP = mat.AvsP.DE),
+  mean_pairwise_jaccard
+)
+jac_tbl <- do.call(rbind, lapply(names(jac_rows), function(contrast) {
+  v <- jac_rows[[contrast]]
+  c(Contrast = contrast, round(v, 3), Mean = round(mean(v), 3))
+})) |> as.data.frame()
+print(knitr::kable(jac_tbl, caption = "Mean pairwise Jaccard similarity — DGE"))
+
+ovlp_tbl <- do.call(rbind, lapply(
+  c("AvsL", "PvsL", "AvsP"),
+  function(contrast) {
+    mat <- get(paste0("mat.", contrast, ".DE"))
+    cbind(Contrast = contrast, platform_overlap_pct(mat))
+  }
+))
+knitr::kable(ovlp_tbl, caption = "Platform overlap with other platforms — DGE (%)",
+             row.names = FALSE)
+
+cov_tbl <- do.call(rbind, lapply(
+  c("AvsL", "PvsL", "AvsP"),
+  function(contrast) {
+    mat <- get(paste0("mat.", contrast, ".DE"))
+    cbind(Contrast = contrast, feature_platform_coverage(mat))
+  }
+))
+knitr::kable(cov_tbl,
+             caption = "% of unique DE features detected by N platforms — DGE",
+             row.names = FALSE)
+
+if (!is.null(params$fig.path)) {
+  for (contrast in c("AvsL", "PvsL", "AvsP")) {
+    mat <- get(paste0("mat.", contrast, ".DE"))
+    write.table(mat, file.path(params$fig.path, paste0("upset_dge_", contrast, ".tsv")),
+                sep = "\t", quote = FALSE, row.names = FALSE)
+  }
+  write.table(jac_tbl,  file.path(params$fig.path, "jaccard_dge.tsv"),
+              sep = "\t", quote = FALSE, row.names = FALSE)
+  write.table(ovlp_tbl, file.path(params$fig.path, "platform_overlap_dge.tsv"),
+              sep = "\t", quote = FALSE, row.names = FALSE)
+  write.table(cov_tbl,  file.path(params$fig.path, "feature_coverage_dge.tsv"),
+              sep = "\t", quote = FALSE, row.names = FALSE)
+}
 ```
 
 ```{r gene: platform specific detection summary, fig.height=2, fig.width=13}
@@ -634,9 +728,41 @@ df_long %>%
   )
 }
 
+# Pivot to long format
+platform_specific_gene_summary_data <- function(df) {
+  df_long <- df %>%
+  pivot_longer(-Gene, names_to = "Platform", values_to = "Detected") %>%
+  group_by(Gene) %>%
+  mutate(TotalDetected = sum(Detected)) %>%
+  ungroup() %>%
+  mutate(
+    Category = case_when(
+      Detected == 1 & TotalDetected == 1 ~ "Platform-Specific Detection",  # Only detected by this platform
+      Detected == 0 & TotalDetected == 3 ~ "Platform-Specific Absence",      # Not detected by this platform but present elsewhere
+      Detected == 1 & TotalDetected > 1 ~ "Common Detection (also detected in >0 other platform)",
+      Detected == 0 & TotalDetected < 3 ~ "Common Absence (also absent in >0 other platform)" # Detected by this platform + at least one other
+    )
+  ) %>%
+  count(Platform, Category)
+
+# Convert to factor for proper ordering in plot
+df_long$Category <- factor(df_long$Category,
+  levels = c(
+    "Platform-Specific Absence",
+    "Common Absence (also absent in >0 other platform)",
+    "Platform-Specific Detection",
+    "Common Detection (also detected in >0 other platform)"
+  )
+)
+df_long
+}
+
 
 map(list(mat.AvsL.DE, mat.PvsL.DE, mat.AvsP.DE), platform_specific_gene_summary) %>% do.call(patchwork::wrap_plots, .) +
   patchwork::plot_layout(guides = 'collect')
+
+# Raw data points:
+
 ```
 ```{r gene: platform specific detection summary v2, fig.height=3, fig.width=8}
 # Pivot to long format
@@ -859,7 +985,7 @@ my_complexUpset <- function(data, gene_length_lookup, ensembl, title) {
         'Intersection size'=ComplexUpset::intersection_size(
             counts=TRUE,
             mapping=aes(fill=biotype),
-            text=element_text(size = 3, vjust=-0.2)
+            text=list(element_text(size = 3, vjust=-0.2))
         ) + scale_fill_manual(values = c("Non-protein-coding"="#BAC5CB",
                               "Protein-coding"='#B5C952'))
     ),
@@ -1794,6 +1920,53 @@ p1 / p2 / p3 + patchwork::plot_annotation(
 )
 ```
 
+```{r jaccard-dte, echo=FALSE}
+jac_rows <- lapply(
+  list(AvsL = mat.AvsL.DTE, PvsL = mat.PvsL.DTE, AvsP = mat.AvsP.DTE),
+  mean_pairwise_jaccard
+)
+jac_tbl <- do.call(rbind, lapply(names(jac_rows), function(contrast) {
+  v <- jac_rows[[contrast]]
+  c(Contrast = contrast, round(v, 3), Mean = round(mean(v), 3))
+})) |> as.data.frame()
+print(knitr::kable(jac_tbl, caption = "Mean pairwise Jaccard similarity — DTE"))
+
+ovlp_tbl <- do.call(rbind, lapply(
+  c("AvsL", "PvsL", "AvsP"),
+  function(contrast) {
+    mat <- get(paste0("mat.", contrast, ".DTE"))
+    cbind(Contrast = contrast, platform_overlap_pct(mat))
+  }
+))
+knitr::kable(ovlp_tbl, caption = "Platform overlap with other platforms — DTE (%)",
+             row.names = FALSE)
+
+cov_tbl <- do.call(rbind, lapply(
+  c("AvsL", "PvsL", "AvsP"),
+  function(contrast) {
+    mat <- get(paste0("mat.", contrast, ".DTE"))
+    cbind(Contrast = contrast, feature_platform_coverage(mat))
+  }
+))
+knitr::kable(cov_tbl,
+             caption = "% of unique DE features detected by N platforms — DTE",
+             row.names = FALSE)
+
+if (!is.null(params$fig.path)) {
+  for (contrast in c("AvsL", "PvsL", "AvsP")) {
+    mat <- get(paste0("mat.", contrast, ".DTE"))
+    write.table(mat, file.path(params$fig.path, paste0("upset_dte_", contrast, ".tsv")),
+                sep = "\t", quote = FALSE, row.names = FALSE)
+  }
+  write.table(jac_tbl,  file.path(params$fig.path, "jaccard_dte.tsv"),
+              sep = "\t", quote = FALSE, row.names = FALSE)
+  write.table(ovlp_tbl, file.path(params$fig.path, "platform_overlap_dte.tsv"),
+              sep = "\t", quote = FALSE, row.names = FALSE)
+  write.table(cov_tbl,  file.path(params$fig.path, "feature_coverage_dte.tsv"),
+              sep = "\t", quote = FALSE, row.names = FALSE)
+}
+```
+
 ```{r Biotype and transcript length on DET, echo=TRUE, fig.height=9, fig.width=15}
 library(patchwork)
 # Function to preprocess the data and create an upset plot
@@ -1830,7 +2003,7 @@ my_complexUpset <- function(data, tx_length_lookup, title) {
         'Intersection size'=ComplexUpset::intersection_size(
             counts=TRUE,
             mapping=aes(fill=biotype),
-            text=element_text(size = 3, vjust=-0.2)
+            text=list(element_text(size = 3, vjust=-0.2))
         ) + scale_fill_manual(values = c("Non-protein-coding"="#BAC5CB",
                               "Protein-coding"='#B5C952'))
     ),
@@ -1994,13 +2167,46 @@ df_long %>%
   )
 }
 
+# Pivot to long format
+platform_specific_gene_summary_data <- function(df) {
+  df_long <- df %>%
+  pivot_longer(-Gene, names_to = "Platform", values_to = "Detected") %>%
+  group_by(Gene) %>%
+  mutate(TotalDetected = sum(Detected)) %>%
+  ungroup() %>%
+  mutate(
+    Category = case_when(
+      Detected == 1 & TotalDetected == 1 ~ "Platform-Specific Detection",  # Only detected by this platform
+      Detected == 0 & TotalDetected == 3 ~ "Platform-Specific Absence",      # Not detected by this platform but present elsewhere
+      Detected == 1 & TotalDetected > 1 ~ "Common Detection (also detected in >0 other platform)",
+      Detected == 0 & TotalDetected < 3 ~ "Common Absence (also absent in >0 other platform)" # Detected by this platform + at least one other
+    )
+  ) %>%
+  count(Platform, Category)
+
+# Convert to factor for proper ordering in plot
+df_long$Category <- factor(df_long$Category,
+  levels = c(
+    "Platform-Specific Absence",
+    "Common Absence (also absent in >0 other platform)",
+    "Platform-Specific Detection",
+    "Common Detection (also detected in >0 other platform)"
+  )
+)
+df_long
+}
+
 
 map(list(mat.AvsL.DTE, mat.PvsL.DTE, mat.AvsP.DTE), platform_specific_gene_summary) %>% do.call(patchwork::wrap_plots, .) +
-  patchwork::plot_layout(guides = 'collect')
+  patchwork::plot_layout(guides = "collect")
+
+platform_specific_gene_summary_data(mat.AvsL.DTE)
+platform_specific_gene_summary_data(mat.PvsL.DTE)
+platform_specific_gene_summary_data(mat.AvsP.DTE)
 ```
-```{r}
+```{r, cache=FALSE}
 # Save the de gene list to output_list
-output_list[["AvsP.DTE.all"]] <- mat.AvsP.DTE %>% 
+output_list[["AvsP.DTE.all"]] <- mat.AvsP.DTE %>%
   filter(rowSums(select(., where(is.numeric))) == 4) %>% pull(Gene)
 output_list[["AvsP.DTE.any"]] <- mat.AvsP.DTE %>% 
   filter(rowSums(select(., where(is.numeric))) > 0) %>% pull(Gene)
