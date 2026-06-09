@@ -2,18 +2,19 @@ output_path: "/vast/projects/LongBench/analysis/illumina_sc_sn/result"
 
 reference:
   # have to exist
-  genome: "/home/users/allstaff/you.yu/project/ref_files/GRCh38.primary_assembly.genome.fa"
+  genome: "/vast/projects/LongBench/reference_files/GRCh38/GRCh38.primary_assembly.genome.fa"
   genome_masked: "/vast/projects/LongBench/reference_files/GRCh38/GRCh38.N-masked.genome.fa"
-  gtf: "/home/users/allstaff/you.yu/LongBench/reference_files/GRCh38/gencode.v44.annotation.gtf"
-  picard_reference: '/home/users/allstaff/you.yu/LongBench/reference_files/GRCh38/refFlat.txt'
-  transcript: "/home/users/allstaff/you.yu/LongBench/reference_files/GRCh38/gencode.v44.transcripts.fa"
-  cellline_mutations: '/home/users/allstaff/you.yu/LongBench/reference_files/celllines_mutation/mutations_subsetted_NAsdropped.csv'
-  bed_housekeeping_genes: '/home/users/allstaff/you.yu/LongBench/reference_files/GRCh38/hg38.HouseKeepingGenes.bed'
+  gtf: "/vast/projects/LongBench/reference_files/GRCh38/gencode.v44.annotation.gtf"
+  gtf_gz: "/vast/projects/LongBench/reference_files/GRCh38/gencode.v44.annotation.gtf.gz"
+  picard_reference: "/vast/projects/LongBench/reference_files/GRCh38/refFlat.txt"
+  transcript: "/vast/projects/LongBench/reference_files/GRCh38/gencode.v44.transcripts.fa"
+  cellline_mutations: "/vast/projects/LongBench/reference_files/celllines_mutation/mutations_subsetted_NAsdropped.csv"
+  bed_housekeeping_genes: "/vast/projects/LongBench/reference_files/GRCh38/hg38.HouseKeepingGenes.bed"
 
 # This is current not used in the pipeline, as the data has been basecalled
 samples_fastq_dir:
-  ill_sc: "/home/users/allstaff/you.yu/LongBench/sequencing_data/illumina_sc"
-  ill_sn: "/home/users/allstaff/you.yu/LongBench/sequencing_data/illumina_sn"
+  ill_sc: "/vast/projects/LongBench/sequencing_data/illumina_sc"
+  ill_sn: "/vast/projects/LongBench/sequencing_data/illumina_sn"
 
 
 sample_id:
