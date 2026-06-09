@@ -69,7 +69,7 @@ sample_mod_data <- mod_data_pos_filtered %>%
     pivot_wider(names_from = run, values_from = percent_modified) %>%
     relocate(run1, .before = run2)
 
-cor(sample_mod_data$run1, sample_mod_data$run2, use = "pairwise.complete.obs")
+cor(sample_mod_data$run1, sample_mod_data$run2, use = "pairwise.complete.obs", method = "spearman")
 
 sample_corr <- function(data, sample1, sample2) {
     filtered_data <- data %>%
@@ -78,7 +78,7 @@ sample_corr <- function(data, sample1, sample2) {
         pivot_wider(names_from = sample_id, values_from = percent_modified) %>%
         relocate(!!sample1, .before = !!sample2)
 
-    cor(filtered_data[[sample1]], filtered_data[[sample2]], use = "pairwise.complete.obs")
+    cor(filtered_data[[sample1]], filtered_data[[sample2]], use = "pairwise.complete.obs", method = "spearman")
 }
 
 unique_samples <- unique(mod_data_pos_filtered$sample_id)
@@ -167,7 +167,10 @@ column_anno <- HeatmapAnnotation(
 )
 
 col_fun = circlize::colorRamp2(c(0.8, 0.9, 1), c("blue", "white", "red"))
-
+col_fun = circlize::colorRamp2(
+    seq(0.8, 1, length.out = 9),
+    RColorBrewer::brewer.pal(9, "YlOrRd")
+)
 Heatmap(
     corr_matrix,
     col = col_fun,
