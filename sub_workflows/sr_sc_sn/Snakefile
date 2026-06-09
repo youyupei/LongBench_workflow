@@ -21,5 +21,6 @@ include: "rules/qc.smk"
 rule all:
     input:
         rules.cellranger.output,
+        rules.alignQC_analysis.output
         # rules.demuxlet.output,
         # rules.run_all_rmarkdown.input
