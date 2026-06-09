@@ -162,7 +162,7 @@ rule alignQC_analysis:
     #     config['conda']['AlignQC']
     resources:
         cpus_per_task=32,
-        mem_mb=400000,
+        mem_mb=300000,
         slurm_extra="--mail-type=FAIL --mail-user=you.yu@wehi.edu.au --qos=bonus"
     output:
         output = directory(os.path.join(results_dir, "qc/AlignQC/{cell_line}/")),

@@ -269,9 +269,10 @@ rule IsoQuant_no_novel:
     retries: 2
     resources:
         cpus_per_task=16,
-        mem_mb=50000,
-        slurm_partition=lambda wildcards, attempt: config["slurm"]["partition"]["long"] if attempt > 1 else config["slurm"]["partition"]["short"]
-        #slurm_extra="--partition=long --time=7-00:00:00"
+        mem_mb=25000,
+        #slurm_partition=lambda wildcards, attempt: config["slurm"]["partition"]["long"] if attempt > 1 else config["slurm"]["partition"]["short"]
+        # runtime==lambda wildcards, attempt: 60*24*7 if attempt > 1 else 60*24*2
+        slurm_extra="--partition=long --time=4-00:00:00"
     params:
         data_type = get_IsoQuant_data_type
     conda:

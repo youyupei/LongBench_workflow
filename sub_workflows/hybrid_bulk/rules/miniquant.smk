@@ -21,7 +21,7 @@ rule miniquant_hybrid_quant:
         strandness = config["miniquant_config"]["short_reads_strandness"],
         mem_gb = config["miniquant_config"]["mem_gb"]
     container: 
-        "docker://tidesun/miniquant:latest"
+        "docker://tidesun/miniquant:latest" # March 30, 2026, using v1.4.1
     shell:
         """
         mkdir -p {output.out_dir}
