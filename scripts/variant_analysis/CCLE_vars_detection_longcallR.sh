@@ -1,37 +1,26 @@
 #!/bin/bash
-# TP detection: intersect each platform's clair3 VCFs against CCLE ground truth
-# Adapted from Margaux's CCLE_vars_detection.sh
+# TP detection for LongcallR VCFs: intersect pb/ont/dRNA against CCLE ground truth.
+# No manual QUAL threshold — records QUAL as-is for downstream filtering in Rmd.
 #
 # Usage:
-#   CCLE_vars_detection_youyu.sh <ccle_source_vcf> <ccle_dir> <outdir> \
-#       <pacbio_vcf_dir> <ont_vcf_dir> <drna_vcf_dir> <ill_vcf_dir> <dv_vcf_dir> \
-#       [lr_vcf_name]
+#   CCLE_vars_detection_longcallR.sh <ccle_source_vcf> <ccle_dir> <outdir> <longcallR_dir>
 #
-# *_vcf_dir: directory containing per-sample subdirs with VCF files inside.
-#   LR platforms (pacbio/ont/drna): <dir>/<sample>/<lr_vcf_name>  (default: output.vcf.gz)
-#   illumina clair3:                <dir>/<sample>/merge_output.vcf.gz
-#   deepvariant:                    <dir>/<sample>/output.vcf.gz
-#
-# lr_vcf_name: optional 9th arg, e.g. output_enable_phasing.vcf.gz for phased LR
+# longcallR_dir: flat directory containing {pb_bulk|ont_bulk|dRNA_bulk}_{cell_line}.longcallR.vcf
+# Output: {outdir}/genotype_comparisons_qual/genotype_comparison_{cell_line}.tsv
 
 set -euo pipefail
 module load bcftools
-module load htslib
+module load htslib  # needed for bgzip/tabix when creating CCLE VCFs (Step 1)
 
-if [[ $# -lt 8 ]]; then
-    echo "Usage: $0 <ccle_source_vcf> <ccle_dir> <outdir> <pacbio_dir> <ont_dir> <drna_dir> <ill_dir> <dv_dir> [lr_vcf_name]" >&2
+if [[ $# -lt 4 ]]; then
+    echo "Usage: $0 <ccle_source_vcf> <ccle_dir> <outdir> <longcallR_dir>" >&2
     exit 1
 fi
 
 CCLE_SOURCE="$1"
 CCLE_DIR="$2"
 OUTDIR="$3"
-PACBIO_DIR="$4"
-ONT_DIR="$5"
-DRNA_DIR="$6"
-ILL_DIR="$7"
-DV_DIR="$8"
-LR_VCF_NAME="${9:-output.vcf.gz}"
+LCR_DIR="$4"
 
 SAMPLES=(H146 H1975 H211 H2228 H526 H69 HCC827 SHP77)
 
@@ -40,20 +29,10 @@ declare -A CCLE_NAME=(
     [H526]=NCIH526 [H69]=NCIH69 [HCC827]=HCC827 [SHP77]=SHP77
 )
 
-declare -A PLATFORM_VCF_DIR=(
-    [pacbio]="$PACBIO_DIR"
-    [ont]="$ONT_DIR"
-    [drna]="$DRNA_DIR"
-    [illumina]="$ILL_DIR"
-    [deepvariant]="$DV_DIR"
-)
-
-declare -A PLATFORM_VCF_NAME=(
-    [pacbio]="$LR_VCF_NAME"
-    [ont]="$LR_VCF_NAME"
-    [drna]="$LR_VCF_NAME"
-    [illumina]=merge_output.vcf.gz
-    [deepvariant]=output.vcf.gz
+declare -A PLATFORM_PREFIX=(
+    [pacbio]=pb_bulk
+    [ont]=ont_bulk
+    [drna]=dRNA_bulk
 )
 
 mkdir -p "$CCLE_DIR" "$OUTDIR"
@@ -75,32 +54,12 @@ for SAMPLE in "${SAMPLES[@]}"; do
     bcftools index -f "${OUT_VCF}.gz"
 done
 
-# --- Step 2: bcftools isec for each platform ---
-for PLATFORM in pacbio ont drna illumina deepvariant; do
-    echo "=== Intersecting CCLE vs $PLATFORM ==="
-    ISEC_DIR="${OUTDIR}/CCLE_${PLATFORM}"
-    mkdir -p "$ISEC_DIR"
-
-    for SAMPLE in "${SAMPLES[@]}"; do
-        CCLE_VCF="${CCLE_DIR}/${SAMPLE}_CCLE.vcf.gz"
-        PLATFORM_VCF="${PLATFORM_VCF_DIR[$PLATFORM]}/${SAMPLE}/${PLATFORM_VCF_NAME[$PLATFORM]}"
-        SAMPLE_OUTDIR="${ISEC_DIR}/${SAMPLE}"
-
-        if [[ ! -f "$PLATFORM_VCF" ]]; then
-            echo "  WARNING: missing $PLATFORM_VCF — skipping $SAMPLE"
-            continue
-        fi
-        echo "  $SAMPLE"
-        bcftools isec -p "$SAMPLE_OUTDIR" -n=2 "$CCLE_VCF" "$PLATFORM_VCF"
-    done
-done
-
-# --- Step 3: Genotype comparison summary table ---
+# --- Step 2: Genotype comparison summary table ---
 echo "=== Generating genotype comparison table ==="
 SUMMARY_DIR="${OUTDIR}/genotype_comparisons_qual"
 mkdir -p "$SUMMARY_DIR"
 
-PLATFORMS=(illumina deepvariant pacbio ont drna)
+PLATFORMS=(pacbio ont drna)
 
 for SAMPLE in "${SAMPLES[@]}"; do
     CCLE_VCF="${CCLE_DIR}/${SAMPLE}_CCLE.vcf.gz"
@@ -131,14 +90,14 @@ for SAMPLE in "${SAMPLES[@]}"; do
         LINE="${CHROM}\t${POS}\t${REF}\t${ALT}\t${GT_CCLE}"
 
         for PLATFORM in "${PLATFORMS[@]}"; do
-            VCF="${OUTDIR}/CCLE_${PLATFORM}/${SAMPLE}/0001.vcf"
+            VCF="${LCR_DIR}/${PLATFORM_PREFIX[$PLATFORM]}_${SAMPLE}.longcallR.vcf"
             if [[ ! -f "$VCF" ]]; then
                 LINE+="\tNA\tNA\tmissing_vcf"
                 continue
             fi
 
-            MATCH_LINE=$(bcftools view -H "$VCF" | awk -v c="$CHROM" -v p="$POS" -v r="$REF" -v a="$ALT" \
-                '$1==c && $2==p && $4==r && $5==a' | head -n 1)
+            MATCH_LINE=$(awk -v c="$CHROM" -v p="$POS" -v r="$REF" -v a="$ALT" \
+                '$1==c && $2==p && $4==r && $5==a' "$VCF" | head -n 1)
 
             if [[ -z "$MATCH_LINE" ]]; then
                 LINE+="\tnot_called\tNA\tnot_called"
@@ -157,7 +116,7 @@ for SAMPLE in "${SAMPLES[@]}"; do
     echo "Finished $SAMPLE → $OUTPUT"
 done
 
-# --- Step 4: Annotate variant type ---
+# --- Step 5: Annotate variant type ---
 echo "=== Annotating variant types ==="
 for FILE in "${SUMMARY_DIR}"/genotype_comparison_*.tsv; do
     TMP="${FILE}.tmp"

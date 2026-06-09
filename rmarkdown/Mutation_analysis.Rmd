@@ -26,6 +26,21 @@ params:
   fig.path: NULL
 ---
 ```{r setup, include=FALSE}
+
+if (interactive()) {
+  params <- list(
+      lr_bulk_dir = "/vast/projects/LongBench/analysis/lr_bulk/result/Mutation",
+  sr_bulk_dir = "/vast/projects/LongBench/analysis/sr_bulk/result/Mutation",
+  lr_whatshap_dir = "/vast/projects/LongBench/analysis/lr_bulk/result/Mutation/whatshap",
+  sr_whatshap_dir = "/vast/projects/LongBench/analysis/sr_bulk/result/Mutation/whatshap",
+  variant_analysis_dir = "/vast/projects/LongBench/analysis/variant_analysis/bcftools",
+  variant_analysis_phased_dir = "/vast/projects/LongBench/analysis/variant_analysis/bcftools_phased",
+  summary_dir = "/vast/projects/LongBench/analysis/variant_allele_specific_analysis/",
+  longcallR_dir = "/vast/projects/LongBench/analysis/lr_bulk/result/LongcallR",
+  random_seed = 2024
+  )
+}
+
 knitr::opts_chunk$set(
   cache = TRUE,
   fig.width = 8, 
@@ -49,22 +64,6 @@ library(ggplot2)
 library(patchwork)
 library(GenomicRanges)
 library(rtracklayer)
-
-
-# # Temporarily add params as a runable list
-# params <- list(
-#   lr_bulk_dir = "/vast/projects/LongBench/analysis/lr_bulk/result/Mutation",
-#   sr_bulk_dir = "/vast/projects/LongBench/analysis/sr_bulk/result/Mutation",
-#   lr_whatshap_dir = "/vast/projects/LongBench/analysis/lr_bulk/result/Mutation/whatshap",
-#   sr_whatshap_dir = "/vast/projects/LongBench/analysis/sr_bulk/result/Mutation/whatshap",
-#   variant_analysis_dir = "/vast/projects/LongBench/analysis/variant_analysis/bcftools",
-#   variant_analysis_phased_dir = "/vast/projects/LongBench/analysis/variant_analysis/bcftools_phased",
-#   summary_dir = "/vast/projects/LongBench/analysis/variant_allele_specific_analysis/",
-#   longcallR_dir = "/vast/projects/LongBench/analysis/lr_bulk/result/LongcallR",
-#   random_seed = 2024,
-#   cache_dir = NULL,
-#   fig.path = NULL
-# )
 
 color_map <- c(
   "Illumina"               = "#E87D24",
@@ -578,7 +577,7 @@ ComplexUpset::upset(
 # Part 3: Accuracy of mutation calling using Spike-in  and CCLE
 ```{r}
 # Load the data
-FP.matrix <- read_tsv(file.path(params$variant_analysis_dir, "SNP_FP_QUAL_detail.tsv"))
+FP.matrix <- read_tsv(file.path(params$summary_dir, "Muatation_calling_summary/mutations_FP_QUAL_detail.tsv"))
 TP.matrix <- list.files(file.path(params$variant_analysis_dir, "genotype_comparisons_qual"),
                         pattern = "genotype_comparison_.*\\.tsv$", full.names = TRUE) %>%
   lapply(function(f) {
@@ -889,6 +888,55 @@ TP.summary.mtx %>%
 #   theme(axis.text.x = element_text(angle = 45, hjust = 1))
 ```
 
+## CCLE exonic SNPs: found by others, missed by PacBio
+
+```{r pb_missed_ccle_filter}
+pb_missed <- TP.matrix %>%
+  filter(
+    region == "exonic",
+    variant_type == "SNP",
+    pacbio_STATUS %in% c("not_called", "lowqual"),
+    illumina_STATUS == "match" | deepvariant_STATUS == "match" |
+      ont_STATUS == "match" | drna_STATUS == "match"
+  ) %>%
+  select(sample, CHROM, POS, REF, ALT, GT_CCLE,
+         illumina_STATUS, ont_STATUS, drna_STATUS, pacbio_STATUS) %>%
+  arrange(sample, CHROM, POS)
+
+pb_missed %>%
+  knitr::kable(caption = "Exonic CCLE SNPs confirmed by others but missed by PacBio")
+```
+
+```{r pb_missed_vcf_lines}
+ccle_dir <- "/vast/projects/LongBench/analysis/variant_analysis/CCLE"
+
+vcf_lines <- pb_missed %>%
+  rowwise() %>%
+  mutate(
+    ccle_line = {
+      vcf <- file.path(ccle_dir, paste0(sample, "_CCLE.vcf.gz"))
+      tryCatch(
+        system2("tabix", args = c(vcf, paste0(CHROM, ":", POS, "-", POS)),
+                stdout = TRUE, stderr = FALSE),
+        error = function(e) NA_character_
+      ) %>% paste(collapse = "; ")
+    },
+    pb_line = {
+      vcf <- file.path(params$lr_whatshap_dir, paste0("pb_bulk_", sample, ".phased.vcf"))
+      tryCatch(
+        system(paste0("grep -P '^", CHROM, "\\t", POS, "\\t' ", vcf),
+               intern = TRUE),
+        error = function(e) NA_character_
+      ) %>% paste(collapse = "; ")
+    }
+  ) %>%
+  ungroup()
+
+vcf_lines %>%
+  select(sample, CHROM, POS, REF, ALT, pacbio_STATUS, ccle_line, pb_line) %>%
+  knitr::kable(caption = "VCF lines for PacBio-missed CCLE exonic SNPs")
+```
+
 
 
 
@@ -899,7 +947,7 @@ TP.summary.mtx %>%
 ```{r}
 # Load the data
 
-FP.matrix.phase <- read_tsv(file.path(params$variant_analysis_phased_dir, "SNP_FP_QUAL_detail.tsv"))
+FP.matrix.phase <- read_tsv(file.path(params$summary_dir, "Muatation_calling_summary/mutations_FP_QUAL_phasing_detail.tsv"))
 TP.matrix.phase <- list.files(file.path(params$variant_analysis_phased_dir, "genotype_comparisons_qual"),
                                pattern = "genotype_comparison_.*\\.tsv$", full.names = TRUE) %>%
   lapply(function(f) {
@@ -1038,8 +1086,75 @@ TP.summary.mtx.phase %>%
   theme(axis.text.x = element_text(angle = 45, hjust = 1))
 ```
 
+## Read depth at CCLE positions by platform
 
+```{r ccle_dp_distribution, cache=TRUE, fig.height=4, fig.width=7}
+read_vcf_dp <- function(vcf_path) {
+  if (!file.exists(vcf_path)) return(tibble(CHROM = character(), POS = integer(), DP = integer()))
+  df <- tryCatch(
+    read.table(pipe(paste("grep -v '^#'", shQuote(vcf_path))),
+               sep = "\t", fill = TRUE, quote = "", comment.char = "")[, c(1, 2, 9, 10)],
+    error = function(e) NULL
+  )
+  if (is.null(df)) return(tibble(CHROM = character(), POS = integer(), DP = integer()))
+  colnames(df) <- c("CHROM", "POS", "FORMAT", "SAMPLE")
+  df %>%
+    mutate(POS = as.integer(POS)) %>%
+    separate(SAMPLE, into = c("GT", "GQ", "DP"), sep = ":", extra = "drop", fill = "right") %>%
+    mutate(DP = as.integer(DP)) %>%
+    select(CHROM, POS, DP)
+}
 
+cell_lines_ccle <- c("H146", "H1975", "H211", "H2228", "H526", "H69", "HCC827", "SHP77")
+
+vcf_dp_all <- bind_rows(
+  expand_grid(sample = c("ont_bulk", "dRNA_bulk", "pb_bulk"), cell_line = cell_lines_ccle) %>%
+    mutate(
+      vcf_file = file.path(params$lr_whatshap_dir, paste0(sample, "_", cell_line, ".phased.vcf")),
+      platform = recode(sample, "ont_bulk" = "ONT cDNA", "dRNA_bulk" = "ONT dRNA", "pb_bulk" = "PacBio")
+    ) %>%
+    pmap_dfr(function(sample, cell_line, vcf_file, platform)
+      read_vcf_dp(vcf_file) %>% mutate(cell_line = cell_line, platform = platform)
+    ),
+  tibble(cell_line = cell_lines_ccle) %>%
+    mutate(
+      vcf_file = file.path(params$sr_whatshap_dir, paste0(cell_line, ".phased.vcf")),
+      platform = "Illumina"
+    ) %>%
+    pmap_dfr(function(cell_line, vcf_file, platform)
+      read_vcf_dp(vcf_file) %>% mutate(cell_line = cell_line, platform = platform)
+    )
+)
+
+ccle_pos <- TP.matrix %>%
+  select(CHROM, POS, cell_line = sample) %>%
+  distinct()
+
+ccle_dp_plot <- ccle_pos %>%
+  expand_grid(platform = c("Illumina", "PacBio", "ONT cDNA", "ONT dRNA")) %>%
+  left_join(vcf_dp_all, by = c("CHROM", "POS", "cell_line", "platform")) %>%
+  mutate(
+    DP = replace_na(DP, 0L),
+    platform = factor(platform, levels = c("Illumina", "PacBio", "ONT cDNA", "ONT dRNA"))
+  ) %>%
+  group_by(CHROM, POS, cell_line) %>%
+  filter(any(DP >= 30)) %>%
+  ungroup()
+
+ccle_dp_plot %>%
+  ggplot(aes(x = platform, y = DP + 1, color = platform)) +
+  geom_violin(trim = FALSE, fill = NA, scale = "width") +
+  geom_boxplot(width = 0.12, outlier.size = 0.3, outlier.alpha = 0.3) +
+  scale_y_log10(breaks = c(1, 2, 6, 11, 31, 101, 301, 1001),
+                labels = c(0, 1, 5, 10, 30, 100, 300, 1000)) +
+  scale_color_manual(values = color_map) +
+  labs(
+    title = "Read depth at CCLE positions by platform",
+    x = "Platform", y = "Read depth (DP); 0 = not called"
+  ) +
+  theme_minimal(base_size = 13) +
+  theme(legend.position = "none", axis.text.x = element_text(angle = 20, hjust = 1))
+```
 
 
 
@@ -1252,15 +1367,14 @@ df_long %>%
 ```
 
 ## Binomial test with standardised power (Subsample reads)
+
 ```{r}
 dp_target <- 30
-set.seed(params$seed)
+set.seed(params$random_seed)
 downsample_ad <- function(AD, DP, target = dp_target) {
-  prob <- AD / DP
-  rbinom(1, size = target, prob = prob)
+  rhyper(1, m = AD, n = DP - AD, k = target)
 }
-
-downsample_platform <- function(df, ad_col, dp_col, prefix) {
+downsample_platform <- function(df, ad_col, dp_col) {
   df %>%
     mutate(
       !!ad_col := map2_dbl(.data[[ad_col]], .data[[dp_col]],
@@ -1271,46 +1385,11 @@ downsample_platform <- function(df, ad_col, dp_col, prefix) {
 
 # Apply to all platforms
 processed_ds <- processed %>%
-  downsample_platform("ont_AD",  "ont_DP",  "ont") %>%
-  downsample_platform("pb_AD",   "pb_DP",   "pb") %>%
-  downsample_platform("drna_AD", "drna_DP", "drna") %>%
-  downsample_platform("ill_AD",  "ill_DP",  "ill")
+  downsample_platform("ont_AD",  "ont_DP") %>%
+  downsample_platform("pb_AD",   "pb_DP") %>%
+  downsample_platform("drna_AD", "drna_DP") %>%
+  downsample_platform("ill_AD",  "ill_DP")
 
-  # Compute downsampled AF
-af_long <- processed_ds %>%
-  mutate(
-    `ONT cDNA` = ont_AD / ont_DP,
-    PacBio     = pb_AD / pb_DP,
-    `ONT dRNA` = drna_AD / drna_DP,
-    Illumina   = ill_AD / ill_DP
-  ) %>%
-  pivot_longer(cols = c(`ONT cDNA`, PacBio, `ONT dRNA`, Illumina), names_to = "Platform", values_to = "AF") %>%
-  filter(!is.na(AF), AF >= 0, AF <= 1) %>%
-  mutate(GT = case_when(
-    Platform == "ONT cDNA" ~ ont_GT,
-    Platform == "ONT dRNA" ~ drna_GT,
-    Platform == "PacBio" ~ pb_GT,
-    Platform == "Illumina" ~ ill_GT,
-    TRUE ~ NA_character_
-  ), DP = case_when(
-    Platform == "ONT cDNA" ~ ont_DP,
-    Platform == "ONT dRNA" ~ drna_DP,
-    Platform == "PacBio" ~ pb_DP,
-    Platform == "Illumina" ~ ill_DP,
-    TRUE ~ NA_integer_
-  )) %>%
-  filter(GT %in% c("0/1", "1/0"))
-
-ggplot(af_long, aes(x = Platform, y = AF, color = Platform)) +
-  geom_violin(trim = FALSE, fill = NA) +
-  geom_boxplot(width = 0.1, outlier.size = 0.5) +
-  scale_color_manual(values = color_map) +
-  theme_minimal() +
-  labs(title = "Allele Frequency Distribution by Platform",
-       x = "Platform",
-       y = "ALT Allele Frequency") +
-  theme(legend.position = "none") +
-  coord_flip()
 ```
 
 
@@ -1319,7 +1398,7 @@ ggplot(af_long, aes(x = Platform, y = AF, color = Platform)) +
 
 ```{r}
 
-processed_with_binom_p <- processed_ds %>%
+processed_with_binom_downsampled_ds <- processed_ds %>%
   # filter all *_GT columns that are not NA and not equal to "0/0"
   filter(across(matches("_GT$"), ~ !is.na(.) & . != "0/0")) %>%
   mutate(
@@ -1339,28 +1418,16 @@ processed_with_binom_p <- processed_ds %>%
 
 ## Upset plot for binomial test
 ```{r, fig.width=6, fig.height=3}
-## Upset plot for beta-binomial test
-library(ComplexUpset)
-  processed_with_binom_p %>% mutate(
+processed_with_binom_downsampled_ds %>% mutate(
     `ONT cDNA` = adj_p_ont < 0.05,
     PacBio = adj_p_pb < 0.05,
     `ONT dRNA` = adj_p_drna < 0.05,
     Illumina = adj_p_ill < 0.05
-  ) -> processed_with_binom_p
-
-# Upset plot for binomial test results
-ComplexUpset::upset(
-  processed_with_binom_p %>% filter(
-    `ONT cDNA` | PacBio | `ONT dRNA` | Illumina
-  ),
-  intersect = c("ONT dRNA", "ONT cDNA", "PacBio", "Illumina"),
-  name = "Allelic Imbalance",
-  width_ratio = 0.25
-)
+  ) -> processed_with_binom_downsampled_ds
 
 # Specific detect/absence analysis
 
-df_long <- processed_with_binom_p %>% 
+df_long <- processed_with_binom_downsampled_ds %>% 
   filter (
     `ONT dRNA` | `ONT cDNA` | `PacBio` | Illumina
   ) %>%
@@ -1413,115 +1480,204 @@ df_long %>%
   )
 
 
-df_long %>%
+```
+
+
+## Binomial test: corrected full data (het-only, per-sample BH)
+
+Corrections vs the earlier full-data section: (1) GT filter restricted to heterozygous sites (`"0/1"` / `"1/0"`) only; (2) BH correction applied within each sample.
+
+```{r binom_corrected_full}
+binom_test_p <- function(alt, dp) {
+  if (is.na(alt) || is.na(dp) || dp == 0) return(NA)
+  binom.test(alt, dp, p = 0.5)$p.value
+}
+
+processed_binom_corrected_full <- processed %>%
+  filter(across(matches("_GT$"), ~ . %in% c("0/1", "1/0"))) %>%
+  mutate(
+    p_ont  = mapply(binom_test_p, ont_AD,  ont_DP),
+    p_pb   = mapply(binom_test_p, pb_AD,   pb_DP),
+    p_drna = mapply(binom_test_p, drna_AD, drna_DP),
+    p_ill  = mapply(binom_test_p, ill_AD,  ill_DP)
+  ) %>%
+  group_by(SAMPLE) %>%
+  mutate(
+    adj_p_ont  = p.adjust(p_ont,  method = "BH"),
+    adj_p_pb   = p.adjust(p_pb,   method = "BH"),
+    adj_p_drna = p.adjust(p_drna, method = "BH"),
+    adj_p_ill  = p.adjust(p_ill,  method = "BH")
+  ) %>%
+  ungroup() %>%
+  mutate(
+    `ONT cDNA` = adj_p_ont  < 0.05,
+    PacBio     = adj_p_pb   < 0.05,
+    `ONT dRNA` = adj_p_drna < 0.05,
+    Illumina   = adj_p_ill  < 0.05
+  )
+```
+
+```{r binom_corrected_full_upset, fig.width=6, fig.height=3}
+library(ComplexUpset)
+ComplexUpset::upset(
+  processed_binom_corrected_full %>% filter(`ONT cDNA` | PacBio | `ONT dRNA` | Illumina),
+  intersect = c("ONT dRNA", "ONT cDNA", "PacBio", "Illumina"),
+  name = "Allelic Imbalance",
+  width_ratio = 0.25
+)
+
+# Raw point for plotting:
+processed_binom_corrected_full %>%
+  select(`ONT cDNA`, PacBio, `ONT dRNA`, Illumina) %>%
+  filter(`ONT cDNA` | PacBio | `ONT dRNA` | Illumina) %>%
+  group_by(`ONT cDNA`, PacBio, `ONT dRNA`, Illumina) %>%
+  summarise(count = n(), .groups = "drop") %>%
+  arrange(desc(count))
+```
+
+```{r binom_corrected_full_plot, fig.width=6, fig.height=3}
+df_long_corrected_full <- processed_binom_corrected_full %>%
+  filter(`ONT dRNA` | `ONT cDNA` | PacBio | Illumina) %>%
+  pivot_longer(c(`ONT dRNA`, `ONT cDNA`, PacBio, Illumina), names_to = "Platform", values_to = "Detected") %>%
+  group_by(CHROM, POS, SAMPLE) %>%
+  mutate(TotalDetected = sum(Detected)) %>%
+  ungroup() %>%
+  mutate(
+    Category = case_when(
+      Detected == 1 & TotalDetected == 1 ~ "Platform-Specific Detection",
+      Detected == 0 & TotalDetected == 3 ~ "Platform-Specific Absence",
+      Detected == 1 & TotalDetected > 1  ~ "Common Detection (also detected in >0 other platform)",
+      Detected == 0 & TotalDetected < 3  ~ "Common Absence (also absent in >0 other platform)",
+      TRUE ~ "Other"
+    )
+  ) %>%
+  count(Platform, Category)
+
+df_long_corrected_full$Category <- factor(df_long_corrected_full$Category,
+  levels = c(
+    "Platform-Specific Absence",
+    "Common Absence (also absent in >0 other platform)",
+    "Platform-Specific Detection",
+    "Common Detection (also detected in >0 other platform)"
+  ))
+
+df_long_corrected_full %>%
   filter(Category %in% c("Platform-Specific Absence", "Common Detection (also detected in >0 other platform)", "Platform-Specific Detection")) %>%
-  mutate(n = if_else(Category == "Platform-Specific Absence", 0, n)) %>%
-  ggplot(aes(x = Platform, y = n, fill=Platform)) +
+  mutate(n = if_else(Category == "Platform-Specific Absence", -n, n)) %>%
+  ggplot(aes(x = Platform, y = n, fill = Category)) +
   geom_bar(stat = "identity") +
-  labs(
-    y = "Number of Loci",
-    x = "Platform",
-    fill = "Sequencing Protocols"
-  ) +
+  labs(y = "Number of Loci", x = "Platform", fill = "Category") +
   theme_minimal() +
-  scale_fill_manual(values = color_map) +
+  scale_fill_manual(values = c(
+    "Common Detection (also detected in >0 other platform)" = "#8fbbd4",
+    "Platform-Specific Detection" = "#0072B2",
+    "Platform-Specific Absence" = "#E69F00"
+  )) +
+  coord_flip() +
   theme(
     axis.text.x = element_text(angle = 0),
     axis.title.x = element_text(size = 12),
     axis.text.y = element_text(size = 10)
   )
-
 ```
 
-# 4. Beta-binomial test with loci dp>=30 convervative overdispersion (0.001)
-```{r}
-library(VGAM)
+## Binomial test with standardised power: corrected (het-only, per-sample BH)
 
-# fit a global beta-binomial model
+Corrections applied vs the section above: (1) seed fixed to `params$random_seed`; (2) GT filter restricted to heterozygous sites (`"0/1"` / `"1/0"`) only; (3) BH correction applied within each sample.
 
+```{r binom_corrected_downsample}
+set.seed(params$random_seed)
 
-# Estimating platform-specific overdispersion parameters
-# estimate_rho <- function(alt, dp) {
-#   fit <- vglm(cbind(alt, dp - alt) ~ 1, betabinomial, trace = TRUE)
-#   return(fit)
-#   #return(Coef(fit)['rho'])
-# }
-# 
-# estimate_rho(processed %>% filter(ont_GT == "1/0") %>% pull(ont_AD), processed %>% filter(ont_GT == "1/0") %>% pull(ont_DP)) -> rho_ont
-# estimate_rho(processed %>% filter(pb_GT == "1/0") %>% pull(pb_AD), processed %>% filter(pb_GT == "1/0") %>% pull(pb_DP)) -> rho_pb
-# estimate_rho(processed %>% filter(drna_GT == "1/0") %>% pull(drna_AD), processed %>% filter(drna_GT == "1/0") %>% pull(drna_DP)) -> rho_dr
-# estimate_rho(processed %>% filter(ill_GT == "1/0") %>% pull(ill_AD), processed %>% filter(ill_GT == "1/0") %>% pull(ill_DP)) -> rho_ill
-
-beta_binom_pval <- function(alt, dp, p = 0.5, rho = 0.01) {
-  2 * min(
-    pbetabinom(alt, size = dp, prob=p, rho = rho),
-    1 - pbetabinom(alt - 1, size = dp, prob=p, rho = rho)
-  )
+dp_target <- 30
+set.seed(params$random_seed)
+downsample_ad <- function(AD, DP, target = dp_target) {
+  rhyper(1, m = AD, n = DP - AD, k = target)
+}
+downsample_platform <- function(df, ad_col, dp_col) {
+  df %>%
+    mutate(
+      !!ad_col := map2_dbl(.data[[ad_col]], .data[[dp_col]],
+                                             ~downsample_ad(.x, .y)),
+      !!dp_col := dp_target
+    )
 }
 
-processed_with_beta_binom_p <- processed %>%
+
+processed_ds_corrected <- processed %>%
+  downsample_platform("ont_AD",  "ont_DP") %>%
+  downsample_platform("pb_AD",   "pb_DP") %>%
+  downsample_platform("drna_AD", "drna_DP") %>%
+  downsample_platform("ill_AD",  "ill_DP")
+
+processed_binom_corrected <- processed_ds_corrected %>%
+  filter(across(matches("_GT$"), ~ . %in% c("0/1", "1/0"))) %>%
   mutate(
-    p_ont  = mapply(beta_binom_pval, ont_AD, ont_DP, rho = 0.001),
-    p_pb   = mapply(beta_binom_pval, pb_AD, pb_DP, rho = 0.001),
-    p_drna = mapply(beta_binom_pval, drna_AD, drna_DP, rho = 0.001),
-    p_ill  = mapply(beta_binom_pval, ill_AD, ill_DP, rho = 0.001)
+    p_ont  = mapply(binom_test_p, ont_AD,  ont_DP),
+    p_pb   = mapply(binom_test_p, pb_AD,   pb_DP),
+    p_drna = mapply(binom_test_p, drna_AD, drna_DP),
+    p_ill  = mapply(binom_test_p, ill_AD,  ill_DP)
   ) %>%
+  group_by(SAMPLE) %>%
   mutate(
-    adj_p_ont  = p.adjust(p_ont, method = "BH"),
-    adj_p_pb   = p.adjust(p_pb, method = "BH"),
+    adj_p_ont  = p.adjust(p_ont,  method = "BH"),
+    adj_p_pb   = p.adjust(p_pb,   method = "BH"),
     adj_p_drna = p.adjust(p_drna, method = "BH"),
-    adj_p_ill  = p.adjust(p_ill, method = "BH")
-  )
-
-# plotting the  p-values distribution
-p <- ggplot(processed_with_beta_binom_p, aes(x = p_ont)) +
-  stat_bin(bins = 20, color = color_map["ONT cDNA"], alpha = 0.7,geom="step") +
-  stat_bin(aes(x = p_pb), bins = 20, color = color_map["PacBio"], alpha = 0.7,geom="step") +
-  stat_bin(aes(x = p_drna), bins = 20, color = color_map["ONT dRNA"], alpha = 0.7,geom="step") +
-  stat_bin(aes(x = p_ill), bins = 20, color = color_map["Illumina"], alpha = 0.7,geom="step") +
-  labs(
-    title = "Distribution of p-values for Allelic Imbalance",
-    x = "p-value",
-    y = "Count"
-  ) +
-  theme_minimal()
-
-p 
-
-
-```
-
-
-## Upset plot for beta-binomial test
-```{r Upset plot for beta-binomial test}
-library(ComplexUpset)
-ComplexUpset::upset(
-  processed_with_beta_binom_p %>% mutate(
-    `ONT cDNA` = adj_p_ont < 0.05,
-    PacBio = adj_p_pb < 0.05,
+    adj_p_ill  = p.adjust(p_ill,  method = "BH")
+  ) %>%
+  ungroup() %>%
+  mutate(
+    `ONT cDNA` = adj_p_ont  < 0.05,
+    PacBio     = adj_p_pb   < 0.05,
     `ONT dRNA` = adj_p_drna < 0.05,
-    Illumina = adj_p_ill < 0.05
-  ) %>% filter(
-    `ONT cDNA` | PacBio | `ONT dRNA` | Illumina
-  ),
-  intersect = c("ONT dRNA", "ONT cDNA", "PacBio", "Illumina"),
-  name = "Allelic Imbalance",
-  width_ratio = 0.25
-)
-```
-
-
-```{r}
-  processed_with_beta_binom_p %>% mutate(
-    `ONT cDNA` = adj_p_ont < 0.05,
-    PacBio = adj_p_pb < 0.05,
-    `ONT dRNA` = adj_p_drna < 0.05,
-    Illumina = adj_p_ill < 0.05
-  ) %>% filter(
-    `ONT cDNA` & PacBio & `ONT dRNA` & Illumina
+    Illumina   = adj_p_ill  < 0.05
   )
 ```
 
+```{r binom_corrected_plot, fig.width=6, fig.height=3}
+df_long_corrected <- processed_binom_corrected %>%
+  filter(`ONT dRNA` | `ONT cDNA` | PacBio | Illumina) %>%
+  pivot_longer(c(`ONT dRNA`, `ONT cDNA`, PacBio, Illumina), names_to = "Platform", values_to = "Detected") %>%
+  group_by(CHROM, POS, SAMPLE) %>%
+  mutate(TotalDetected = sum(Detected)) %>%
+  ungroup() %>%
+  mutate(
+    Category = case_when(
+      Detected == 1 & TotalDetected == 1 ~ "Platform-Specific Detection",
+      Detected == 0 & TotalDetected == 3 ~ "Platform-Specific Absence",
+      Detected == 1 & TotalDetected > 1  ~ "Common Detection (also detected in >0 other platform)",
+      Detected == 0 & TotalDetected < 3  ~ "Common Absence (also absent in >0 other platform)",
+      TRUE ~ "Other"
+    )
+  ) %>%
+  count(Platform, Category)
+
+df_long_corrected$Category <- factor(df_long_corrected$Category,
+  levels = c(
+    "Platform-Specific Absence",
+    "Common Absence (also absent in >0 other platform)",
+    "Platform-Specific Detection",
+    "Common Detection (also detected in >0 other platform)"
+  ))
+
+df_long_corrected %>%
+  filter(Category %in% c("Platform-Specific Absence", "Common Detection (also detected in >0 other platform)", "Platform-Specific Detection")) %>%
+  mutate(n = if_else(Category == "Platform-Specific Absence", -n, n)) %>%
+  ggplot(aes(x = Platform, y = n, fill = Category)) +
+  geom_bar(stat = "identity") +
+  labs(y = "Number of Loci", x = "Platform", fill = "Category") +
+  theme_minimal() +
+  scale_fill_manual(values = c(
+    "Common Detection (also detected in >0 other platform)" = "#8fbbd4",
+    "Platform-Specific Detection" = "#0072B2",
+    "Platform-Specific Absence" = "#E69F00"
+  )) +
+  coord_flip() +
+  theme(
+    axis.text.x = element_text(angle = 0),
+    axis.title.x = element_text(size = 12),
+    axis.text.y = element_text(size = 10)
+  )
+```
 
 
 
@@ -1681,11 +1837,12 @@ longcallR_results.ase <- lapply(longcallR_files, function(x) {
 ## Plotting the LongcallR results (upset plot)
 ```{r ase upsetplot plot}
 library(ComplexUpset)
+DP_threshold <- 0 # not depth threshold for the upset plot as it doesnt change the overall conclusion
 # Create a binary matrix for upset plot
 LongcallR.ase.upset.mat <-
   longcallR_results.ase %>%
   filter(P_value < 0.05) %>% # filter for significant results
-  mutate(depth_pass = H1 + H2 >= 30) %>% # calculate total depth
+  mutate(depth_pass = H1 + H2 >= DP_threshold) %>% # calculate total depth
   group_by(Gene_name, Cell_lines, Protocols) %>%
   filter(all(depth_pass)) %>%
   distinct(Gene_name, Cell_lines, Protocols, depth_pass) %>%
@@ -1701,6 +1858,14 @@ ComplexUpset::upset(
   name = "LongcallR ASE Results",
   width_ratio = 0.25
 )
+
+# Raw point for plotting:
+ LongcallR.ase.upset.mat %>% filter(
+    `ONT dRNA` | `ONT cDNA` | `PacBio`
+  ) %>%
+  group_by(`ONT dRNA`, `ONT cDNA`, `PacBio`) %>%
+  summarise(count = n(), .groups = "drop") %>%
+  arrange(desc(count))
 ```
 
 
@@ -1883,10 +2048,11 @@ longcallR_results.asj <- longcallR_results.asj %>% left_join(
 )
 
 # Filter by Num_reads
+
 longcallR_results.asj <- longcallR_results.asj %>%
   group_by(Cell_lines, Gene_name) %>%
-  filter(n_distinct(Protocols) == 3) %>%
-  filter(all(Num_reads > 30)) %>%
+  # filter(n_distinct(Protocols) == 3) %>%
+  # filter(all(Num_reads > 30)) %>%
   ungroup()
 
 ```
@@ -1911,4 +2077,12 @@ ComplexUpset::upset(
   width_ratio = 0.25
 )
 
+
+# Raw point for plotting:
+LongcallR.asj.upset.mat %>% filter(
+  `ONT dRNA` | `ONT cDNA` | `PacBio`
+) %>%
+  group_by(`ONT dRNA`, `ONT cDNA`, `PacBio`) %>%
+  summarise(count = n(), .groups = "drop") %>%
+  arrange(desc(count))
 ```

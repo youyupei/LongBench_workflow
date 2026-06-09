@@ -54,7 +54,7 @@ for PLATFORM in pacbio ont drna; do
         fi
         echo "  $PLATFORM / $SAMPLE"
         zcat "$IN_VCF" | grep "^#" > "$OUT_VCF"
-        zcat "$IN_VCF" | awk -v pat="$STD_CTGS" '$1 !~ /^#/ && $6 >= 10 && $1 !~ pat' >> "$OUT_VCF"
+        zcat "$IN_VCF" | awk -v pat="$STD_CTGS" '$1 !~ /^#/ && $1 !~ pat' >> "$OUT_VCF"
     done
 done
 
@@ -68,7 +68,7 @@ if [[ "$LR_ONLY" != "true" ]]; then
         fi
         echo "  illumina / $SAMPLE"
         zcat "$IN_VCF" | grep "^#" > "$OUT_VCF"
-        zcat "$IN_VCF" | awk -v pat="$STD_CTGS" '$1 !~ /^#/ && $6 >= 10 && $1 !~ pat' >> "$OUT_VCF"
+        zcat "$IN_VCF" | awk -v pat="$STD_CTGS" '$1 !~ /^#/ && $1 !~ pat' >> "$OUT_VCF"
     done
 
     for SAMPLE in "${SAMPLES[@]}"; do
@@ -80,7 +80,7 @@ if [[ "$LR_ONLY" != "true" ]]; then
         fi
         echo "  deepvariant / $SAMPLE"
         zcat "$IN_VCF" | grep "^#" > "$OUT_VCF"
-        zcat "$IN_VCF" | awk -v pat="$STD_CTGS" '$1 !~ /^#/ && $6 >= 10 && $1 !~ pat' >> "$OUT_VCF"
+        zcat "$IN_VCF" | awk -v pat="$STD_CTGS" '$1 !~ /^#/ && $1 !~ pat' >> "$OUT_VCF"
     done
 fi
 
@@ -94,9 +94,9 @@ for PLATFORM in pacbio drna ont; do
     for SAMPLE in "${SAMPLES[@]}"; do
         VCF="${PLATFORM_DIR[$PLATFORM]}/${SAMPLE}/FP_QUAL_only.vcf"
         [[ ! -f "$VCF" ]] && continue
-        while read -r chrom pos id ref alt _; do
+        while read -r chrom pos id ref alt qual _; do
             snp_id="${SAMPLE}:${chrom}:${pos}:${ref}:${alt}"
-            all_snps["$snp_id,$PLATFORM"]=TRUE
+            all_snps["$snp_id,$PLATFORM"]="$qual"
         done < <(grep -v "^#" "$VCF")
     done
 done
@@ -104,18 +104,18 @@ done
 for SAMPLE in "${SAMPLES[@]}"; do
     VCF="${ILL_DIR}/${SAMPLE}/FP_QUAL_only.vcf"
     [[ ! -f "$VCF" ]] && continue
-    while read -r chrom pos id ref alt _; do
+    while read -r chrom pos id ref alt qual _; do
         snp_id="${SAMPLE}:${chrom}:${pos}:${ref}:${alt}"
-        all_snps["$snp_id,illumina"]=TRUE
+        all_snps["$snp_id,illumina"]="$qual"
     done < <(grep -v "^#" "$VCF")
 done
 
 for SAMPLE in "${SAMPLES[@]}"; do
     VCF="${DV_DIR}/${SAMPLE}/FP_QUAL_only.vcf"
     [[ ! -f "$VCF" ]] && continue
-    while read -r chrom pos id ref alt _; do
+    while read -r chrom pos id ref alt qual _; do
         snp_id="${SAMPLE}:${chrom}:${pos}:${ref}:${alt}"
-        all_snps["$snp_id,deepvariant"]=TRUE
+        all_snps["$snp_id,deepvariant"]="$qual"
     done < <(grep -v "^#" "$VCF")
 done
 
@@ -126,7 +126,7 @@ for snp_id in "${all_ids[@]}"; do
     line="$snp_id"
     for method in pacbio drna ont illumina deepvariant; do
         key="${snp_id},${method}"
-        [[ "${all_snps[$key]:-}" == "TRUE" ]] && line+="\tTRUE" || line+="\tFALSE"
+        line+="\t${all_snps[$key]:-NA}"
     done
     echo -e "$line" >> "$OUT_TSV"
 done

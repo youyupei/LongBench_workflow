@@ -4,6 +4,11 @@
 # Trigger TP analysis:   snakemake variant_tp_all
 # Trigger FP analysis:   snakemake variant_fp_all
 # Trigger both:          snakemake variant_analysis_all
+#
+# LongcallR analysis:
+# Trigger TP:            snakemake variant_tp_longcallR
+# Trigger FP:            snakemake variant_fp_longcallR
+# Trigger both:          snakemake variant_analysis_longcallR
 # ============================================================
 
 _lr_scratch = sub_wf_config['lr_bulk']['scratch_dir']
@@ -21,12 +26,6 @@ _drna_dir   = _lr_scratch + "/Mutation/clair3_rna/dRNA_bulk"
 _ill_dir    = _sr_scratch + "/Mutation/clair3"
 _dv_dir     = _sr_results + "/Deepvariants"
 
-# Downsampled LR paths (SR uses full data)
-_lr_ds_scratch = "/vast/scratch/users/you.yu/LongBench/lr_bulk_ds"
-_pacbio_ds_dir = _lr_ds_scratch + "/Mutation/clair3_rna/pb_bulk"
-_ont_ds_dir    = _lr_ds_scratch + "/Mutation/clair3_rna/ont_bulk"
-_drna_ds_dir   = _lr_ds_scratch + "/Mutation/clair3_rna/dRNA_bulk"
-_VA_DS_DIR     = "/vast/projects/LongBench/analysis/variant_analysis/bcftools_ds"
 
 
 rule variant_tp_all:
@@ -43,7 +42,7 @@ rule variant_tp_all:
         ill_vcfs    = expand(_ill_dir    + "/{cell_line}/merge_output.vcf.gz", cell_line=_cell_lines),
         dv_vcfs     = expand(_dv_dir     + "/{cell_line}/output.vcf.gz",      cell_line=_cell_lines),
     output:
-        flag = touch(os.path.join(config['flag_dir'], "variant_tp_all.done"))
+        tsvs = expand(_VA_DIR + "/genotype_comparisons_qual/genotype_comparison_{cell_line}.tsv", cell_line=_cell_lines)
     params:
         script     = config['main_wf_dir'] + "/scripts/variant_analysis/CCLE_vars_detection_youyu.sh",
         ccle_dir   = _CCLE_DIR,
@@ -84,7 +83,7 @@ rule variant_tp_phased:
         ill_vcfs    = expand(_ill_dir    + "/{cell_line}/merge_output.vcf.gz",           cell_line=_cell_lines),
         dv_vcfs     = expand(_dv_dir     + "/{cell_line}/output.vcf.gz",                cell_line=_cell_lines),
     output:
-        flag = touch(os.path.join(config['flag_dir'], "variant_tp_phased.done"))
+        tsvs = expand(_VA_DIR + "_phased/genotype_comparisons_qual/genotype_comparison_{cell_line}.tsv", cell_line=_cell_lines)
     params:
         script     = config['main_wf_dir'] + "/scripts/variant_analysis/CCLE_vars_detection_youyu.sh",
         ccle_dir   = _CCLE_DIR,
@@ -196,28 +195,29 @@ rule variant_analysis_all:
 
 
 # ────────────────────────────────────────────────────────────
-# Downsampled LR + full SR variant analysis
+# LongcallR variant analysis (pb/ont/dRNA only, no QUAL threshold)
 # ────────────────────────────────────────────────────────────
 
-rule variant_tp_ds:
+_longcallR_dir = sub_wf_config['lr_bulk']['output_path'] + "/LongcallR"
+_VA_LCR_DIR    = "/vast/projects/LongBench/analysis/variant_analysis/bcftools_longcallR"
+
+rule variant_tp_longcallR:
+    """
+    TP analysis for LongcallR VCFs: intersect pb/ont/dRNA against CCLE ground truth.
+    Output: {_VA_LCR_DIR}/genotype_comparisons_qual/genotype_comparison_{cell_line}.tsv
+    """
     input:
-        ccle_source = _CCLE_SOURCE,
-        pacbio_vcfs = expand(_pacbio_ds_dir + "/{cell_line}/output.vcf.gz",      cell_line=_cell_lines),
-        ont_vcfs    = expand(_ont_ds_dir    + "/{cell_line}/output.vcf.gz",      cell_line=_cell_lines),
-        drna_vcfs   = expand(_drna_ds_dir   + "/{cell_line}/output.vcf.gz",      cell_line=_cell_lines),
-        ill_vcfs    = expand(_ill_dir       + "/{cell_line}/merge_output.vcf.gz", cell_line=_cell_lines),
-        dv_vcfs     = expand(_dv_dir        + "/{cell_line}/output.vcf.gz",      cell_line=_cell_lines),
+        ccle_source  = _CCLE_SOURCE,
+        pacbio_vcfs  = expand(_longcallR_dir + "/pb_bulk_{cell_line}.longcallR.vcf",   cell_line=_cell_lines),
+        ont_vcfs     = expand(_longcallR_dir + "/ont_bulk_{cell_line}.longcallR.vcf",  cell_line=_cell_lines),
+        drna_vcfs    = expand(_longcallR_dir + "/dRNA_bulk_{cell_line}.longcallR.vcf", cell_line=_cell_lines),
     output:
-        flag = touch(os.path.join(config['flag_dir'], "variant_tp_ds.done"))
+        tsvs = expand(_VA_LCR_DIR + "/genotype_comparisons_qual/genotype_comparison_{cell_line}.tsv", cell_line=_cell_lines)
     params:
-        script     = config['main_wf_dir'] + "/scripts/variant_analysis/CCLE_vars_detection_youyu.sh",
-        ccle_dir   = _CCLE_DIR,
-        outdir     = _VA_DS_DIR,
-        pacbio_dir = _pacbio_ds_dir,
-        ont_dir    = _ont_ds_dir,
-        drna_dir   = _drna_ds_dir,
-        ill_dir    = _ill_dir,
-        dv_dir     = _dv_dir,
+        script      = config['main_wf_dir'] + "/scripts/variant_analysis/CCLE_vars_detection_longcallR.sh",
+        ccle_dir    = _CCLE_DIR,
+        outdir      = _VA_LCR_DIR,
+        longcallR_dir = _longcallR_dir,
     resources:
         cpus_per_task = 2,
         mem_mb        = 8000
@@ -227,67 +227,24 @@ rule variant_tp_ds:
             {input.ccle_source} \
             {params.ccle_dir} \
             {params.outdir} \
-            {params.pacbio_dir} \
-            {params.ont_dir} \
-            {params.drna_dir} \
-            {params.ill_dir} \
-            {params.dv_dir}
+            {params.longcallR_dir}
         """
 
 
-rule variant_tp_phased_ds:
+rule variant_fp_longcallR:
+    """
+    FP analysis for LongcallR VCFs: variants on non-standard contigs, QUAL recorded as-is.
+    Output: {_VA_LCR_DIR}/SNP_FP_QUAL_detail.tsv
+    """
     input:
-        ccle_source = _CCLE_SOURCE,
-        pacbio_vcfs = expand(_pacbio_ds_dir + "/{cell_line}/output_enable_phasing.vcf.gz", cell_line=_cell_lines),
-        ont_vcfs    = expand(_ont_ds_dir    + "/{cell_line}/output_enable_phasing.vcf.gz", cell_line=_cell_lines),
-        drna_vcfs   = expand(_drna_ds_dir   + "/{cell_line}/output_enable_phasing.vcf.gz", cell_line=_cell_lines),
-        ill_vcfs    = expand(_ill_dir       + "/{cell_line}/merge_output.vcf.gz",           cell_line=_cell_lines),
-        dv_vcfs     = expand(_dv_dir        + "/{cell_line}/output.vcf.gz",                cell_line=_cell_lines),
+        pacbio_vcfs  = expand(_longcallR_dir + "/pb_bulk_{cell_line}.longcallR.vcf",   cell_line=_cell_lines),
+        ont_vcfs     = expand(_longcallR_dir + "/ont_bulk_{cell_line}.longcallR.vcf",  cell_line=_cell_lines),
+        drna_vcfs    = expand(_longcallR_dir + "/dRNA_bulk_{cell_line}.longcallR.vcf", cell_line=_cell_lines),
     output:
-        flag = touch(os.path.join(config['flag_dir'], "variant_tp_phased_ds.done"))
+        tsv = _VA_LCR_DIR + "/SNP_FP_QUAL_detail.tsv"
     params:
-        script     = config['main_wf_dir'] + "/scripts/variant_analysis/CCLE_vars_detection_youyu.sh",
-        ccle_dir   = _CCLE_DIR,
-        outdir     = _VA_DS_DIR + "_phased",
-        pacbio_dir = _pacbio_ds_dir,
-        ont_dir    = _ont_ds_dir,
-        drna_dir   = _drna_ds_dir,
-        ill_dir    = _ill_dir,
-        dv_dir     = _dv_dir,
-    resources:
-        cpus_per_task = 2,
-        mem_mb        = 8000
-    shell:
-        """
-        bash {params.script} \
-            {input.ccle_source} \
-            {params.ccle_dir} \
-            {params.outdir} \
-            {params.pacbio_dir} \
-            {params.ont_dir} \
-            {params.drna_dir} \
-            {params.ill_dir} \
-            {params.dv_dir} \
-            output_enable_phasing.vcf.gz
-        """
-
-
-rule variant_fp_ds:
-    input:
-        pacbio_vcfs = expand(_pacbio_ds_dir + "/{cell_line}/output.vcf.gz",      cell_line=_cell_lines),
-        ont_vcfs    = expand(_ont_ds_dir    + "/{cell_line}/output.vcf.gz",      cell_line=_cell_lines),
-        drna_vcfs   = expand(_drna_ds_dir   + "/{cell_line}/output.vcf.gz",      cell_line=_cell_lines),
-        ill_vcfs    = expand(_ill_dir       + "/{cell_line}/merge_output.vcf.gz", cell_line=_cell_lines),
-        dv_vcfs     = expand(_dv_dir        + "/{cell_line}/output.vcf.gz",      cell_line=_cell_lines),
-    output:
-        tsv = _VA_DS_DIR + "/SNP_FP_QUAL_detail.tsv"
-    params:
-        script     = config['main_wf_dir'] + "/scripts/variant_analysis/FP_vars_detection_youyu.sh",
-        pacbio_dir = _pacbio_ds_dir,
-        ont_dir    = _ont_ds_dir,
-        drna_dir   = _drna_ds_dir,
-        ill_dir    = _ill_dir,
-        dv_dir     = _dv_dir,
+        script        = config['main_wf_dir'] + "/scripts/variant_analysis/FP_vars_detection_longcallR.sh",
+        longcallR_dir = _longcallR_dir,
     resources:
         cpus_per_task = 2,
         mem_mb        = 4000
@@ -295,51 +252,13 @@ rule variant_fp_ds:
         """
         bash {params.script} \
             {output.tsv} \
-            {params.pacbio_dir} \
-            {params.ont_dir} \
-            {params.drna_dir} \
-            {params.ill_dir} \
-            {params.dv_dir}
+            {params.longcallR_dir}
         """
 
 
-rule variant_fp_phased_ds:
+rule variant_analysis_longcallR:
     input:
-        pacbio_vcfs = expand(_pacbio_ds_dir + "/{cell_line}/output_enable_phasing.vcf.gz", cell_line=_cell_lines),
-        ont_vcfs    = expand(_ont_ds_dir    + "/{cell_line}/output_enable_phasing.vcf.gz", cell_line=_cell_lines),
-        drna_vcfs   = expand(_drna_ds_dir   + "/{cell_line}/output_enable_phasing.vcf.gz", cell_line=_cell_lines),
-        ill_vcfs    = expand(_ill_dir       + "/{cell_line}/merge_output.vcf.gz",           cell_line=_cell_lines),
-        dv_vcfs     = expand(_dv_dir        + "/{cell_line}/output.vcf.gz",                cell_line=_cell_lines),
+        rules.variant_tp_longcallR.output,
+        rules.variant_fp_longcallR.output,
     output:
-        tsv = _VA_DS_DIR + "_phased/SNP_FP_QUAL_detail.tsv"
-    params:
-        script     = config['main_wf_dir'] + "/scripts/variant_analysis/FP_vars_detection_youyu.sh",
-        pacbio_dir = _pacbio_ds_dir,
-        ont_dir    = _ont_ds_dir,
-        drna_dir   = _drna_ds_dir,
-        ill_dir    = _ill_dir,
-        dv_dir     = _dv_dir,
-    resources:
-        cpus_per_task = 2,
-        mem_mb        = 4000
-    shell:
-        """
-        bash {params.script} \
-            {output.tsv} \
-            {params.pacbio_dir} \
-            {params.ont_dir} \
-            {params.drna_dir} \
-            {params.ill_dir} \
-            {params.dv_dir} \
-            output_enable_phasing.vcf.gz
-        """
-
-
-rule variant_analysis_ds:
-    input:
-        rules.variant_tp_ds.output,
-        rules.variant_fp_ds.output,
-        rules.variant_tp_phased_ds.output,
-        rules.variant_fp_phased_ds.output
-    output:
-        touch(os.path.join(config['flag_dir'], "variant_analysis_ds.done"))
+        touch(os.path.join(config['flag_dir'], "variant_analysis_longcallR.done"))
