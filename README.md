@@ -13,6 +13,12 @@
 > [Configuration system](#configuration-system) below for what to modify).
 > Examples of reusable components are given in the
 > [Sub-workflows](#sub-workflows) section.
+>
+> **HPC dependency — `module load`:** Several rules call `module load` to
+> activate tools via the WEHI SLURM environment module system. These calls
+> are not portable and will fail on systems without those modules. See the
+> [HPC module dependencies](#hpc-module-dependencies) section for a full list
+> and suggested replacements.
 
 Snakemake workflow for the LongBench benchmarking project. Covers preprocessing,
 QC, quantification, variant calling, and downstream R analysis across four sequencing
@@ -58,10 +64,10 @@ main `Snakefile` via `module` declarations and all their rules are namespaced
 
 | Sub-workflow | Modality | Key tools | Key rules |
 |---|---|---|---|
-| `lr_bulk` | Long-read bulk (ONT cDNA, PacBio, dRNA) | minimap2, oarfish, IsoQuant, NanoPlot, clair3 | minimap2, qc, quantification, internal_priming, mutation, subsample |
-| `lr_sc_sn` | Long-read single-cell / single-nuclei | FLAMES, minimap2, demuxlet, oarfish, clair3, whatshap | flames, qc, demuxlet, pseudo_bulk_map_n_quant, pseudo_bulk_qc, mutation, sc_clustering |
-| `sr_bulk` | Short-read bulk (Illumina) | STAR, salmon, fastp, clair3 | mapping, qc, quantification, mutation |
-| `sr_sc_sn` | Short-read single-cell / single-nuclei | CellRanger, demuxlet | cellranger, demuxlet, qc |
+| `lr_bulk` | Long-read bulk (ONT cDNA, PacBio, dRNA) | minimap2, oarfish, IsoQuant, NanoPlot, clair3, LongCallR | minimap2, qc, quantification, internal_priming, mutation, subsample |
+| `lr_sc_sn` | Long-read single-cell / single-nuclei | FLAMES, minimap2, oarfish, cellsnp-lite, Vireo, clair3, whatshap | flames, qc, pseudo_bulk_map_n_quant, pseudo_bulk_qc, mutation, sc_clustering |
+| `sr_bulk` | Short-read bulk (Illumina) | Rsubread (Subjunc), salmon, fastp, clair3 | mapping, qc, quantification, mutation |
+| `sr_sc_sn` | Short-read single-cell / single-nuclei | CellRanger, cellsnp-lite, Vireo | cellranger, qc |
 | `hybrid_bulk` | Hybrid long+short read quantification | MiniQuant | miniquant |
 
 Each sub-workflow's `Snakefile` is self-contained and loads its own config, making
@@ -105,6 +111,122 @@ Importable rules available to any sub-workflow via `include:`:
 
 ---
 
+## Reusable rules
+
+The rules below are general enough to lift into another project with minimal changes.
+The "Minimum config keys" column lists exactly what must be present in the config for
+the rule to work; everything else in the original configs is LongBench-specific.
+
+### Long-read alignment — `sub_workflows/lr_bulk/rules/minimap2.smk`
+
+Rules: `lr_bulk_minimap2_transcript`, `lr_bulk_minimap2_Genome`
+
+Aligns per-sample FASTQ files to a transcript or genome reference using minimap2,
+producing sorted BAMs. The preset flags (e.g. `-ax splice`) are passed through
+`minimap2_trans_options` / `minimap2_genome_options` so they are easy to swap for
+a different chemistry.
+
+**Minimum config keys:**
+```yaml
+samples_fastq_dir:
+  my_sample: "/path/to/fastqs"       # directory containing per-cell-line FASTQ files
+sample_id:
+  - my_sample
+barcode_list:                        # maps barcode number to cell-line label
+  - 1: SampleA
+cell_lines:
+  - SampleA
+reference:
+  transcript: "/path/to/transcriptome.fa"
+  genome:     "/path/to/genome.fa"
+software:
+  minimap2: "/path/to/minimap2"
+minimap2_trans_options:
+  my_sample: "-ax map-ont --secondary=no"
+minimap2_genome_options:
+  my_sample: "-ax splice --secondary=no"
+output_path: "/path/to/results"
+```
+
+---
+
+### Long-read QC suite — `sub_workflows/lr_bulk/rules/qc.smk`
+
+Rules: `NanoPlot`, `RSeQC_junction_saturation`, `RSeQC_junction_annotation`,
+`RSeQC_gene_body_coverage`, `alignQC_analysis_subsample`, `count_reads_in_fastq`,
+`count_bases_in_fastq`
+
+A self-contained QC battery for long-read RNA-seq. `NanoPlot` runs on subsampled
+FASTQs; the RSeQC rules run on genome-aligned BAMs; `alignQC` runs inside a
+Singularity container (`docker://vacation/alignqc`) and produces a full HTML report.
+Each rule can be included independently — they do not form a strict chain.
+
+**Minimum config keys:**
+```yaml
+reference:
+  bed_human: "/path/to/annotation.bed"   # for RSeQC; convert GTF with utilities_gtf_to_bed
+  genome:    "/path/to/genome.fa"        # for AlignQC
+  gtf_gz:   "/path/to/annotation.gtf.gz" # for AlignQC
+conda:
+  NanoPlot: "/path/to/conda/NanoPlot.yaml"
+  RSeQC:    "/path/to/conda/RSeQC.yaml"
+output_path: "/path/to/results"
+scratch_dir: "/path/to/scratch"          # intermediate subsampled BAMs written here
+random_seed: 2024
+```
+
+---
+
+### Transcript quantification — `sub_workflows/lr_bulk/rules/quantification.smk`
+
+Rules: `oarfish_no_cov`, `oarfish_cov`, `salmon`, `featureCounts_gene_quant`
+
+`oarfish_no_cov` and `oarfish_cov` quantify transcript abundance from
+transcript-aligned BAMs using EM (with optional coverage correction).
+`salmon` runs in alignment-based mode on the same BAMs.
+All three take a transcript-sorted BAM as input, so they depend on the
+minimap2 transcript alignment rule above but nothing else.
+
+**Minimum config keys:**
+```yaml
+reference:
+  transcript: "/path/to/transcriptome.fa"
+  gtf:        "/path/to/annotation.gtf"   # featureCounts only
+conda:
+  oarfish: "/path/to/conda/oarfish.yaml"
+  main:    "/path/to/conda/main.yaml"     # salmon / featureCounts
+output_path: "/path/to/results"
+```
+
+---
+
+### Variant calling — `sub_workflows/lr_bulk/rules/mutation.smk`
+
+Rules: `clair3_rna`, `whatshap`
+
+`clair3_rna` calls SNVs/indels from a genome-aligned BAM using the clair3-rna
+Singularity container. `whatshap` phases the resulting VCF back against the BAM.
+The platform model is selected per sample via the `_clair3_rna_platform` dict at
+the top of the file — edit that dict to add new platform presets.
+
+Both rules take a sorted, indexed genome BAM as their only upstream dependency,
+so they can be dropped into any workflow that produces one.
+
+**Minimum config keys:**
+```yaml
+reference:
+  genome: "/path/to/genome.fa"
+conda:
+  whatshap: "/path/to/conda/whatshap.yaml"
+output_path: "/path/to/results"
+scratch_dir: "/path/to/scratch"    # clair3 VCFs written here first to save project storage
+```
+
+Also update the `_clair3_rna_platform` dict in `mutation.smk` to map your sample
+names to a clair3-rna platform string (e.g. `ont_r10_dorado_cdna`, `hifi_mas_minimap2`).
+
+---
+
 ## Scripts (`scripts/`)
 
 Standalone scripts not directly called by Snakemake rules, organised by topic.
@@ -136,9 +258,43 @@ Standalone scripts not directly called by Snakemake rules, organised by topic.
 | Folder | Contents |
 |---|---|
 | `DTU_analysis/` | Differential transcript usage analysis (`bulkDTU_analysis.Rmd`, `dtu_Rfunction.R`, `major_isoform_analysis.Rmd`) — standalone, not in the main DAG |
-| `fusion_analysis/` | Fusion gene detection with JAFFAL across ONT cDNA, dRNA, and PacBio; shell scripts for adapter trimming, subsampling, and JAFFAL runs, plus a figure-generation Rmd |
-| `RNAmod_analysis/` | RNA modification analysis via modkit pileup; includes a Nextflow workflow (`RNAmod_analysis.nf`) and comparison R script |
-| `variant_analysis/` | Manual / exploratory shell scripts for clair3 variant calling on spike-in samples and CCLE/FP variant detection (the automated versions are in `rules/variant_analysis.smk`) |
+| `fusion_analysis/` | Complete standalone fusion gene detection sub-study, not part of the main Snakemake DAG. Contains: (1) numbered SLURM shell scripts for adapter trimming, quality filtering, subsampling, and JAFFAL v2.5 runs for ONT cDNA, dRNA, and PacBio; (2) a figure-generation Rmd (`*_JW.Rmd`) that reads pre-computed JAFFAL results and CCLE translocation ground truth to produce benchmarking figures. To re-run, execute the shell scripts in order within each platform subdirectory, then knit the Rmd. |
+| `RNAmod_analysis/` | Standalone RNA modification analysis via modkit pileup. Includes a Nextflow workflow (`RNAmod_analysis.nf`) for running modkit across samples, and an R script (`analysis_modkit_pileup_two_runs.R`) for comparing modification calls between two dRNA sequencing runs. Not integrated into the main Snakemake DAG. |
+| `variant_analysis/` | Standalone shell scripts for variant calling benchmarking, run independently of the Snakemake workflow. Covers: clair3 variant calling on SIRV/Sequin spike-in samples (one script per platform); CCLE truth-set TP/FP detection for both clair3 and LongCallR (`CCLE_vars_detection_*.sh`, `FP_vars_detection_*.sh`). The Snakemake-integrated versions of the TP/FP evaluation rules are in `rules/variant_analysis.smk`. |
+
+---
+
+## HPC module dependencies
+
+Several rules use `module load` to activate software through the WEHI LMOD
+environment module system. This is **not portable** — the commands will fail on
+any system without those specific modules installed. When adapting these rules,
+replace each `module load` call with the appropriate `conda:` directive or a
+Singularity container.
+
+| Tool | Active `module load` location(s) | Suggested replacement |
+|---|---|---|
+| `picard-tools` | `lr_bulk/rules/qc.smk`, `lr_sc_sn/rules/qc.smk`, `sr_bulk/rules/qc.smk` | Add a `conda:` directive pointing to a Picard conda env, or use `container: "docker://broadinstitute/picard"` |
+| `bedtools` | `lr_bulk/rules/mutation.smk`, `sr_bulk/rules/mutation.smk` | `conda:` with a bioconda `bedtools` env; `bedtools` is also available in most general-purpose bioinformatics conda envs |
+| `ImageMagick` | `lr_sc_sn/rules/flames.smk` | `conda: "conda-forge::imagemagick"` or add `imagemagick` to the existing `main` conda env |
+| `htslib` | `lr_sc_sn/rules/demuxlet.smk` | Legacy rule — demuxlet is no longer in the active DAG (Vireo is used instead); this `module load` can be ignored unless reviving the demuxlet rules |
+| `bedops` | `lr_sc_sn/rules/anno_form_conversion.smk` | `conda:` with a bioconda `bedops` env |
+| `cellranger` | `sr_sc_sn/rules/cellranger.smk` | CellRanger has no conda package; use the official tarball and point to the binary via config, or use `container: "nfcore/cellranger"` |
+| `pandoc` | `rules/rmarkdown.smk` (all knitting rules) | Add `pandoc` to the R conda env used for knitting, or use `container: "docker://rocker/verse"` which bundles R + pandoc |
+| `curl` | `rules/rmarkdown.smk` (rules that download reference data) | `curl` is available in most base conda envs; add it explicitly to the relevant env if missing |
+
+**How to add a `conda:` directive to an existing rule:**
+```python
+rule my_rule:
+    input: ...
+    output: ...
+    conda: "path/to/env.yaml"   # relative to the Snakefile, or absolute
+    shell: "my-tool ..."
+```
+
+Conda env YAML files for tools already used in this workflow are in `conda/config/`.
+Check there first before writing a new one — e.g. `conda/config/main.yaml` covers
+most general bioinformatics tools.
 
 ---
 
@@ -154,7 +310,7 @@ To adapt the workflow to new data, edit the relevant `config/config_<sub_wf>.yam
 - `output_path` — where results are written
 - `subsample_read_n` — optional; triggers the subsampling rules if set
 
-Software not managed by conda (SQANTI3, minimap2, kallisto, bustools, demuxlet) is
+Software not managed by conda (SQANTI3, minimap2, kallisto, bustools) is
 pointed to by absolute paths under the `software:` block in `config.yaml`.
 
 ---
