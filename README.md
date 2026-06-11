@@ -50,7 +50,7 @@ workflow/
 ├── conda/config/               # Conda environment definitions keyed by tool name
 ├── singularity/                # Singularity container definitions
 ├── profile/                    # Snakemake SLURM profile (cluster submission settings)
-└── custom_analysis/            # One-off analyses not part of the main DAG
+└── custom_analysis/            # One-off analyses not part of the main DAG (see below)
 ```
 
 ---
@@ -81,6 +81,34 @@ what can be adapted with config-only changes vs. what requires code edits.
 | Run short-read bulk quantification (Salmon) on new samples | `sr_bulk` | `config_sr_bulk.yaml`: update `samples_fastq_dir`, `sample_id`, `output_path`; point `star_index` and `salmon_index` to pre-built indices for the new genome |
 | Reuse the variant-calling rules (clair3 + whatshap) alone | `lr_bulk` — `rules/mutation.smk` | Include only `mutation.smk` in a new Snakefile; the rule inputs are standard sorted BAMs so no other `lr_bulk` rules are required |
 
+
+---
+
+## Main workflow rules (`rules/`)
+
+Rules that aggregate or compare across modalities, run after the sub-workflows complete.
+
+| File | What it does |
+|---|---|
+| `rmarkdown.smk` | Knits all R Markdown reports via `versioned_knit.R`; defines the preprocessing R script rules (`r_tx2gene_map`, `r_get_bulk_DGE_objects`, etc.) |
+| `qc_plot.smk` | Combined QC plots across all modalities |
+| `variant_analysis.smk` | Variant calling evaluation (clair3, LongCallR, CCLE truth sets) — not in the default `all` target, trigger explicitly with `snakemake variant_analysis_all` |
+| `rarefraction_analysis.smk` | Rarefaction / downsampling analysis |
+| `base_count_analysis.smk` | Per-sample base count aggregation |
+| `sc_cell_line_anno.smk` | Cell-line demultiplexing pipeline (cellsnp-lite → Vireo) for both LR and SR SC/SN data |
+| `rule_recycle_bin.smk` | Inactive rules kept for reference — not included in the main workflow |
+
+---
+
+## Custom analyses (`custom_analysis/`)
+
+One-off analyses not part of the main DAG. Each can be included in the main `Snakefile`
+by uncommenting the relevant `include:` line.
+
+| File | What it does |
+|---|---|
+| `annotation_redundency_analysis.smk` | Quantifies long-read (oarfish) and short-read (salmon) data against SIRV isoform references at three annotation completeness levels (`C` = complete, `I` = incomplete, `O` = over-annotated) to benchmark how annotation quality affects quantification accuracy. Results are in `main_workflow/result/annotation_redundency_analysis/`. |
+| `lr_bulk_ds/variant_analysis_ds.smk` | Variant calling on downsampled long-read bulk data |
 
 ---
 

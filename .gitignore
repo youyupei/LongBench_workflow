@@ -6,11 +6,15 @@ conda/envs
 **/.parallel/**
 **/.keras/**
 **/.claude/**
+logs/*
+.vscode/*
 
 # Do not ignore .Rmd files
 !**/rmarkdown/*.Rmd
 !**/rmarkdown/*.R
 !**/rmarkdown/README.txt
+!**/rmarkdown/README.md
+!**/rmarkdown/DEPENDENCIES.md
 !**/rmarkdown/Rscript/
 !**/rmarkdown/Rscript/**
 
