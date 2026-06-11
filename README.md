@@ -50,17 +50,70 @@ workflow/
 ├── conda/config/               # Conda environment definitions keyed by tool name
 ├── singularity/                # Singularity container definitions
 ├── profile/                    # Snakemake SLURM profile (cluster submission settings)
-└── custom_analysis/            # One-off analyses not part of the main DAG (see below)
+└── custom_analysis/            # One-off analyses not part of the main DAG
 ```
+
+---
+
+## Figure source map
+
+The table below maps each paper figure to the Rmd or script that generates it and
+the Snakemake rule chain that produces its inputs.
+
+#### Figure 1
+
+| Figure | Source | Upstream Snakemake rules |
+|---|---|---|
+| Fig 1B, 1C | `00_Bulk_BCV.Rmd` | quantify with Salmon (`sr_bulk_salmon_quant`); Rmd reads `quant.sf` files directly |
+| Fig 1E, 1F | `01_QC_plot.Rmd` | aggregate read and base counts across all modalities (`qc_read_count_summary`) — pulls from per-FASTQ read counters in lr_bulk (`count_reads_in_fastq`, `count_bases_in_fastq`), FLAMES `summary.txt` in lr_sc_sn, Salmon output in sr_bulk, and CellRanger metrics in sr_sc; also collects NanoPlot length/quality TSVs from all sub-workflows (`qc_read_length_quality_summary`) |
+
+#### Figure 2
+
+| Figure | Source | Upstream Snakemake rules |
+|---|---|---|
+| Fig 2A | `01_QC_plot.Rmd` | subsample BAM and run AlignQC to produce an alignment-feature HTML report for long reads (`lr_bulk_alignQC_analysis_subsample`) and short reads (`sr_bulk_alignQC_analysis`) |
+| Fig 2B | `01_QC_plot.Rmd` | detect internal priming sites on transcript-aligned BAMs produced by minimap2 (`lr_bulk_minimap2_transcript`), identify internal-priming reads with PrimeSpotter (`rules/internal_priming.smk`) |
+| Fig 2C | `scripts/FLAMES_transcript_coverage_plot.R` (standalone) | run FLAMES pipeline (barcode demux + transcript assembly + alignment) (`lr_sc_sn_flames`); standalone script reads the FLAMES output BAM directly (requires FLAMES ≥ 2.3.4) |
+| Fig 2D | `03_Bulk_quantification.Rmd` | quantify transcript abundance from transcript-aligned BAMs with oarfish for long reads (`lr_bulk_oarfish_cov`) and with Salmon for short reads (`sr_bulk_salmon_quant`); results loaded via shared bulk DGE RDS (`r_get_bulk_DGE_objects`) |
+| Fig 2E, 2G | `02_Bulk_Identification.Rmd` | same oarfish (`lr_bulk_oarfish_cov`) and Salmon (`sr_bulk_salmon_quant`) quantification as Fig 2D; results loaded via shared bulk DGE RDS (`r_get_bulk_DGE_objects`) |
+| Fig 2F, 2H | `scripts/rarefraction_plot_only.R` via `rarefraction_plot` rule | subsample long-read BAMs at multiple depths and re-run oarfish (`oarfish_cov_rare_fraction_analysis`); subsample short-read FASTQs and re-run Salmon (`salmon_quant_downsample`); compute gene/transcript detection curves (`rarefraction_analysis` → `rarefraction_table`); plot with `rarefraction_plot_only.R` — all in `rules/rarefraction_analysis.smk` |
+
+#### Figure 3
+
+| Figure | Source | Upstream Snakemake rules |
+|---|---|---|
+| Fig 3A–F | `02_Bulk_Identification.Rmd` | shared bulk DGE RDS — see note above |
+| Fig 3G–J | `02_Bulk_Identification.Rmd` (extract commonly detected genes and transcripts) → `04_Bulk_DE_Summary.Rmd` | shared bulk DGE RDS fed into both reports sequentially |
+
+#### Figure 4
+
+| Figure | Source | Upstream Snakemake rules |
+|---|---|---|
+| Fig 4A | `01_QC_plot.Rmd` | detect cell barcodes from long-read FASTQs with BLAZE (`lr_sc_sn_blaze`); genotype cells at known SNPs with cellsnp-lite and assign each barcode to a donor with Vireo (`Cellsnp_lite_rule` → `vireo_rule` for LR; `Cellsnp_lite_rule_short_read` → `vireo_rule_short_read` for SR) |
+| Fig 4B | `05_sc_clustering_annotation.Rmd` | BLAZE barcode detection (`lr_sc_sn_blaze`) → FLAMES alignment and transcript quantification (`lr_sc_sn_flames`) for LR; CellRanger demux + count for SR (`sr_sc_sn_cellranger`); Vireo cell-line assignment for all three platforms (`sc_cell_line_anno.smk`); Rmd produces alluvial barcode-overlap diagram |
+| Fig 4C | `07_sc_sn_umap.Rmd` | BLAZE → FLAMES pipeline for long-read gene counts (`lr_sc_sn_blaze` → `lr_sc_sn_flames`); CellRanger feature–barcode matrix for short reads (`sr_sc_sn_cellranger`) |
+| Fig 4D | `08_SC_identification_DE_analysis.Rmd` | split BAMs by cell-line barcode list, re-align and quantify as pseudo-bulk samples (`pseudo_bulk_map_n_quant.smk` — minimap2 + oarfish per cell line) |
+| Fig 4E–J | `08_SC_identification_DE_analysis.Rmd` | pseudo-bulk inputs (same as 4D) + shared bulk DGE RDS as bulk reference; Fig 4E pseudobulk–bulk correlation is computed at gene and transcript level (log CPM) across all platform combinations |
+
+#### Figure 5
+
+| Figure | Source | Upstream Snakemake rules |
+|---|---|---|
+| Fig 5A, 5B, 5F | `09_Mutation_analysis.Rmd` | call SNVs/indels from genome-aligned BAMs using clair3-rna (`lr_bulk_clair3_rna`), phase variants against the BAM with WhatsHap (`lr_bulk_whatshap`) — both in `sub_workflows/lr_bulk/rules/mutation.smk`; sr_bulk equivalent clair3 rules; `rules/variant_analysis.smk` aggregates all callsets |
+| Fig 5C or 5D | `10_Mutation_analysis_downsample.Rmd` | repeat clair3 variant calling on progressively downsampled BAMs (`custom_analysis/lr_bulk_ds/variant_analysis_ds.smk`) |
+| Fig 5D, 5E | `scripts/fusion_analysis/` (standalone) | run JAFFAL v2.5 fusion detection on ONT cDNA, dRNA, and PacBio FASTQs via numbered SLURM shell scripts; no Snakemake integration |
+| Fig 5G–J | `09_Mutation_analysis.Rmd` | call variants and phase a BAM with LongCallR (`longcallR`); run allele-specific junction analysis on the phased BAM (`longcallR_analsyis_asj`); run allele-specific expression (`longcallR_analsyis_ase`) — all in `sub_workflows/lr_bulk/rules/mutation.smk` |
 
 ---
 
 ## Sub-workflows
 
-Each sub-workflow under `sub_workflows/` is a self-contained Snakemake module with
-its own `Snakefile`, `rules/`, `config/`, and `scripts/`. They are imported into the
-main `Snakefile` via `module` declarations and all their rules are namespaced
-(e.g. `lr_bulk_*`).
+Each sub-workflow under `sub_workflows/` is a Snakemake module with its own
+`Snakefile`, `rules/`, `config/`, and `scripts/`. They are imported into the main
+`Snakefile` via `module` declarations and all their rules are namespaced
+(e.g. `lr_bulk_*`). Each sub-workflow is self-contained and loads its own config,
+making them the most practical units for reuse — though adapting one to a new dataset
+requires updating paths and sample identifiers in the relevant config file.
 
 | Sub-workflow | Modality | Key tools | Key rules |
 |---|---|---|---|
@@ -69,46 +122,6 @@ main `Snakefile` via `module` declarations and all their rules are namespaced
 | `sr_bulk` | Short-read bulk (Illumina) | Rsubread (Subjunc), salmon, fastp, clair3 | mapping, qc, quantification, mutation |
 | `sr_sc_sn` | Short-read single-cell / single-nuclei | CellRanger, cellsnp-lite, Vireo | cellranger, qc |
 | `hybrid_bulk` | Hybrid long+short read quantification | MiniQuant | miniquant |
-
-Each sub-workflow's `Snakefile` is self-contained and loads its own config, making
-them the most practical units for reuse. The table below gives concrete examples of
-what can be adapted with config-only changes vs. what requires code edits.
-
-| Goal | Sub-workflow to start from | What to change |
-|---|---|---|
-| Run the ONT/PacBio bulk preprocessing pipeline on new samples | `lr_bulk` | `config_lr_bulk.yaml`: update `samples_fastq_dir`, `sample_id`, `output_path`, and `barcode_list`; update `minimap2` path in `config.yaml` if not using the same binary |
-| Apply the FLAMES single-cell pipeline to SC/SN dataset | `lr_sc_sn` | `config_lr_sc_sn.yaml`: update `samples_fastq_dir`, `sample_id`, `output_path`; provide a new genome/GTF under the `reference:` block |
-| Run short-read bulk quantification (Salmon) on new samples | `sr_bulk` | `config_sr_bulk.yaml`: update `samples_fastq_dir`, `sample_id`, `output_path`; point `star_index` and `salmon_index` to pre-built indices for the new genome |
-| Reuse the variant-calling rules (clair3 + whatshap) alone | `lr_bulk` — `rules/mutation.smk` | Include only `mutation.smk` in a new Snakefile; the rule inputs are standard sorted BAMs so no other `lr_bulk` rules are required |
-
-
----
-
-## Main workflow rules (`rules/`)
-
-Rules that aggregate or compare across modalities, run after the sub-workflows complete.
-
-| File | What it does |
-|---|---|
-| `rmarkdown.smk` | Knits all R Markdown reports via `versioned_knit.R`; defines the preprocessing R script rules (`r_tx2gene_map`, `r_get_bulk_DGE_objects`, etc.) |
-| `qc_plot.smk` | Combined QC plots across all modalities |
-| `variant_analysis.smk` | Variant calling evaluation (clair3, LongCallR, CCLE truth sets) — not in the default `all` target, trigger explicitly with `snakemake variant_analysis_all` |
-| `rarefraction_analysis.smk` | Rarefaction / downsampling analysis |
-| `base_count_analysis.smk` | Per-sample base count aggregation |
-| `sc_cell_line_anno.smk` | Cell-line demultiplexing pipeline (cellsnp-lite → Vireo) for both LR and SR SC/SN data |
-| `rule_recycle_bin.smk` | Inactive rules kept for reference — not included in the main workflow |
-
----
-
-## Custom analyses (`custom_analysis/`)
-
-One-off analyses not part of the main DAG. Each can be included in the main `Snakefile`
-by uncommenting the relevant `include:` line.
-
-| File | What it does |
-|---|---|
-| `annotation_redundency_analysis.smk` | Quantifies long-read (oarfish) and short-read (salmon) data against SIRV isoform references at three annotation completeness levels (`C` = complete, `I` = incomplete, `O` = over-annotated) to benchmark how annotation quality affects quantification accuracy. Results are in `main_workflow/result/annotation_redundency_analysis/`. |
-| `lr_bulk_ds/variant_analysis_ds.smk` | Variant calling on downsampled long-read bulk data |
 
 ---
 
@@ -224,44 +237,6 @@ scratch_dir: "/path/to/scratch"    # clair3 VCFs written here first to save proj
 
 Also update the `_clair3_rna_platform` dict in `mutation.smk` to map your sample
 names to a clair3-rna platform string (e.g. `ont_r10_dorado_cdna`, `hifi_mas_minimap2`).
-
----
-
-## Scripts (`scripts/`)
-
-Standalone scripts not directly called by Snakemake rules, organised by topic.
-
-### QC and read-level summaries
-| Script | Called by | Purpose |
-|---|---|---|
-| `read_length_and_quality_plot.R` | `qc_plot.smk` | Per-sample read length and quality distributions |
-| `read_count_plot.R` | `qc_plot.smk` | Read count summary across bulk and SC samples |
-| `qc_read_length_quality_summary.R` | sub-workflow qc rules | Tabulate length/quality from NanoPlot/FastQC output |
-| `qc_read_count_summary.R` | sub-workflow qc rules | Parse and aggregate read count JSON/log files |
-| `junctionSaturation_plot_known.R` | `qc_plot.smk` | Junction saturation curves (RSeQC output) |
-
-### Rarefaction analysis
-| Script | Called by | Purpose |
-|---|---|---|
-| `rarefraction_analysis.R` | `rarefraction_analysis.smk` | Compute rarefaction curves from count matrices (note: filename contains a typo — "rarefraction" should be "rarefaction") |
-| `rarefraction_plot_only.R` | standalone | Re-plot rarefaction results without re-running the analysis |
-
-### Utility scripts
-| Script | Called by | Purpose |
-|---|---|---|
-| `aggregate_base_counts.py` | `base_count_analysis.smk` | Aggregate per-sample base-count files from gigabase-downsampling runs |
-| `find_longest_reads_in_bam.py` | standalone / manual | Extract top-N longest mapped reads from a BAM; outputs TSV of read name, length, aligned length, mean quality |
-| `Rfunctions.R` | sourced by Rmd files | Shared R helper functions and metadata loading |
-| `FLAMES_transcript_coverage_plot.R` | standalone | Transcript coverage visualisation from FLAMES output (requires FLAMES ≥ 2.3.4) |
-
-### Subfolders
-| Folder | Contents |
-|---|---|
-| `DTU_analysis/` | Differential transcript usage analysis (`bulkDTU_analysis.Rmd`, `dtu_Rfunction.R`, `major_isoform_analysis.Rmd`) — standalone, not in the main DAG |
-| `fusion_analysis/` | Complete standalone fusion gene detection sub-study, not part of the main Snakemake DAG. Contains: (1) numbered SLURM shell scripts for adapter trimming, quality filtering, subsampling, and JAFFAL v2.5 runs for ONT cDNA, dRNA, and PacBio; (2) a figure-generation Rmd (`*_JW.Rmd`) that reads pre-computed JAFFAL results and CCLE translocation ground truth to produce benchmarking figures. To re-run, execute the shell scripts in order within each platform subdirectory, then knit the Rmd. |
-| `RNAmod_analysis/` | Standalone RNA modification analysis via modkit pileup. Includes a Nextflow workflow (`RNAmod_analysis.nf`) for running modkit across samples, and an R script (`analysis_modkit_pileup_two_runs.R`) for comparing modification calls between two dRNA sequencing runs. Not integrated into the main Snakemake DAG. |
-
-
 ---
 
 ## HPC module dependencies
@@ -282,18 +257,8 @@ rule my_rule:
 ```
 
 Conda env YAML files for tools already used in this workflow are in `conda/config/`.
----
-
-## Configuration system
-
-All paths are centralised in `config/config.yaml`. The helper `config/config_parser.py`
-resolves relative paths to absolute and merges per-sub-workflow configs so each
-sub-workflow only sees its own keys.
-
 
 ---
 
 ## R Markdown reports (`rmarkdown/`)
-Script generated most of the paper figures.
-The dependency order are documented in
-[`rmarkdown/DEPENDENCIES.md`](rmarkdown/DEPENDENCIES.md).
+ see [`rmarkdown/README.md`](rmarkdown/README.md) for conventions and the full report index.

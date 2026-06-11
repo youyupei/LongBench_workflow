@@ -251,7 +251,7 @@ rule mutation_all:
              rules.whatshap.output.vcf,
              rules.whatshap_stat.output.stat,
              rules.genomic_coverage_analysis.output.cov,
-             #rules.longcallR_analsyis_ase.output.flag,
+             rules.longcallR_analsyis_ase.output.flag,
              rules.longcallR_analsyis_asj.output.flag
              ],
             sample=config['sample_id'],
