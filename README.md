@@ -77,37 +77,10 @@ what can be adapted with config-only changes vs. what requires code edits.
 | Goal | Sub-workflow to start from | What to change |
 |---|---|---|
 | Run the ONT/PacBio bulk preprocessing pipeline on new samples | `lr_bulk` | `config_lr_bulk.yaml`: update `samples_fastq_dir`, `sample_id`, `output_path`, and `barcode_list`; update `minimap2` path in `config.yaml` if not using the same binary |
-| Apply the FLAMES single-cell pipeline to a new ONT SC dataset | `lr_sc_sn` | `config_lr_sc_sn.yaml`: update `samples_fastq_dir`, `sample_id`, `output_path`; provide a new genome/GTF under the `reference:` block |
-| Re-run short-read bulk quantification (STAR + salmon) on new samples | `sr_bulk` | `config_sr_bulk.yaml`: update `samples_fastq_dir`, `sample_id`, `output_path`; point `star_index` and `salmon_index` to pre-built indices for the new genome |
+| Apply the FLAMES single-cell pipeline to SC/SN dataset | `lr_sc_sn` | `config_lr_sc_sn.yaml`: update `samples_fastq_dir`, `sample_id`, `output_path`; provide a new genome/GTF under the `reference:` block |
+| Run short-read bulk quantification (Salmon) on new samples | `sr_bulk` | `config_sr_bulk.yaml`: update `samples_fastq_dir`, `sample_id`, `output_path`; point `star_index` and `salmon_index` to pre-built indices for the new genome |
 | Reuse the variant-calling rules (clair3 + whatshap) alone | `lr_bulk` — `rules/mutation.smk` | Include only `mutation.smk` in a new Snakefile; the rule inputs are standard sorted BAMs so no other `lr_bulk` rules are required |
-| Adapt the junction saturation QC plots for a different project | `scripts/junctionSaturation_plot_known.R` | The script reads paths from `snakemake@input`; replace the input block or pass paths as arguments to run standalone |
 
----
-
-## Main workflow rules (`rules/`)
-
-Rules that aggregate or compare across modalities, run after the sub-workflows complete.
-
-| File | What it does |
-|---|---|
-| `rmarkdown.smk` | Knits all R Markdown reports via `versioned_knit.R`; defines the preprocessing R script rules (`r_tx2gene_map`, `r_get_bulk_DGE_objects`, etc.) |
-| `qc_plot.smk` | Combined QC plots across all modalities |
-| `variant_analysis.smk` | Variant calling evaluation (clair3, longcallR, CCLE truth sets) |
-| `rarefraction_analysis.smk` | Rarefaction / downsampling analysis |
-| `base_count_analysis.smk` | Per-sample base count aggregation |
-| `sc_cell_line_anno.smk` | Single-cell cell-line annotation pipeline |
-| `rule_recycle_bin.smk` | Inactive rules kept for reference — not included in the main workflow |
-
----
-
-## Shared utilities (`modules/utilities.smk`)
-
-Importable rules available to any sub-workflow via `include:`:
-
-- `utilities_sort_and_index_bam` — samtools sort + index
-- `utilities_subsample_bam` — samtools fractional subsample
-- `utilities_gtf_to_bed` — GTF → BED conversion via gxf2bed
-- `utilities_git_check_commit` / `utilities__git_clone` — pin and auto-update external git repos
 
 ---
 
@@ -179,9 +152,9 @@ random_seed: 2024
 
 ### Transcript quantification — `sub_workflows/lr_bulk/rules/quantification.smk`
 
-Rules: `oarfish_no_cov`, `oarfish_cov`, `salmon`, `featureCounts_gene_quant`
+Rules: `oarfish_cov`, `salmon`
 
-`oarfish_no_cov` and `oarfish_cov` quantify transcript abundance from
+`oarfish_cov` quantify transcript abundance from
 transcript-aligned BAMs using EM (with optional coverage correction).
 `salmon` runs in alignment-based mode on the same BAMs.
 All three take a transcript-sorted BAM as input, so they depend on the
@@ -197,7 +170,6 @@ conda:
   main:    "/path/to/conda/main.yaml"     # salmon / featureCounts
 output_path: "/path/to/results"
 ```
-
 ---
 
 ### Variant calling — `sub_workflows/lr_bulk/rules/mutation.smk`
@@ -243,7 +215,7 @@ Standalone scripts not directly called by Snakemake rules, organised by topic.
 ### Rarefaction analysis
 | Script | Called by | Purpose |
 |---|---|---|
-| `rarefraction_analysis.R` | `rarefraction_analysis.smk` | Compute rarefaction curves from count matrices |
+| `rarefraction_analysis.R` | `rarefraction_analysis.smk` | Compute rarefaction curves from count matrices (note: filename contains a typo — "rarefraction" should be "rarefaction") |
 | `rarefraction_plot_only.R` | standalone | Re-plot rarefaction results without re-running the analysis |
 
 ### Utility scripts
@@ -260,28 +232,17 @@ Standalone scripts not directly called by Snakemake rules, organised by topic.
 | `DTU_analysis/` | Differential transcript usage analysis (`bulkDTU_analysis.Rmd`, `dtu_Rfunction.R`, `major_isoform_analysis.Rmd`) — standalone, not in the main DAG |
 | `fusion_analysis/` | Complete standalone fusion gene detection sub-study, not part of the main Snakemake DAG. Contains: (1) numbered SLURM shell scripts for adapter trimming, quality filtering, subsampling, and JAFFAL v2.5 runs for ONT cDNA, dRNA, and PacBio; (2) a figure-generation Rmd (`*_JW.Rmd`) that reads pre-computed JAFFAL results and CCLE translocation ground truth to produce benchmarking figures. To re-run, execute the shell scripts in order within each platform subdirectory, then knit the Rmd. |
 | `RNAmod_analysis/` | Standalone RNA modification analysis via modkit pileup. Includes a Nextflow workflow (`RNAmod_analysis.nf`) for running modkit across samples, and an R script (`analysis_modkit_pileup_two_runs.R`) for comparing modification calls between two dRNA sequencing runs. Not integrated into the main Snakemake DAG. |
-| `variant_analysis/` | Standalone shell scripts for variant calling benchmarking, run independently of the Snakemake workflow. Covers: clair3 variant calling on SIRV/Sequin spike-in samples (one script per platform); CCLE truth-set TP/FP detection for both clair3 and LongCallR (`CCLE_vars_detection_*.sh`, `FP_vars_detection_*.sh`). The Snakemake-integrated versions of the TP/FP evaluation rules are in `rules/variant_analysis.smk`. |
+
 
 ---
 
 ## HPC module dependencies
 
-Several rules use `module load` to activate software through the WEHI LMOD
+Several rules use `module load` to activate software through the WEHI HPC
 environment module system. This is **not portable** — the commands will fail on
 any system without those specific modules installed. When adapting these rules,
 replace each `module load` call with the appropriate `conda:` directive or a
 Singularity container.
-
-| Tool | Active `module load` location(s) | Suggested replacement |
-|---|---|---|
-| `picard-tools` | `lr_bulk/rules/qc.smk`, `lr_sc_sn/rules/qc.smk`, `sr_bulk/rules/qc.smk` | Add a `conda:` directive pointing to a Picard conda env, or use `container: "docker://broadinstitute/picard"` |
-| `bedtools` | `lr_bulk/rules/mutation.smk`, `sr_bulk/rules/mutation.smk` | `conda:` with a bioconda `bedtools` env; `bedtools` is also available in most general-purpose bioinformatics conda envs |
-| `ImageMagick` | `lr_sc_sn/rules/flames.smk` | `conda: "conda-forge::imagemagick"` or add `imagemagick` to the existing `main` conda env |
-| `htslib` | `lr_sc_sn/rules/demuxlet.smk` | Legacy rule — demuxlet is no longer in the active DAG (Vireo is used instead); this `module load` can be ignored unless reviving the demuxlet rules |
-| `bedops` | `lr_sc_sn/rules/anno_form_conversion.smk` | `conda:` with a bioconda `bedops` env |
-| `cellranger` | `sr_sc_sn/rules/cellranger.smk` | CellRanger has no conda package; use the official tarball and point to the binary via config, or use `container: "nfcore/cellranger"` |
-| `pandoc` | `rules/rmarkdown.smk` (all knitting rules) | Add `pandoc` to the R conda env used for knitting, or use `container: "docker://rocker/verse"` which bundles R + pandoc |
-| `curl` | `rules/rmarkdown.smk` (rules that download reference data) | `curl` is available in most base conda envs; add it explicitly to the relevant env if missing |
 
 **How to add a `conda:` directive to an existing rule:**
 ```python
@@ -293,9 +254,6 @@ rule my_rule:
 ```
 
 Conda env YAML files for tools already used in this workflow are in `conda/config/`.
-Check there first before writing a new one — e.g. `conda/config/main.yaml` covers
-most general bioinformatics tools.
-
 ---
 
 ## Configuration system
@@ -304,53 +262,10 @@ All paths are centralised in `config/config.yaml`. The helper `config/config_par
 resolves relative paths to absolute and merges per-sub-workflow configs so each
 sub-workflow only sees its own keys.
 
-To adapt the workflow to new data, edit the relevant `config/config_<sub_wf>.yaml`:
-- `samples_fastq_dir` — per-sample input paths
-- `sample_id` — sample list
-- `output_path` — where results are written
-- `subsample_read_n` — optional; triggers the subsampling rules if set
-
-Software not managed by conda (SQANTI3, minimap2, kallisto, bustools) is
-pointed to by absolute paths under the `software:` block in `config.yaml`.
-
----
-
-## Execution context (how the workflow was run)
-
-The workflow was executed on a SLURM cluster using the profile in `profile/config.yaml`.
-The commands below are provided as a reference for anyone adapting the code, not as
-ready-to-run instructions on new data.
-
-```bash
-# Dry-run to inspect the DAG without executing anything
-snakemake -n --profile profile/
-
-# Full run (SLURM submission via profile)
-snakemake --profile profile/
-
-# Run a single sub-workflow in isolation
-cd sub_workflows/lr_bulk
-snakemake --profile ../../profile/
-
-# Force re-run of a specific rule
-snakemake --profile profile/ -R lr_bulk_minimap2_align
-```
-
-Conda environments are stored under `conda/envs/` (referenced by hash, not name).
-Singularity containers are under `singularity/`. The two are used together: the
-container provides the base OS, and conda sets the tool environment inside it.
 
 ---
 
 ## R Markdown reports (`rmarkdown/`)
-
-Knitting is managed by `rmarkdown/versioned_knit.R` which passes cache and figure
-paths so outputs are versioned. To re-knit a single report:
-
-```bash
-module load pandoc
-Rscript rmarkdown/versioned_knit.R rmarkdown/<Report>.Rmd
-```
-
-The dependency order and intermediate RDS files are documented in
+Script generated most of the paper figures.
+The dependency order are documented in
 [`rmarkdown/DEPENDENCIES.md`](rmarkdown/DEPENDENCIES.md).
