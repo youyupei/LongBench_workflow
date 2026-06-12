@@ -1,80 +1,6 @@
-# R Markdown Reports
+# R Markdown Scripts
 
-This directory contains all R Markdown reports for the LongBench analysis, along
-with the knitting infrastructure and preprocessing R scripts that produce the
-intermediate RDS objects they depend on.
-
----
-
-## Knitting reports
-
-All reports are knitted via `versioned_knit.R`, which handles output naming,
-cache directories, and figure paths automatically.
-
-```bash
-module load pandoc
-Rscript versioned_knit.R <Report>.Rmd
-```
-
-Output is written to `<Report>_outdir/` in the same directory. If a `version:`
-field is set in the Rmd YAML front matter, it is included in the output filename:
-
-```
-<Report>_outdir/
-├── <Report>_<version>_<date>.html
-├── <Report>_<version>_cache/        # knitr chunk cache
-└── <Report>_<version>_<date>_figures/   # saved PNG + SVG figures
-```
-
-If no `version:` is set, the version component is omitted from the filename.
-
----
-
-## Rmd conventions
-
-All reports in this directory follow these conventions so they work correctly
-with `versioned_knit.R` and can be re-knitted independently.
-
-**Required YAML front matter:**
-```yaml
----
-title: "..."
-version: "1.0"   # bump to invalidate the cache and force a clean run
-params:
-  cache_dir: NULL
-  fig.path: NULL
----
-```
-
-**Required setup chunk:**
-````r
-```{r setup, include=FALSE}
-knitr::opts_chunk$set(
-  cache    = !is.null(params$cache_dir),
-  cache.path = params$cache_dir,
-  fig.path = params$fig.path,
-  fig.width  = 15,
-  fig.height = 10,
-  dev = if (!is.null(params$fig.path)) c("png", "svg") else "png"
-)
-```
-````
-
-**Chunk discipline:**
-- Separate data-generation chunks (heavy computation, `cache = TRUE`) from
-  plotting chunks (`cache = FALSE`). This lets plots be tweaked without
-  re-running expensive steps.
-- Name all chunks that produce figures — the chunk name becomes the figure
-  filename on disk.
-- Do not call `ggsave()` or write files directly from chunks; let knitr save
-  figures via `fig.path`.
-
-**Cache invalidation:**
-Bump the `version:` field in the YAML front matter to force a clean run.
-The cache directory name includes the version, so old caches are left intact
-and the new run starts fresh.
-
----
+This directory contains all R Markdown reports for the LongBench analysis
 
 ## Preprocessing R scripts (`Rscript/`)
 
@@ -92,7 +18,7 @@ reports share. They should not be run manually unless re-running in isolation.
 
 ---
 
-## Report index
+## Rmd index
 
 ### Main paper figures (numbered Rmds — run manually via `versioned_knit.R`)
 
@@ -125,7 +51,7 @@ reports share. They should not be run manually unless re-running in isolation.
 | Report | Description |
 |---|---|
 | `Sup_Bulk_quantification_analysis_MiniQuant.Rmd` | Quantification benchmarking with MiniQuant |
-| `Sup_Bulk_identification_3way_comparison.Rmd` | Three-tool transcript identification comparison |
+| `Sup_Bulk_identification_3way_comparison.Rmd` | Three-tool transcript identification comparison (Oarfish vs )|
 | `Sup_Bulk_quantification_analysis_IsoQuant.Rmd` | Quantification benchmarking with IsoQuant |
 | `Sup_Bulk_DE_Summary_20M.Rmd` | DE summary at 20M read depth |
 | `Sup_Bulk_DE_IsoQuant.Rmd` | DE analysis using IsoQuant counts |
